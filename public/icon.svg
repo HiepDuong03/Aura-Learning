@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#14b8a6"/>
+      <stop offset="50%" stop-color="#0d9488"/>
+      <stop offset="100%" stop-color="#047857"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="16" stdDeviation="24" flood-color="#0f766e" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- Background rounded square with shadow -->
+  <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#grad)" filter="url(#shadow)"/>
+  
+  <!-- Subtle inner border -->
+  <rect x="40" y="40" width="432" height="432" rx="104" fill="none" stroke="#ffffff" stroke-width="4" stroke-opacity="0.25"/>
+
+  <!-- Brand Typography "4U" -->
+  <text x="256" y="315" font-family="-apple-system, BlinkMacSystemFont, 'Plus Jakarta Sans', Roboto, sans-serif" font-size="220" font-weight="900" fill="#ffffff" text-anchor="middle" letter-spacing="-6">
+    4U
+  </text>
+
+  <!-- Play Badge -->
+  <circle cx="380" cy="140" r="44" fill="#f59e0b" filter="drop-shadow(0 4px 8px rgba(0,0,0,0.2))"/>
+  <polygon points="370,122 400,140 370,158" fill="#ffffff"/>
+</svg>

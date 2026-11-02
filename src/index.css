@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --primary: #0d9488;
+    --primary-press: #0f766e;
+    --surface-press: #e2e8f0;
+    --card-bg: #ffffff;
+    --sidebar-gradient-end: #f1f5f9;
+  }
+}
+
+/* 3D Pressable button styles inspired by 4You & Duolingo */
+.btn-3d {
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+  user-select: none;
+}
+
+.btn-3d:active {
+  transform: translateY(3px) !important;
+  box-shadow: none !important;
+}
+
+.btn-3d-teal {
+  background-color: #0d9488;
+  color: #ffffff;
+  box-shadow: 0 4px 0 #0f766e;
+}
+.btn-3d-teal:hover {
+  background-color: #115e59;
+}
+
+.btn-3d-orange {
+  background-color: #ff7a3d;
+  color: #ffffff;
+  box-shadow: 0 4px 0 #d95e26;
+}
+.btn-3d-orange:hover {
+  background-color: #f97316;
+}
+
+.btn-3d-white {
+  background-color: #ffffff;
+  color: #1e293b;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 3px 0 #cbd5e1;
+}
+.btn-3d-white:hover {
+  background-color: #f8fafc;
+}
+
+/* Karaoke word hover and active */
+.clickable-word {
+  display: inline-block;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0 3px;
+  transition: all 0.15s ease;
+}
+
+.clickable-word:hover {
+  background-color: #ccfbf1;
+  color: #0f766e;
+  transform: translateY(-1px);
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
