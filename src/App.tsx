@@ -472,6 +472,19 @@ export const App: React.FC = () => {
     setLessons((prev) => prev.filter((l) => l.id !== lessonId));
   };
 
+  // Filter lessons based on search query with strict null safety (Hook must run unconditionally before any early return - React Error #300 fix)
+  const searchedLessons = useMemo(() => {
+    const q = (searchQuery || '').toLowerCase().trim();
+    return (lessons || []).filter((l): l is VideoLesson => {
+      if (!l || typeof l !== 'object') return false;
+      if (!q) return true;
+      const title = (l.title || '').toLowerCase();
+      const topic = (l.topic || '').toLowerCase();
+      const channel = (l.channel || '').toLowerCase();
+      return title.includes(q) || topic.includes(q) || channel.includes(q);
+    });
+  }, [lessons, searchQuery]);
+
   // If currently studying a video lesson
   if (currentLesson) {
     return (
@@ -510,19 +523,6 @@ export const App: React.FC = () => {
       </ProductionErrorBoundary>
     );
   }
-
-  // Filter lessons based on search query with strict null safety
-  const searchedLessons = useMemo(() => {
-    const q = (searchQuery || '').toLowerCase().trim();
-    return (lessons || []).filter((l): l is VideoLesson => {
-      if (!l || typeof l !== 'object') return false;
-      if (!q) return true;
-      const title = (l.title || '').toLowerCase();
-      const topic = (l.topic || '').toLowerCase();
-      const channel = (l.channel || '').toLowerCase();
-      return title.includes(q) || topic.includes(q) || channel.includes(q);
-    });
-  }, [lessons, searchQuery]);
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-800 font-['Plus_Jakarta_Sans',sans-serif]">

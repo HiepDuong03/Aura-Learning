@@ -105,14 +105,18 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
   const isSeekingRef = useRef<boolean>(false);
   const seekCooldownTimerRef = useRef<any>(null);
 
-  const rawSubtitles = lesson.subtitles || [];
+  const rawSubtitles = (lesson.subtitles || []).filter(s => s && typeof s === 'object');
   const subtitles: SubtitleLine[] = React.useMemo(() => {
-    if (subOffset === 0) return rawSubtitles;
-    return rawSubtitles.map(s => ({
-      ...s,
-      start: Math.max(0, Number((s.start + subOffset).toFixed(2))),
-      end: Math.max(0.2, Number((s.end + subOffset).toFixed(2)))
-    }));
+    return rawSubtitles.map(s => {
+      const startNum = typeof s.start === 'number' && !isNaN(s.start) ? s.start : 0;
+      const endNum = typeof s.end === 'number' && !isNaN(s.end) ? s.end : startNum + 3;
+      if (subOffset === 0) return { ...s, start: startNum, end: endNum };
+      return {
+        ...s,
+        start: Math.max(0, Number((startNum + subOffset).toFixed(2))),
+        end: Math.max(0.2, Number((endNum + subOffset).toFixed(2)))
+      };
+    });
   }, [rawSubtitles, subOffset]);
 
   // Handler to adjust and permanently save subtitle offset calibration to the lesson
@@ -630,6 +634,7 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
   }, [subtitles, vocabVersion]);
 
   const renderClickableWords = (text: string, sub?: SubtitleLine, index?: number) => {
+    if (!text || typeof text !== 'string') return null;
     const targetSub = sub || currentSub;
     const targetIndex = typeof index === 'number' ? index : activeSubtitleIndex;
     const tokens = tokenizeText(text);

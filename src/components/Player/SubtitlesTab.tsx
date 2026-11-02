@@ -116,11 +116,14 @@ export const SubtitlesTab: React.FC<SubtitlesTabProps> = ({
           </div>
         )}
         {subtitles.map((sub, idx) => {
+          if (!sub) return null;
+          const start = typeof sub.start === 'number' && !isNaN(sub.start) ? sub.start : 0;
+          const end = typeof sub.end === 'number' && !isNaN(sub.end) ? sub.end : start + 3;
           const isActive = idx === activeSubtitleIndex;
-          const startMin = Math.floor(sub.start / 60);
-          const startSec = Math.floor(sub.start % 60).toString().padStart(2, '0');
-          const endMin = Math.floor(sub.end / 60);
-          const endSec = Math.floor(sub.end % 60).toString().padStart(2, '0');
+          const startMin = Math.floor(start / 60);
+          const startSec = Math.floor(start % 60).toString().padStart(2, '0');
+          const endMin = Math.floor(end / 60);
+          const endSec = Math.floor(end % 60).toString().padStart(2, '0');
           const timeFormatted = `${startMin}:${startSec} - ${endMin}:${endSec}`;
 
           return (
