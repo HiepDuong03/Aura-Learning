@@ -30,14 +30,38 @@ function getSecretKey() {
 const JWT_SECRET = getSecretKey();
 const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-// In-Memory Database with Atomic Disk Persistence
-class CloudDatabase {
+// ==============================================================================
+// RBAC (ROLE-BASED ACCESS CONTROL) PERMISSIONS MATRIX
+// ==============================================================================
+const ROLE_PERMISSIONS = {
+  guest: ['vocab:read'],
+  user: ['vocab:read', 'vocab:write', 'vocab:sync', 'import:limited'],
+  pro: ['vocab:read', 'vocab:write', 'vocab:sync', 'import:unlimited', 'speech:ai_score'],
+  admin: [
+    'vocab:read',
+    'vocab:write',
+    'vocab:sync',
+    'import:unlimited',
+    'speech:ai_score',
+    'admin:manage_users',
+    'admin:view_metrics'
+  ]
+};
+
+// ==============================================================================
+// IN-MEMORY NORMALIZED RELATIONAL DATABASE WITH ATOMIC DISK PERSISTENCE
+// Tables: users, words_master, vocabulary_notes, srs_cards, srs_review_logs, user_lingq
+// ==============================================================================
+class RelationalCloudDatabase {
   constructor() {
-    this.data = {
-      users: {},       // userId -> { id, name, email, salt, hash, avatar, createdAt }
-      words: {},       // userId -> SavedWord[]
-      lingq: {},       // userId -> Record<word, status>
-      meta: { version: 1, lastUpdatedAt: Date.now() }
+    this.tables = {
+      users: {},            // userId -> { id, name, email, salt, hash, avatar, role, status, createdAt, updatedAt }
+      words_master: {},     // wordId -> { id, lemma, phonetic, partOfSpeech, defaultTranslationVi, definitionEn, cefrLevel }
+      vocabulary_notes: {}, // noteId -> { id, userId, profileId, wordId, customTranslation, contextSentence, sourceLessonId, createdAt }
+      srs_cards: {},        // cardId -> { id, noteId, userId, state, easeFactor, intervalDays, repetitions, lapses, dueAt, usn }
+      srs_review_logs: [],  // [ { id, cardId, userId, rating, scheduledInterval, easeFactor, reviewedAt } ]
+      user_lingq: {},       // userId -> { [lemma]: status }
+      meta: { version: 2, lastUpdatedAt: Date.now() }
     };
     this.load();
   }
@@ -48,111 +72,238 @@ class CloudDatabase {
         const raw = fs.readFileSync(DB_PATH, 'utf8');
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
-          this.data = {
-            users: parsed.users || {},
-            words: parsed.words || {},
-            lingq: parsed.lingq || {},
-            meta: parsed.meta || { version: 1, lastUpdatedAt: Date.now() }
-          };
-          console.info(`[AURA Cloud DB] Loaded ${Object.keys(this.data.users).length} registered users from disk.`);
+          // Backward-compatible schema migration from v1 (flat words) to v2 (relational tables)
+          if (parsed.users) {
+            this.tables.users = parsed.users;
+          }
+          if (parsed.words_master) {
+            this.tables.words_master = parsed.words_master;
+            this.tables.vocabulary_notes = parsed.vocabulary_notes || {};
+            this.tables.srs_cards = parsed.srs_cards || {};
+            this.tables.srs_review_logs = parsed.srs_review_logs || [];
+            this.tables.user_lingq = parsed.lingq || parsed.user_lingq || {};
+          } else if (parsed.words) {
+            // Migrate v1 flat words into v2 relational entities
+            this.migrateV1Words(parsed.words);
+            this.tables.user_lingq = parsed.lingq || {};
+          }
+          console.info(`[AURA Relational DB] Loaded ${Object.keys(this.tables.users).length} users, ${Object.keys(this.tables.words_master).length} master dictionary entries, ${Object.keys(this.tables.srs_cards).length} SRS cards.`);
         }
       }
     } catch (err) {
-      console.error('[AURA Cloud DB] Error loading database from disk, starting fresh:', err);
+      console.error('[AURA Relational DB] Error loading database from disk, starting fresh:', err);
     }
+  }
+
+  /**
+   * Migrate legacy flat words into 3NF normalized tables
+   */
+  migrateV1Words(wordsByUser) {
+    Object.entries(wordsByUser || {}).forEach(([userId, words]) => {
+      if (Array.isArray(words)) {
+        this.saveUserWords(userId, words);
+      }
+    });
   }
 
   save() {
     try {
-      this.data.meta.lastUpdatedAt = Date.now();
+      this.tables.meta.lastUpdatedAt = Date.now();
       const tempPath = `${DB_PATH}.tmp.${Date.now()}`;
-      fs.writeFileSync(tempPath, JSON.stringify(this.data, null, 2), 'utf8');
+      fs.writeFileSync(tempPath, JSON.stringify(this.tables, null, 2), 'utf8');
       fs.renameSync(tempPath, DB_PATH);
     } catch (err) {
-      console.error('[AURA Cloud DB] Failed to save database to disk:', err);
+      console.error('[AURA Relational DB] Failed to save database to disk:', err);
     }
   }
 
   findUserByEmail(email) {
     const cleanEmail = (email || '').trim().toLowerCase();
-    return Object.values(this.data.users).find(u => u.email.toLowerCase() === cleanEmail);
+    return Object.values(this.tables.users).find(u => u.email.toLowerCase() === cleanEmail);
   }
 
   getUser(userId) {
-    return this.data.users[userId] || null;
+    return this.tables.users[userId] || null;
+  }
+
+  getAllUsers() {
+    return Object.values(this.tables.users).map(u => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      avatar: u.avatar,
+      role: u.role || 'user',
+      permissions: ROLE_PERMISSIONS[u.role || 'user'] || ROLE_PERMISSIONS.user,
+      createdAt: u.createdAt,
+      cardCount: Object.values(this.tables.srs_cards).filter(c => c.userId === u.id).length
+    }));
+  }
+
+  updateUserRole(userId, newRole) {
+    const user = this.tables.users[userId];
+    if (!user) return null;
+    if (!ROLE_PERMISSIONS[newRole]) {
+      throw new Error(`Invalid role: ${newRole}. Must be one of: guest, user, pro, admin`);
+    }
+    user.role = newRole;
+    user.updatedAt = Date.now();
+    this.save();
+    return user;
   }
 
   saveUser(user) {
-    this.data.users[user.id] = user;
-    if (!this.data.words[user.id]) {
-      this.data.words[user.id] = [];
-    }
-    if (!this.data.lingq[user.id]) {
-      this.data.lingq[user.id] = {};
-    }
+    const role = user.role || (user.email.endsWith('@aura.ai') ? 'admin' : 'user');
+    this.tables.users[user.id] = {
+      ...user,
+      role,
+      status: user.status || 'active',
+      updatedAt: Date.now()
+    };
     this.save();
   }
 
-  getUserWords(userId) {
-    return this.data.words[userId] || [];
-  }
-
+  /**
+   * Normalizes incoming words into:
+   * 1. words_master (Global dictionary)
+   * 2. vocabulary_notes (Context & translation)
+   * 3. srs_cards (Anki SM-2 state)
+   * 4. Returns combined client SavedWord format for zero UI breakage
+   */
   saveUserWords(userId, incomingWords) {
-    const existing = this.data.words[userId] || [];
-    const wordMap = new Map();
+    const now = Date.now();
 
-    // Index existing
-    existing.forEach(w => {
-      if (w && w.id) wordMap.set(w.id, w);
-    });
-
-    // Merge incoming (LWW - Last-Write-Wins based on USN and savedAt)
     (incomingWords || []).forEach(inc => {
-      if (!inc || !inc.id) return;
-      const prev = wordMap.get(inc.id);
-      if (!prev) {
-        wordMap.set(inc.id, { ...inc, isDirty: false });
-      } else {
-        const incUsn = inc.usn || 0;
-        const prevUsn = prev.usn || 0;
-        const incTime = inc.lastReviewedAt || inc.savedAt || 0;
-        const prevTime = prev.lastReviewedAt || prev.savedAt || 0;
+      if (!inc || !inc.word) return;
+      const lemma = inc.word.toLowerCase().trim();
+      const wordId = `wm_${Buffer.from(lemma).toString('base64url')}`;
 
-        if (incUsn > prevUsn || (incUsn === prevUsn && incTime >= prevTime)) {
-          wordMap.set(inc.id, { ...inc, isDirty: false });
-        }
+      // 1. Table: words_master
+      if (!this.tables.words_master[wordId]) {
+        this.tables.words_master[wordId] = {
+          id: wordId,
+          lemma,
+          phonetic: inc.phonetic || `/${lemma}/`,
+          partOfSpeech: inc.partOfSpeech || 'n.',
+          defaultTranslationVi: inc.translation || '',
+          definitionEn: inc.definitionEn || '',
+          cefrLevel: 'B1',
+          createdAt: now
+        };
+      }
+
+      // 2. Table: vocabulary_notes
+      const noteId = `note_${userId}_${wordId}`;
+      const existingNote = this.tables.vocabulary_notes[noteId];
+      this.tables.vocabulary_notes[noteId] = {
+        id: noteId,
+        userId,
+        profileId: inc.profileId || userId,
+        wordId,
+        customTranslation: inc.translation || existingNote?.customTranslation || '',
+        contextSentence: inc.contextSentence || existingNote?.contextSentence || '',
+        sourceLessonId: inc.videoTitle || existingNote?.sourceLessonId || 'YouTube Lesson',
+        createdAt: existingNote?.createdAt || inc.savedAt || now,
+        updatedAt: now
+      };
+
+      // 3. Table: srs_cards
+      const cardId = `card_${noteId}`;
+      const existingCard = this.tables.srs_cards[cardId];
+      const incUsn = inc.usn || 0;
+      const prevUsn = existingCard?.usn || 0;
+
+      if (!existingCard || incUsn >= prevUsn) {
+        this.tables.srs_cards[cardId] = {
+          id: cardId,
+          noteId,
+          userId,
+          profileId: inc.profileId || userId,
+          cardType: 'recognition',
+          state: inc.state || 'new',
+          easeFactor: inc.easeFactor || 2.50,
+          intervalDays: typeof inc.interval === 'number' ? inc.interval : 0,
+          repetitions: typeof inc.repetitions === 'number' ? inc.repetitions : 0,
+          lapses: typeof inc.lapses === 'number' ? inc.lapses : 0,
+          dueAt: inc.dueAt || now,
+          lastReviewedAt: inc.lastReviewedAt || now,
+          usn: Math.max(incUsn, prevUsn) + 1,
+          createdAt: existingCard?.createdAt || inc.savedAt || now
+        };
       }
     });
 
-    const merged = Array.from(wordMap.values());
-    this.data.words[userId] = merged;
     this.save();
-    return merged;
+    return this.getUserWords(userId);
+  }
+
+  /**
+   * Reconstitutes normalized tables into client SavedWord[]
+   */
+  getUserWords(userId) {
+    const userCards = Object.values(this.tables.srs_cards).filter(c => c.userId === userId);
+    
+    return userCards.map(card => {
+      const note = this.tables.vocabulary_notes[card.noteId];
+      const master = note ? this.tables.words_master[note.wordId] : null;
+
+      return {
+        id: card.id,
+        word: master?.lemma || 'unknown',
+        phonetic: master?.phonetic || '',
+        partOfSpeech: master?.partOfSpeech || '',
+        translation: note?.customTranslation || master?.defaultTranslationVi || '',
+        definitionEn: master?.definitionEn || '',
+        contextSentence: note?.contextSentence || '',
+        videoTitle: note?.sourceLessonId || 'Lesson',
+        savedAt: card.createdAt,
+        easeFactor: card.easeFactor,
+        interval: card.intervalDays,
+        repetitions: card.repetitions,
+        lapses: card.lapses,
+        state: card.state,
+        dueAt: card.dueAt,
+        lastReviewedAt: card.lastReviewedAt,
+        usn: card.usn,
+        isDirty: false,
+        profileId: card.profileId
+      };
+    });
   }
 
   getUserLingq(userId) {
-    return this.data.lingq[userId] || {};
+    return this.tables.user_lingq[userId] || {};
   }
 
   saveUserLingq(userId, incomingStatuses) {
-    const current = this.data.lingq[userId] || {};
+    const current = this.tables.user_lingq[userId] || {};
     const merged = { ...current, ...(incomingStatuses || {}) };
-    this.data.lingq[userId] = merged;
+    this.tables.user_lingq[userId] = merged;
     this.save();
     return merged;
   }
+
+  getMetrics() {
+    return {
+      totalUsers: Object.keys(this.tables.users).length,
+      totalWordsMaster: Object.keys(this.tables.words_master).length,
+      totalVocabularyNotes: Object.keys(this.tables.vocabulary_notes).length,
+      totalSRSCards: Object.keys(this.tables.srs_cards).length,
+      totalReviewLogs: this.tables.srs_review_logs.length,
+      lastUpdatedAt: this.tables.meta.lastUpdatedAt
+    };
+  }
 }
 
-const db = new CloudDatabase();
+const db = new RelationalCloudDatabase();
 
 // Cryptographic helpers
 function hashPassword(password, salt) {
   return crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
 }
 
-function generateToken(userId) {
+function generateToken(userId, role = 'user') {
   const timestamp = Date.now();
-  const payload = `${userId}.${timestamp}`;
+  const payload = `${userId}.${role}.${timestamp}`;
   const signature = crypto.createHmac('sha256', JWT_SECRET).update(payload).digest('hex');
   return `${payload}.${signature}`;
 }
@@ -160,13 +311,20 @@ function generateToken(userId) {
 function verifyToken(token) {
   if (!token || typeof token !== 'string') return null;
   const parts = token.split('.');
-  if (parts.length !== 3) return null;
+  if (parts.length !== 4 && parts.length !== 3) return null;
 
-  const [userId, timestampStr, signature] = parts;
-  const payload = `${userId}.${timestampStr}`;
+  let userId, role, timestampStr, signature;
+  if (parts.length === 4) {
+    [userId, role, timestampStr, signature] = parts;
+  } else {
+    // Backward compatibility with 3-part tokens
+    [userId, timestampStr, signature] = parts;
+    role = 'user';
+  }
+
+  const payload = parts.length === 4 ? `${userId}.${role}.${timestampStr}` : `${userId}.${timestampStr}`;
   const expectedSig = crypto.createHmac('sha256', JWT_SECRET).update(payload).digest('hex');
 
-  // Constant-time comparison to prevent timing attacks
   if (signature.length !== expectedSig.length) return null;
   if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) return null;
 
@@ -175,17 +333,16 @@ function verifyToken(token) {
     return null; // Expired
   }
 
-  return userId;
+  return { userId, role };
 }
 
-// Request helpers
 function sendJson(res, statusCode, body) {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store, no-cache, must-revalidate',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   });
   res.end(JSON.stringify(body));
 }
@@ -232,17 +389,20 @@ function extractBearerToken(req) {
 
 function sanitizeUser(user) {
   if (!user) return null;
+  const role = user.role || 'user';
   return {
     id: user.id,
     name: user.name,
     email: user.email,
     avatar: user.avatar,
+    role,
+    permissions: ROLE_PERMISSIONS[role] || ROLE_PERMISSIONS.user,
     createdAt: user.createdAt,
   };
 }
 
 /**
- * Main API Handler for /api/auth/* and /api/sync/*
+ * Main API Handler for /api/auth/*, /api/sync/*, and /api/admin/*
  */
 export async function handleAuthAndSync(req, res, pathname) {
   // CORS Preflight
@@ -250,7 +410,7 @@ export async function handleAuthAndSync(req, res, pathname) {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     });
     res.end();
     return;
@@ -286,6 +446,7 @@ export async function handleAuthAndSync(req, res, pathname) {
       const hash = hashPassword(password, salt);
       const userId = `usr_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
       const avatar = `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(email)}`;
+      const role = email.endsWith('@aura.ai') ? 'admin' : 'user';
 
       const newUser = {
         id: userId,
@@ -294,6 +455,8 @@ export async function handleAuthAndSync(req, res, pathname) {
         salt,
         hash,
         avatar,
+        role,
+        status: 'active',
         createdAt: Date.now()
       };
 
@@ -305,8 +468,8 @@ export async function handleAuthAndSync(req, res, pathname) {
         console.info(`[Auth] Migrated ${body.initialWords.length} initial offline words to user ${email}.`);
       }
 
-      const token = generateToken(userId);
-      console.info(`[Auth Audit] User registered successfully: ${email} (${userId})`);
+      const token = generateToken(userId, role);
+      console.info(`[Auth Audit] User registered: ${email} (${userId}, Role: ${role})`);
       sendJson(res, 201, { user: sanitizeUser(newUser), token });
     } catch (err) {
       console.error('[Auth Error] Register failed:', err);
@@ -339,8 +502,9 @@ export async function handleAuthAndSync(req, res, pathname) {
         return;
       }
 
-      const token = generateToken(user.id);
-      console.info(`[Auth Audit] User logged in: ${email} (${user.id})`);
+      const role = user.role || 'user';
+      const token = generateToken(user.id, role);
+      console.info(`[Auth Audit] User logged in: ${email} (${user.id}, Role: ${role})`);
       sendJson(res, 200, { user: sanitizeUser(user), token });
     } catch (err) {
       console.error('[Auth Error] Login failed:', err);
@@ -349,29 +513,26 @@ export async function handleAuthAndSync(req, res, pathname) {
     return;
   }
 
-  // --- 3. GET /api/auth/me ---
-  if (pathname === '/api/auth/me' && req.method === 'GET') {
-    const token = extractBearerToken(req);
-    const userId = verifyToken(token);
-    if (!userId) {
-      sendJson(res, 401, { error: 'Phiên đăng nhập đã hết hạn hoặc không hợp lệ.' });
-      return;
-    }
-    const user = db.getUser(userId);
-    if (!user) {
-      sendJson(res, 404, { error: 'Tài khoản không tồn tại.' });
-      return;
-    }
-    sendJson(res, 200, { user: sanitizeUser(user) });
+  // --- Authenticated Endpoints Guard ---
+  const token = extractBearerToken(req);
+  const tokenPayload = verifyToken(token);
+
+  if (!tokenPayload) {
+    sendJson(res, 401, { error: 'Phiên đăng nhập đã hết hạn hoặc không hợp lệ. Vui lòng đăng nhập lại.' });
     return;
   }
 
-  // --- Authenticated Sync Endpoints ---
-  const token = extractBearerToken(req);
-  const userId = verifyToken(token);
+  const { userId, role } = tokenPayload;
+  const currentUser = db.getUser(userId);
 
-  if (!userId) {
-    sendJson(res, 401, { error: 'Yêu cầu xác thực tài khoản để đồng bộ đám mây.' });
+  if (!currentUser) {
+    sendJson(res, 404, { error: 'Tài khoản người dùng không tồn tại.' });
+    return;
+  }
+
+  // --- 3. GET /api/auth/me ---
+  if (pathname === '/api/auth/me' && req.method === 'GET') {
+    sendJson(res, 200, { user: sanitizeUser(currentUser) });
     return;
   }
 
@@ -392,7 +553,7 @@ export async function handleAuthAndSync(req, res, pathname) {
       const body = await parseJsonBody(req);
       const incoming = Array.isArray(body.words) ? body.words : [];
       const merged = db.saveUserWords(userId, incoming);
-      console.info(`[Sync Audit] Synced ${incoming.length} incoming words for user ${userId}. Total words: ${merged.length}`);
+      console.info(`[Sync Audit] Synced ${incoming.length} words into relational tables for user ${userId}. Total: ${merged.length}`);
       sendJson(res, 200, { words: merged, count: merged.length, syncedAt: Date.now() });
     } catch (err) {
       sendJson(res, 500, { error: err.message });
@@ -422,6 +583,43 @@ export async function handleAuthAndSync(req, res, pathname) {
       sendJson(res, 500, { error: err.message });
     }
     return;
+  }
+
+  // --- 8. RBAC ADMIN ENDPOINTS (Role: 'admin' required) ---
+  if (pathname.startsWith('/api/admin/')) {
+    if (currentUser.role !== 'admin') {
+      sendJson(res, 403, { error: 'Truy cập bị từ chối: Yêu cầu quyền Quản trị viên (Admin).' });
+      return;
+    }
+
+    if (pathname === '/api/admin/users' && req.method === 'GET') {
+      const users = db.getAllUsers();
+      sendJson(res, 200, { users, count: users.length });
+      return;
+    }
+
+    if (pathname === '/api/admin/metrics' && req.method === 'GET') {
+      const metrics = db.getMetrics();
+      sendJson(res, 200, { metrics });
+      return;
+    }
+
+    if (pathname === '/api/admin/users/role' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        const { targetUserId, newRole } = body;
+        const updated = db.updateUserRole(targetUserId, newRole);
+        if (!updated) {
+          sendJson(res, 404, { error: 'Không tìm thấy người dùng cần đổi vai trò.' });
+          return;
+        }
+        console.info(`[Admin RBAC Audit] Admin ${currentUser.email} updated user ${targetUserId} role to ${newRole}`);
+        sendJson(res, 200, { user: sanitizeUser(updated) });
+      } catch (err) {
+        sendJson(res, 400, { error: err.message });
+      }
+      return;
+    }
   }
 
   // Route not found in auth/sync router

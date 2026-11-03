@@ -78,14 +78,14 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 2. Production Cloud Authentication & Multi-Device Sync API
-  if (pathname.startsWith('/api/auth') || pathname.startsWith('/api/sync')) {
+  // 2. Production Cloud Authentication, Multi-Device Sync, and Admin RBAC API
+  if (pathname.startsWith('/api/auth') || pathname.startsWith('/api/sync') || pathname.startsWith('/api/admin')) {
     try {
       await handleAuthAndSync(req, res, pathname);
     } catch (err) {
       if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message || 'Auth/Sync Internal Error' }));
+        res.end(JSON.stringify({ error: err.message || 'API Internal Error' }));
       }
     }
     return;

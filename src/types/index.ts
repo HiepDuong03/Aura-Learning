@@ -101,13 +101,78 @@ export interface AnkiUserProfile {
   };
 }
 
+// ==========================================
+// ROLE-BASED ACCESS CONTROL (RBAC) CONTRACTS
+// ==========================================
+export type UserRole = 'guest' | 'user' | 'pro' | 'admin';
+
+export type UserPermission = 
+  | 'vocab:read'
+  | 'vocab:write'
+  | 'vocab:sync'
+  | 'import:limited'
+  | 'import:unlimited'
+  | 'speech:ai_score'
+  | 'admin:manage_users'
+  | 'admin:view_metrics';
+
 export interface AuthUser {
   id: string;
   name: string;
   email: string;
   avatar: string;
+  role: UserRole;
+  permissions: UserPermission[];
   profileId: string;
   token?: string;
+  createdAt: number;
+}
+
+// ==========================================
+// NORMALIZED RELATIONAL ENTITIES (3NF)
+// ==========================================
+export interface WordMasterEntity {
+  id: string;
+  lemma: string;
+  phonetic?: string;
+  partOfSpeech?: string;
+  defaultTranslationVi: string;
+  definitionEn?: string;
+  cefrLevel?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
+  frequencyRank?: number;
+  createdAt: number;
+}
+
+export interface VocabularyNoteEntity {
+  id: string;
+  userId: string;
+  profileId: string;
+  wordId: string;
+  customTranslation?: string;
+  contextSentence?: string;
+  contextTranslation?: string;
+  sourceType: 'youtube' | 'custom' | 'shorts';
+  sourceLessonId?: string;
+  sourceVideoTitle?: string;
+  sourceTimestampSec?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SRSCardEntity {
+  id: string;
+  noteId: string;
+  userId: string;
+  profileId: string;
+  cardType: 'recognition' | 'dictation' | 'shadowing';
+  state: CardState;
+  easeFactor: number;
+  intervalDays: number;
+  repetitions: number;
+  lapses: number;
+  dueAt: number;
+  lastReviewedAt?: number;
+  usn: number;
   createdAt: number;
 }
 

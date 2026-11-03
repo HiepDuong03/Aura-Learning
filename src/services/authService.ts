@@ -5,7 +5,7 @@
  * BR-15: Explicit error handling with zero silent swallows
  */
 
-import { AuthUser, AnkiUserProfile, SavedWord } from '../types';
+import { AuthUser, AnkiUserProfile, SavedWord, UserRole, UserPermission } from '../types';
 import { ankiDb, DEFAULT_PROFILE } from './ankiDatabase';
 import { lingqWordService } from './lingqWordService';
 
@@ -20,6 +20,14 @@ class AuthService {
 
   constructor() {
     this.loadSession();
+  }
+
+  public hasRole(role: UserRole): boolean {
+    return this.currentUser?.role === role;
+  }
+
+  public can(permission: UserPermission): boolean {
+    return Boolean(this.currentUser?.permissions?.includes(permission));
   }
 
   private loadSession(): void {
@@ -70,6 +78,8 @@ class AuthService {
         const data = await res.json();
         const user: AuthUser = {
           ...data.user,
+          role: data.user.role || 'user',
+          permissions: data.user.permissions || ['vocab:read', 'vocab:write', 'vocab:sync'],
           token,
         };
         this.currentUser = user;
@@ -131,6 +141,8 @@ class AuthService {
       name: data.user.name,
       email: data.user.email,
       avatar: data.user.avatar,
+      role: data.user.role || 'user',
+      permissions: data.user.permissions || ['vocab:read', 'vocab:write', 'vocab:sync'],
       profileId: data.user.id,
       token: data.token,
       createdAt: data.user.createdAt,
@@ -192,6 +204,8 @@ class AuthService {
       name: data.user.name,
       email: data.user.email,
       avatar: data.user.avatar,
+      role: data.user.role || 'user',
+      permissions: data.user.permissions || ['vocab:read', 'vocab:write', 'vocab:sync'],
       profileId: data.user.id,
       token: data.token,
       createdAt: data.user.createdAt,
