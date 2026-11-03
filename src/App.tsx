@@ -129,12 +129,20 @@ export const App: React.FC = () => {
 
   const handleAuthSuccess = async (user: AuthUser) => {
     setCurrentUser(user);
+    const token = authService.getToken();
+    let words: SavedWord[] = [];
+    if (token) {
+      words = await ankiDb.syncWithCloud(token, user.id);
+    } else {
+      words = await ankiDb.getAllWords(user.id);
+    }
     const loadedProfiles = await ankiDb.getProfiles();
     const active = await ankiDb.getActiveProfile();
     setProfiles(loadedProfiles);
     setActiveProfile(active);
-    const words = await ankiDb.getAllWords(active.id);
-    setSavedWords(words);
+    if (words && words.length > 0) {
+      setSavedWords(words);
+    }
   };
 
   const handleLogout = async () => {
@@ -147,6 +155,23 @@ export const App: React.FC = () => {
     const words = await ankiDb.getAllWords(active.id);
     setSavedWords(words);
   };
+
+  // Verify session & sync with cloud on boot
+  useEffect(() => {
+    authService.verifySession().then((user) => {
+      if (user) {
+        setCurrentUser(user);
+        const token = authService.getToken();
+        if (token) {
+          ankiDb.syncWithCloud(token, user.id).then((cloudWords) => {
+            if (cloudWords && cloudWords.length > 0) {
+              setSavedWords(cloudWords);
+            }
+          }).catch(console.warn);
+        }
+      }
+    });
+  }, []);
 
   // Initialize Anki Local-First Database on boot with active profile & persistent custom lessons
   useEffect(() => {
@@ -263,15 +288,30 @@ export const App: React.FC = () => {
     }
   };
 
-  // Sync to localStorage and Anki IndexedDB
+  // Sync to localStorage, Anki IndexedDB, and Cloud Server
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.SAVED_WORDS, JSON.stringify(savedWords));
       ankiDb.saveWords(savedWords, activeProfile.id).catch(() => {});
+
+      const token = authService.getToken();
+      if (token && currentUser) {
+        const timer = setTimeout(() => {
+          fetch('/api/sync/words', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ words: savedWords })
+          }).catch(console.warn);
+        }, 1500);
+        return () => clearTimeout(timer);
+      }
     } catch (e) {
       console.warn('Storage sync error', e);
     }
-  }, [savedWords, activeProfile.id]);
+  }, [savedWords, activeProfile.id, currentUser]);
 
   useEffect(() => {
     try {
@@ -719,6 +759,7 @@ export const App: React.FC = () => {
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         onSuccess={handleAuthSuccess}
+        initialWords={savedWords}
       />
     </div>
   );

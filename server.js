@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import captionHandler from './api/youtube-captions.js';
+import { handleAuthAndSync } from './api/auth-sync.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -77,7 +78,20 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 2. Health check endpoint for Render zero-downtime deploy & uptime monitoring
+  // 2. Production Cloud Authentication & Multi-Device Sync API
+  if (pathname.startsWith('/api/auth') || pathname.startsWith('/api/sync')) {
+    try {
+      await handleAuthAndSync(req, res, pathname);
+    } catch (err) {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message || 'Auth/Sync Internal Error' }));
+      }
+    }
+    return;
+  }
+
+  // 3. Health check endpoint for Render zero-downtime deploy & uptime monitoring
   if (pathname === '/healthz' || pathname === '/api/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));

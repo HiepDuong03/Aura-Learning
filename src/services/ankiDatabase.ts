@@ -558,6 +558,69 @@ export class AnkiDatabase {
   }
 
   /**
+   * Bi-directional Cloud Synchronization (BR-13, BR-15)
+   * Connects to /api/sync/words with Bearer token.
+   * Sends local words, receives authoritative merged list, updates local IndexedDB.
+   */
+  public async syncWithCloud(token: string, profileId?: string): Promise<SavedWord[]> {
+    if (!token) return this.getAllWords(profileId);
+
+    const targetProfile = profileId || this.activeProfileId;
+    const localWords = await this.getAllWords(targetProfile);
+
+    try {
+      const response = await fetch('/api/sync/words', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ words: localWords })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Sync HTTP error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const serverWords: SavedWord[] = data.words || [];
+
+      if (this.db) {
+        await new Promise<void>((resolve, reject) => {
+          try {
+            const transaction = this.db!.transaction(STORES.WORDS, 'readwrite');
+            const store = transaction.objectStore(STORES.WORDS);
+
+            for (const sw of serverWords) {
+              store.put({
+                ...sw,
+                profileId: targetProfile,
+                isDirty: false
+              });
+            }
+
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+          } catch (e) {
+            reject(e);
+          }
+        });
+      }
+
+      // Update mirror in localStorage
+      try {
+        localStorage.setItem('4you_saved_words_v2', JSON.stringify(serverWords));
+      } catch {}
+
+      console.info(`[Anki Cloud Sync] Successfully synced ${serverWords.length} words with cloud.`);
+      return serverWords;
+    } catch (err) {
+      console.warn('[Anki Cloud Sync] Cloud sync fallback to local IndexedDB:', err);
+      return localWords;
+    }
+  }
+
+  /**
    * Deletes a word and records its tombstone in `graves` (Anki REA)
    */
   public async deleteWord(wordId: string): Promise<void> {

@@ -21,14 +21,55 @@ const COMMON_KNOWN_WORDS = new Set([
 class LingQWordService {
   private statusMap: Map<string, LingQWordStatus> = new Map();
   private listeners: Set<() => void> = new Set();
+  private currentUserId: string | null = null;
+  private authToken: string | null = null;
+  private syncTimeout: any = null;
 
   constructor() {
     this.loadFromStorage();
   }
 
+  private getStorageKey(): string {
+    return this.currentUserId ? `${LINGQ_STORAGE_KEY}_${this.currentUserId}` : LINGQ_STORAGE_KEY;
+  }
+
+  public setAuth(token: string | null, userId: string | null) {
+    this.authToken = token;
+    if (this.currentUserId !== userId) {
+      this.currentUserId = userId;
+      this.statusMap.clear();
+      this.loadFromStorage();
+      if (token) {
+        this.syncWithCloud(token).catch(console.warn);
+      }
+    }
+  }
+
+  public async syncWithCloud(token: string): Promise<void> {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/sync/lingq', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const serverStatuses: Record<string, LingQWordStatus> = data.statuses || {};
+        Object.entries(serverStatuses).forEach(([w, s]) => {
+          this.statusMap.set(w.toLowerCase(), s);
+        });
+        this.saveToStorage(false);
+        this.notifyListeners();
+      }
+    } catch (e) {
+      console.warn('[LingQ Sync] Cloud sync fallback:', e);
+    }
+  }
+
   private loadFromStorage() {
     try {
-      const saved = localStorage.getItem(LINGQ_STORAGE_KEY);
+      const saved = localStorage.getItem(this.getStorageKey());
       if (saved) {
         const records: Record<string, LingQWordStatus> = JSON.parse(saved);
         Object.entries(records).forEach(([word, status]) => {
@@ -37,7 +78,7 @@ class LingQWordService {
       }
 
       // Synchronize with existing Anki SavedWords
-      const savedWordsRaw = localStorage.getItem('4you_saved_words');
+      const savedWordsRaw = localStorage.getItem('4you_saved_words_v2') || localStorage.getItem('4you_saved_words');
       if (savedWordsRaw) {
         const savedWords: SavedWord[] = JSON.parse(savedWordsRaw);
         savedWords.forEach(sw => {
@@ -60,14 +101,28 @@ class LingQWordService {
     }
   }
 
-  private saveToStorage() {
+  private saveToStorage(pushToCloud: boolean = true) {
     try {
       const obj: Record<string, LingQWordStatus> = {};
       this.statusMap.forEach((status, word) => {
         obj[word] = status;
       });
-      localStorage.setItem(LINGQ_STORAGE_KEY, JSON.stringify(obj));
+      localStorage.setItem(this.getStorageKey(), JSON.stringify(obj));
       this.notifyListeners();
+
+      if (pushToCloud && this.authToken) {
+        if (this.syncTimeout) clearTimeout(this.syncTimeout);
+        this.syncTimeout = setTimeout(() => {
+          fetch('/api/sync/lingq', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${this.authToken}`
+            },
+            body: JSON.stringify({ statuses: obj })
+          }).catch(console.warn);
+        }, 1200);
+      }
     } catch (e) {
       console.warn('Failed to save LingQ words', e);
     }

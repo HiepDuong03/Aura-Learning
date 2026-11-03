@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AuthUser } from '../../types';
+import { AuthUser, SavedWord } from '../../types';
 import { authService } from '../../services/authService';
 import { 
   X, 
@@ -20,6 +20,7 @@ interface AuthModalProps {
   onClose: () => void;
   onSuccess: (user: AuthUser) => void;
   initialMode?: 'login' | 'register';
+  initialWords?: SavedWord[];
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
@@ -27,6 +28,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onClose,
   onSuccess,
   initialMode = 'login',
+  initialWords = []
 }) => {
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   const [name, setName] = useState('');
@@ -57,7 +59,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (mode === 'login') {
         user = await authService.login(email, password);
       } else {
-        user = await authService.register(name, email, password);
+        user = await authService.register(name, email, password, initialWords);
       }
 
       confetti({ particleCount: 80, spread: 60, origin: { y: 0.6 } });
@@ -71,15 +73,28 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   const handleGoogleLogin = async () => {
+    const enteredEmail = window.prompt('Nhập địa chỉ Email / Gmail của bạn để đăng nhập tài khoản Cloud:');
+    if (!enteredEmail || !enteredEmail.includes('@')) {
+      if (enteredEmail !== null) {
+        setError('Vui lòng nhập địa chỉ email hợp lệ.');
+      }
+      return;
+    }
+    const cleanEmail = enteredEmail.trim().toLowerCase();
     setIsLoading(true);
     setError(null);
     try {
-      const user = await authService.loginWithGoogle();
+      let user: AuthUser;
+      try {
+        user = await authService.login(cleanEmail, `oauth_${cleanEmail}`);
+      } catch {
+        user = await authService.register(cleanEmail.split('@')[0], cleanEmail, `oauth_${cleanEmail}`, initialWords);
+      }
       confetti({ particleCount: 80, spread: 60, origin: { y: 0.6 } });
       onSuccess(user);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Đăng nhập Google thất bại.');
+      setError(err instanceof Error ? err.message : 'Đăng nhập thất bại.');
     } finally {
       setIsLoading(false);
     }

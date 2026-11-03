@@ -37,3 +37,6 @@ Thumbs.db
 
 # Graphify & internal artifacts
 graphify-out/
+
+# Runtime Server Data & Secrets
+data/
