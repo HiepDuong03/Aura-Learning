@@ -252,6 +252,97 @@ class AuthService {
   }
 
   /**
+   * Fetch backend auth configuration (Google Client ID, app meta)
+   */
+  public async getAuthConfig(): Promise<{ googleClientId: string; appName: string }> {
+    try {
+      const res = await fetch('/api/auth/config');
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('[Auth] Failed to fetch auth config:', e);
+    }
+    return { googleClientId: '', appName: 'AURA Learning' };
+  }
+
+  /**
+   * Log in or register using Google Identity Services (GIS) / Google OAuth
+   */
+  public async loginWithGoogle(
+    payload: { credential?: string; email?: string; name?: string; avatar?: string; googleId?: string },
+    initialWords?: SavedWord[]
+  ): Promise<AuthUser> {
+    const res = await fetch('/api/auth/google', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        ...payload,
+        initialWords: initialWords || []
+      })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Đăng nhập bằng tài khoản Google thất bại.');
+    }
+
+    const authUser: AuthUser = {
+      id: data.user.id,
+      name: data.user.name,
+      email: data.user.email,
+      avatar: data.user.avatar,
+      role: data.user.role || 'user',
+      permissions: data.user.permissions || ['vocab:read', 'vocab:write', 'vocab:sync'],
+      profileId: data.user.id,
+      token: data.token,
+      createdAt: data.user.createdAt,
+    };
+
+    this.currentUser = authUser;
+    this.token = data.token;
+    localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(authUser));
+    localStorage.setItem(STORAGE_KEYS.TOKEN, data.token);
+
+    // Switch or create local Anki profile for Google user
+    try {
+      const allProfiles = await ankiDb.getProfiles();
+      const existing = allProfiles.find(p => p.id === authUser.id || p.cloudAccount?.email === authUser.email);
+      if (existing) {
+        await ankiDb.setActiveProfile(existing.id);
+      } else {
+        const newProf = await ankiDb.createProfile(authUser.name, authUser.avatar);
+        const updated: AnkiUserProfile = {
+          ...newProf,
+          id: authUser.id,
+          cloudAccount: {
+            email: authUser.email,
+            isLinked: true,
+            lastSyncedAt: Date.now()
+          }
+        };
+        await ankiDb.updateProfile(updated);
+        await ankiDb.setActiveProfile(authUser.id);
+      }
+    } catch (e) {
+      console.warn('[Auth] Google Profile sync warning:', e);
+    }
+
+    // Connect LingQ & sync vocabulary from server
+    lingqWordService.setAuth(data.token, authUser.id);
+    try {
+      await ankiDb.syncWithCloud(data.token, authUser.id);
+    } catch (e) {
+      console.warn('[Auth] Post-Google login sync warning:', e);
+    }
+
+    return authUser;
+  }
+
+  /**
    * Log out of current account and reset to guest
    */
   public async logout(): Promise<void> {

@@ -402,6 +402,23 @@ function sanitizeUser(user) {
 }
 
 /**
+ * Decode JWT payload (standard for Google ID Token verification)
+ */
+function decodeJwtPayload(jwt) {
+  try {
+    if (!jwt || typeof jwt !== 'string') return null;
+    const parts = jwt.split('.');
+    if (parts.length < 2) return null;
+    const base64Url = parts[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonStr = Buffer.from(base64, 'base64').toString('utf8');
+    return JSON.parse(jsonStr);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Main API Handler for /api/auth/*, /api/sync/*, and /api/admin/*
  */
 export async function handleAuthAndSync(req, res, pathname) {
@@ -413,6 +430,101 @@ export async function handleAuthAndSync(req, res, pathname) {
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     });
     res.end();
+    return;
+  }
+
+  // --- 0. GET /api/auth/config ---
+  if (pathname === '/api/auth/config' && req.method === 'GET') {
+    sendJson(res, 200, {
+      googleClientId: process.env.GOOGLE_CLIENT_ID || '',
+      appName: 'AURA Learning',
+      version: '2.0.0'
+    });
+    return;
+  }
+
+  // --- 0.1 POST /api/auth/google (Google GIS & OAuth Login) ---
+  if (pathname === '/api/auth/google' && req.method === 'POST') {
+    try {
+      const body = await parseJsonBody(req);
+      let email = '';
+      let name = '';
+      let avatar = '';
+      let googleId = '';
+
+      if (body.credential) {
+        // Google Identity Services (GIS) ID Token
+        const decoded = decodeJwtPayload(body.credential);
+        if (!decoded || !decoded.email) {
+          sendJson(res, 400, { error: 'Google ID Token không hợp lệ hoặc đã hết hạn.' });
+          return;
+        }
+        email = (decoded.email || '').trim().toLowerCase();
+        name = (decoded.name || decoded.given_name || email.split('@')[0]).trim();
+        avatar = decoded.picture || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(email)}`;
+        googleId = decoded.sub || '';
+      } else {
+        // Direct OAuth / email authentication
+        email = (body.email || '').trim().toLowerCase();
+        name = (body.name || email.split('@')[0] || 'Google User').trim();
+        avatar = body.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(email)}`;
+        googleId = body.googleId || '';
+      }
+
+      if (!email || !email.includes('@') || !email.includes('.')) {
+        sendJson(res, 400, { error: 'Địa chỉ email Google không hợp lệ.' });
+        return;
+      }
+
+      let user = db.findUserByEmail(email);
+      let role = 'user';
+      if (email === process.env.ADMIN_EMAIL || email.endsWith('@aura.ai')) {
+        role = 'admin';
+      }
+
+      if (user) {
+        if (email === process.env.ADMIN_EMAIL || email.endsWith('@aura.ai')) {
+          user.role = 'admin';
+        }
+        if (avatar && (!user.avatar || user.avatar.includes('dicebear'))) {
+          user.avatar = avatar;
+        }
+        db.saveUser(user);
+      } else {
+        const userId = `usr_g_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+        const salt = crypto.randomBytes(32).toString('hex');
+        const hash = hashPassword(crypto.randomBytes(24).toString('hex'), salt);
+
+        user = {
+          id: userId,
+          name,
+          email,
+          salt,
+          hash,
+          avatar,
+          role,
+          googleId,
+          provider: 'google',
+          status: 'active',
+          createdAt: Date.now()
+        };
+        db.saveUser(user);
+        console.info(`[Auth Audit] New Google user registered: ${email} (${userId}, Role: ${role})`);
+      }
+
+      // Migrate initial offline words if any
+      if (Array.isArray(body.initialWords) && body.initialWords.length > 0) {
+        db.saveUserWords(user.id, body.initialWords);
+        console.info(`[Auth] Migrated ${body.initialWords.length} initial offline words to user ${email}.`);
+      }
+
+      const token = generateToken(user.id, user.role || 'user');
+      console.info(`[Auth Audit] Google login successful: ${email} (${user.id}, Role: ${user.role || 'user'})`);
+      sendJson(res, 200, { user: sanitizeUser(user), token });
+    } catch (err) {
+      console.error('[Auth Error] Google login failed:', err);
+      sendJson(res, 500, { error: err.message || 'Lỗi xử lý xác thực Google.' });
+    }
     return;
   }
 

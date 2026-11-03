@@ -12,3 +12,11 @@ services:
         value: production
       - key: NPM_CONFIG_PRODUCTION
         value: "false"
+      - key: PORT
+        value: "3000"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_EMAIL
+        value: "admin@aura-learning.com"
+      - key: GOOGLE_CLIENT_ID
+        sync: false

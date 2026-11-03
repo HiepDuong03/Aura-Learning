@@ -60,7 +60,7 @@ export class ProductionErrorBoundary extends Component<Props, State> {
       this.state.error?.message?.includes('Failed to fetch');
 
     if (isDynamicImportFailure) {
-      window.location.reload();
+      this.handleReload();
       return;
     }
 
@@ -73,8 +73,23 @@ export class ProductionErrorBoundary extends Component<Props, State> {
     this.props.onReset?.();
   };
 
-  handleReload = (): void => {
-    window.location.reload();
+  handleReload = async (): Promise<void> => {
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const reg of registrations) {
+          await reg.unregister();
+        }
+      }
+    } catch (e) {
+      console.warn('[CachePurge] Error during reload cache purge:', e);
+    }
+    // Hard reload with timestamp to bypass stale browser cache
+    window.location.href = window.location.origin + window.location.pathname + '?reload=' + Date.now();
   };
 
   /**
@@ -91,11 +106,17 @@ export class ProductionErrorBoundary extends Component<Props, State> {
         const keys = await caches.keys();
         await Promise.all(keys.map((k) => caches.delete(k)));
       }
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const reg of registrations) {
+          await reg.unregister();
+        }
+      }
       console.info('[Storage] Corrupted cache keys and SW caches cleared successfully.');
     } catch (e) {
       console.warn('[Storage] Error clearing caches:', e);
     }
-    window.location.reload();
+    window.location.href = window.location.origin + window.location.pathname + '?clean=' + Date.now();
   };
 
   toggleDetails = (): void => {
