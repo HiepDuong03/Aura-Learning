@@ -158,7 +158,52 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   const handleTriggerGoogle = () => {
-    // If official Google GIS is available with Client ID, trigger prompt
+    setError(null);
+
+    // 1. If Google Client ID is configured, trigger real Google OAuth Popup
+    if (googleClientId && typeof window !== 'undefined' && (window as any).google?.accounts?.oauth2) {
+      try {
+        const client = (window as any).google.accounts.oauth2.initTokenClient({
+          client_id: googleClientId,
+          scope: 'https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email openid',
+          callback: async (tokenResponse: any) => {
+            if (tokenResponse.error) {
+              setError(`Google OAuth: ${tokenResponse.error_description || tokenResponse.error}`);
+              return;
+            }
+            if (tokenResponse.access_token) {
+              setIsLoading(true);
+              try {
+                const infoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                  headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+                });
+                const googleProfile = await infoRes.json();
+                const user = await authService.loginWithGoogle({
+                  email: googleProfile.email,
+                  name: googleProfile.name || googleProfile.given_name || googleProfile.email.split('@')[0],
+                  avatar: googleProfile.picture,
+                  googleId: googleProfile.sub
+                }, initialWords);
+
+                confetti({ particleCount: 80, spread: 60, origin: { y: 0.6 } });
+                onSuccess(user);
+                onClose();
+              } catch (err) {
+                setError(err instanceof Error ? err.message : 'Đăng nhập Google thất bại.');
+              } finally {
+                setIsLoading(false);
+              }
+            }
+          }
+        });
+        client.requestAccessToken();
+        return;
+      } catch (e) {
+        console.warn('[GoogleOAuth2] Popup error:', e);
+      }
+    }
+
+    // 2. If Google GIS One-Tap is ready
     if (googleClientId && typeof window !== 'undefined' && (window as any).google?.accounts?.id) {
       try {
         (window as any).google.accounts.id.prompt();
@@ -167,7 +212,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         console.warn('[GoogleGIS] Prompt fallback:', e);
       }
     }
-    // Switch to sleek in-modal Google quick login view
+
+    // 3. Fallback: Open clear in-modal dialog
     setIsGoogleView(true);
     setError(null);
   };
