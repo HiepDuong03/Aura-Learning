@@ -1,8 +1,6 @@
-// 4You Study PWA Service Worker (v1.0.0)
-const CACHE_NAME = '4you-study-v1';
+// 4You Study PWA Service Worker (v2.0.0 - Deployment-Resilient Cache)
+const CACHE_NAME = '4you-study-v2';
 const PRECACHE_ASSETS = [
-  '/',
-  '/index.html',
   '/manifest.webmanifest',
   '/icon.svg',
   '/icon-192.png',
@@ -25,32 +23,54 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         cacheNames
           .filter((name) => name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
+          .map((name) => {
+            console.info('[SW] Purging outdated cache:', name);
+            return caches.delete(name);
+          })
       );
     }).then(() => self.clients.claim())
   );
 });
 
 self.addEventListener('fetch', (event) => {
-  // Only handle GET requests and http/https schemes
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
   if (!url.protocol.startsWith('http')) return;
 
-  // For YouTube or external dictionary APIs, use direct network
-  if (url.hostname.includes('youtube.com') || url.hostname.includes('googlevideo.com') || url.hostname.includes('unsplash.com')) {
+  // 1. Bypass Service Worker completely for API, Video Streaming, and External APIs
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.hostname.includes('youtube.com') ||
+    url.hostname.includes('googlevideo.com') ||
+    url.hostname.includes('unsplash.com') ||
+    url.hostname.includes('dicebear.com')
+  ) {
     return;
   }
 
+  // 2. Navigation / HTML Requests: NETWORK-FIRST (Guarantees latest deployment chunk hashes)
+  if (event.request.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('.html')) {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return networkResponse;
+        })
+        .catch(() => {
+          // Offline fallback
+          return caches.match('/index.html') || caches.match('/');
+        })
+    );
+    return;
+  }
+
+  // 3. Static Assets: Cache-First with Network Fallback
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       if (cachedResponse) {
-        // Return cached asset and update cache in background (Stale-While-Revalidate)
-        fetch(event.request).then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse.clone()));
-          }
-        }).catch(() => {});
         return cachedResponse;
       }
 
@@ -65,11 +85,6 @@ self.addEventListener('fetch', (event) => {
         });
 
         return networkResponse;
-      }).catch(() => {
-        // If offline and navigating to a page, return cached index.html
-        if (event.request.mode === 'navigate') {
-          return caches.match('/index.html');
-        }
       });
     })
   );

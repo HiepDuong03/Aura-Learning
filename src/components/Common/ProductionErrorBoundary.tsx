@@ -55,6 +55,15 @@ export class ProductionErrorBoundary extends Component<Props, State> {
   }
 
   handleReset = (): void => {
+    const isDynamicImportFailure =
+      this.state.error?.message?.includes('dynamically imported module') ||
+      this.state.error?.message?.includes('Failed to fetch');
+
+    if (isDynamicImportFailure) {
+      window.location.reload();
+      return;
+    }
+
     this.setState({
       hasError: false,
       error: null,
@@ -70,17 +79,21 @@ export class ProductionErrorBoundary extends Component<Props, State> {
 
   /**
    * Safe Cache Recovery: Clears potentially corrupted localStorage caches
-   * without deleting user Anki progress in IndexedDB.
+   * and Service Worker caches without deleting user Anki progress in IndexedDB.
    */
-  handleSafeCacheReset = (): void => {
+  handleSafeCacheReset = async (): Promise<void> => {
     try {
       localStorage.removeItem('4you_lessons_v2');
       localStorage.removeItem('4you_custom_lessons_v1');
       localStorage.removeItem('4you_saved_words_v2');
       localStorage.removeItem('4you_scenarios_v2');
-      console.info('[Storage] Corrupted cache keys cleared successfully.');
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+      console.info('[Storage] Corrupted cache keys and SW caches cleared successfully.');
     } catch (e) {
-      console.warn('[Storage] Error clearing localStorage:', e);
+      console.warn('[Storage] Error clearing caches:', e);
     }
     window.location.reload();
   };

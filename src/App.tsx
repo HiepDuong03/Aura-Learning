@@ -20,13 +20,14 @@ import { BookOpen } from 'lucide-react';
 
 import { VideoStudyRoom } from './components/Player/VideoStudyRoom';
 import { ShortsView } from './components/Shorts/ShortsView';
+import { lazyWithRetry } from './utils/lazyWithRetry';
 
-// Code-Splitting: Lazy load secondary screen chunks for fast initial paint (<120kB)
-const VocabularyReview = React.lazy(() => import('./components/Review/VocabularyReview').then(m => ({ default: m.VocabularyReview })));
-const WordGarden = React.lazy(() => import('./components/Garden/WordGarden').then(m => ({ default: m.WordGarden })));
-const RapidSpeakingRoom = React.lazy(() => import('./components/Speaking/RapidSpeakingRoom').then(m => ({ default: m.RapidSpeakingRoom })));
-const ProfileScreen = React.lazy(() => import('./components/Profile/ProfileScreen').then(m => ({ default: m.ProfileScreen })));
-const ImportVideoModal = React.lazy(() => import('./components/Import/ImportVideoModal').then(m => ({ default: m.ImportVideoModal })));
+// Code-Splitting with Deployment Auto-Recovery: Lazy load secondary screen chunks (<120kB)
+const VocabularyReview = lazyWithRetry(() => import('./components/Review/VocabularyReview').then(m => ({ default: m.VocabularyReview })), 'VocabularyReview');
+const WordGarden = lazyWithRetry(() => import('./components/Garden/WordGarden').then(m => ({ default: m.WordGarden })), 'WordGarden');
+const RapidSpeakingRoom = lazyWithRetry(() => import('./components/Speaking/RapidSpeakingRoom').then(m => ({ default: m.RapidSpeakingRoom })), 'RapidSpeakingRoom');
+const ProfileScreen = lazyWithRetry(() => import('./components/Profile/ProfileScreen').then(m => ({ default: m.ProfileScreen })), 'ProfileScreen');
+const ImportVideoModal = lazyWithRetry(() => import('./components/Import/ImportVideoModal').then(m => ({ default: m.ImportVideoModal })), 'ImportVideoModal');
 
 const STORAGE_KEYS = {
   SAVED_WORDS: '4you_saved_words_v2',

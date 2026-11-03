@@ -121,7 +121,15 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 4. SPA Fallback: Serve dist/index.html for any unmatched client routes
+  // 4. Missing Static Asset Guard: Never serve index.html for assets or files with extensions
+  const fileExt = path.extname(pathname);
+  if (pathname.startsWith('/assets/') || (fileExt && fileExt !== '.html')) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end(`Asset not found: ${pathname}`);
+    return;
+  }
+
+  // 5. SPA Fallback: Serve dist/index.html for navigation routes
   const indexPath = path.join(DIST_DIR, 'index.html');
   if (fs.existsSync(indexPath)) {
     sendFile(res, indexPath, 'text/html; charset=utf-8');
