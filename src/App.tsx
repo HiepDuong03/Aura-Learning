@@ -13,6 +13,7 @@ import { SPEAKING_SCENARIOS, SpeakingScenario } from './data/speakingScenarios';
 import { lookupWord } from './services/dictionaryService';
 import { ankiDb, DEFAULT_PROFILE } from './services/ankiDatabase';
 import { authService } from './services/authService';
+import { ScopedStorage } from './services/scopedStorage';
 import { loadYouTubeIframeAPI } from './services/youtubeLoader';
 import { ProductionErrorBoundary } from './components/Common/ProductionErrorBoundary';
 import { LoadingFallback } from './components/Common/LoadingFallback';
@@ -25,6 +26,7 @@ import { WordGarden } from './components/Garden/WordGarden';
 import { RapidSpeakingRoom } from './components/Speaking/RapidSpeakingRoom';
 import { ProfileScreen } from './components/Profile/ProfileScreen';
 import { ImportVideoModal } from './components/Import/ImportVideoModal';
+import { AdminPanelModal } from './components/Admin/AdminPanelModal';
 
 const STORAGE_KEYS = {
   SAVED_WORDS: '4you_saved_words_v2',
@@ -52,26 +54,16 @@ export const App: React.FC = () => {
     setCurrentLessonMode(mode);
   };
 
-  // Persistent state with localStorage & IndexedDB backup
+  // Authentication & Session States (Defined first for proper scoped storage resolution)
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => authService.getCurrentUser());
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [isAdminModalOpen, setIsAdminModalOpen] = useState<boolean>(false);
+
+  // Persistent state with ScopedStorage & Database-per-User isolation
   const [lessons, setLessons] = useState<VideoLesson[]>(() => {
     try {
-      // 1. Try to load user-imported custom lessons from dedicated key
-      const savedCustom = localStorage.getItem(STORAGE_KEYS.CUSTOM_LESSONS);
-      let customList: VideoLesson[] = [];
-      if (savedCustom) {
-        const parsed = JSON.parse(savedCustom);
-        if (Array.isArray(parsed)) {
-          customList = parsed.filter((p): p is VideoLesson => Boolean(p && typeof p === 'object' && p.id && p.title));
-        }
-      } else {
-        const saved = localStorage.getItem(STORAGE_KEYS.LESSONS);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed)) {
-            customList = parsed.filter((p): p is VideoLesson => Boolean(p && typeof p === 'object' && p.id && (p.isCustom || (typeof p.id === 'string' && p.id.startsWith('lesson-custom-')))));
-          }
-        }
-      }
+      const user = authService.getCurrentUser();
+      const customList = ScopedStorage.getCustomLessons(user?.id);
       return [...customList, ...MOCK_LESSONS];
     } catch {
       return MOCK_LESSONS;
@@ -82,11 +74,15 @@ export const App: React.FC = () => {
 
   const [savedWords, setSavedWords] = useState<SavedWord[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.SAVED_WORDS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.filter((w): w is SavedWord => Boolean(w && typeof w === 'object' && typeof w.word === 'string' && w.word.trim().length > 0));
+      const user = authService.getCurrentUser();
+      const scoped = ScopedStorage.getSavedWords(user?.id);
+      if (scoped && scoped.length > 0) {
+        return scoped;
+      }
+      if (!user) {
+        const guestTransient = ScopedStorage.getGuestTransientWords();
+        if (guestTransient && guestTransient.length > 0) {
+          return guestTransient;
         }
       }
       return INITIAL_SAVED_WORDS;
@@ -97,8 +93,9 @@ export const App: React.FC = () => {
 
   const [scenarios, setScenarios] = useState<SpeakingScenario[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.SCENARIOS);
-      return saved ? JSON.parse(saved) : SPEAKING_SCENARIOS;
+      const user = authService.getCurrentUser();
+      const saved = ScopedStorage.getScenarios(user?.id);
+      return saved && saved.length > 0 ? saved : SPEAKING_SCENARIOS;
     } catch {
       return SPEAKING_SCENARIOS;
     }
@@ -106,8 +103,8 @@ export const App: React.FC = () => {
 
   const [streakDays, setStreakDays] = useState<number>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.STREAK);
-      return saved ? parseInt(saved, 10) : 5;
+      const user = authService.getCurrentUser();
+      return ScopedStorage.getStreakDays(user?.id);
     } catch {
       return 5;
     }
@@ -116,10 +113,6 @@ export const App: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isImportOpen, setIsImportOpen] = useState<boolean>(false);
 
-  // Authentication & Session States
-  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => authService.getCurrentUser());
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
-
   // Anki Multi-Profile States (Anki REA)
   const [profiles, setProfiles] = useState<AnkiUserProfile[]>([DEFAULT_PROFILE]);
   const [activeProfile, setActiveProfile] = useState<AnkiUserProfile>(DEFAULT_PROFILE);
@@ -127,6 +120,7 @@ export const App: React.FC = () => {
 
   const handleAuthSuccess = async (user: AuthUser) => {
     setCurrentUser(user);
+    ScopedStorage.clearGuestTransientWords();
     const token = authService.getToken();
     let words: SavedWord[] = [];
     if (token) {
@@ -140,7 +134,14 @@ export const App: React.FC = () => {
     setActiveProfile(active);
     if (words && words.length > 0) {
       setSavedWords(words);
+      ScopedStorage.setSavedWords(user.id, words);
+    } else {
+      setSavedWords(words || []);
     }
+
+    const dbCustom = await ankiDb.getCustomLessons();
+    const validCustom = (dbCustom || []).filter(c => Boolean(c && typeof c === 'object' && c.id && c.title));
+    setLessons([...validCustom, ...MOCK_LESSONS]);
   };
 
   const handleLogout = async () => {
@@ -150,8 +151,9 @@ export const App: React.FC = () => {
     const active = await ankiDb.getActiveProfile();
     setProfiles(loadedProfiles);
     setActiveProfile(active);
-    const words = await ankiDb.getAllWords(active.id);
-    setSavedWords(words);
+    const guestWords = await ankiDb.getAllWords();
+    setSavedWords(guestWords && guestWords.length > 0 ? guestWords : INITIAL_SAVED_WORDS);
+    setLessons(MOCK_LESSONS);
   };
 
   // Verify session & sync with cloud on boot
@@ -164,6 +166,7 @@ export const App: React.FC = () => {
           ankiDb.syncWithCloud(token, user.id).then((cloudWords) => {
             if (cloudWords && cloudWords.length > 0) {
               setSavedWords(cloudWords);
+              ScopedStorage.setSavedWords(user.id, cloudWords);
             }
           }).catch(console.warn);
         }
@@ -173,7 +176,8 @@ export const App: React.FC = () => {
 
   // Initialize Anki Local-First Database on boot with active profile & persistent custom lessons
   useEffect(() => {
-    ankiDb.init()
+    const user = authService.getCurrentUser();
+    ankiDb.init(user?.id)
       .then(async () => {
         const loadedProfiles = await ankiDb.getProfiles();
         const active = await ankiDb.getActiveProfile();
@@ -286,10 +290,10 @@ export const App: React.FC = () => {
     }
   };
 
-  // Sync to localStorage, Anki IndexedDB, and Cloud Server
+  // Sync to ScopedStorage, Anki IndexedDB, and Cloud Server
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEYS.SAVED_WORDS, JSON.stringify(savedWords));
+      ScopedStorage.setSavedWords(currentUser?.id, savedWords);
       ankiDb.saveWords(savedWords, activeProfile.id).catch(() => {});
 
       const token = authService.getToken();
@@ -314,34 +318,34 @@ export const App: React.FC = () => {
   useEffect(() => {
     try {
       const customOnly = lessons.filter(l => Boolean(l && (l.isCustom || (typeof l.id === 'string' && l.id.startsWith('lesson-custom-')))));
-      localStorage.setItem(STORAGE_KEYS.CUSTOM_LESSONS, JSON.stringify(customOnly));
-      localStorage.setItem(STORAGE_KEYS.LESSONS, JSON.stringify(lessons));
+      ScopedStorage.setCustomLessons(currentUser?.id, customOnly);
     } catch (e) {
-      console.warn('localStorage error', e);
+      console.warn('ScopedStorage lessons error', e);
     }
-  }, [lessons]);
+  }, [lessons, currentUser]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEYS.SCENARIOS, JSON.stringify(scenarios));
+      ScopedStorage.setScenarios(currentUser?.id, scenarios);
     } catch (e) {
-      console.warn('localStorage error', e);
+      console.warn('ScopedStorage scenarios error', e);
     }
-  }, [scenarios]);
+  }, [scenarios, currentUser]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEYS.STREAK, streakDays.toString());
+      ScopedStorage.setStreakDays(currentUser?.id, streakDays);
     } catch (e) {
-      console.warn('localStorage error', e);
+      console.warn('ScopedStorage streak error', e);
     }
-  }, [streakDays]);
+  }, [streakDays, currentUser]);
 
   // Real-world daily streak tracking based on calendar date
   useEffect(() => {
     try {
       const today = new Date().toISOString().split('T')[0];
-      const lastActive = localStorage.getItem(STORAGE_KEYS.LAST_ACTIVE);
+      const streakKey = currentUser ? `4you_u_${currentUser.id}_last_active` : '4you_guest_last_active';
+      const lastActive = localStorage.getItem(streakKey);
       if (lastActive) {
         const lastDate = new Date(lastActive);
         const currDate = new Date(today);
@@ -349,19 +353,19 @@ export const App: React.FC = () => {
         if (diffDays === 1) {
           // Exactly 1 day since last login -> Increment continuous streak!
           setStreakDays(prev => prev + 1);
-          localStorage.setItem(STORAGE_KEYS.LAST_ACTIVE, today);
+          localStorage.setItem(streakKey, today);
         } else if (diffDays > 1) {
           // Missed more than 1 day -> Reset streak to 1
           setStreakDays(1);
-          localStorage.setItem(STORAGE_KEYS.LAST_ACTIVE, today);
+          localStorage.setItem(streakKey, today);
         }
       } else {
-        localStorage.setItem(STORAGE_KEYS.LAST_ACTIVE, today);
+        localStorage.setItem(streakKey, today);
       }
     } catch (e) {
       console.warn('Streak error', e);
     }
-  }, []);
+  }, [currentUser]);
 
   // Word Lookup Popup State
   const [wordModal, setWordModal] = useState<{
@@ -449,6 +453,11 @@ export const App: React.FC = () => {
       };
       setSavedWords((prev) => [newWord, ...prev]);
       ankiDb.saveWord(newWord).catch(console.warn);
+
+      // Track guest transient words for optional migration when registering
+      if (!currentUser) {
+        ScopedStorage.addGuestTransientWord(newWord);
+      }
     }
   };
 
@@ -573,6 +582,8 @@ export const App: React.FC = () => {
         }}
         savedWordsCount={savedWords.length}
         streakDays={streakDays}
+        currentUser={currentUser}
+        onOpenAdmin={() => setIsAdminModalOpen(true)}
       />
 
       {/* Main Content Area (offset by sidebar on desktop) */}
@@ -587,6 +598,7 @@ export const App: React.FC = () => {
           onOpenProfileSwitcher={() => setIsProfileSwitcherOpen(true)}
           onOpenAuth={() => setIsAuthModalOpen(true)}
           onLogout={handleLogout}
+          onOpenAdmin={() => setIsAdminModalOpen(true)}
         />
 
         <main className="flex-1 p-4 lg:p-8 max-w-7xl mx-auto w-full pb-24 lg:pb-12">
@@ -694,7 +706,10 @@ export const App: React.FC = () => {
                     setSavedWords(INITIAL_SAVED_WORDS);
                     setLessons(MOCK_LESSONS);
                     setStreakDays(1);
-                    localStorage.clear();
+                    ScopedStorage.setSavedWords(currentUser?.id, INITIAL_SAVED_WORDS);
+                    ScopedStorage.setCustomLessons(currentUser?.id, []);
+                    ScopedStorage.setStreakDays(currentUser?.id, 1);
+                    ScopedStorage.clearGuestTransientWords();
                     ankiDb.saveWords(INITIAL_SAVED_WORDS).catch(console.warn);
                   }}
                   onImportWords={(imported) => {
@@ -757,7 +772,13 @@ export const App: React.FC = () => {
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         onSuccess={handleAuthSuccess}
-        initialWords={savedWords}
+        guestWordsToMigrate={currentUser ? [] : ScopedStorage.getGuestTransientWords()}
+      />
+
+      {/* Admin RBAC Management Panel */}
+      <AdminPanelModal
+        isOpen={isAdminModalOpen}
+        onClose={() => setIsAdminModalOpen(false)}
       />
     </div>
   );

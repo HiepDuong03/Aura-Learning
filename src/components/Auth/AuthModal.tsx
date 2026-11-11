@@ -22,7 +22,7 @@ interface AuthModalProps {
   onClose: () => void;
   onSuccess: (user: AuthUser) => void;
   initialMode?: 'login' | 'register';
-  initialWords?: SavedWord[];
+  guestWordsToMigrate?: SavedWord[];
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
@@ -30,7 +30,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onClose,
   onSuccess,
   initialMode = 'login',
-  initialWords = []
+  guestWordsToMigrate = []
 }) => {
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   const [isGoogleView, setIsGoogleView] = useState<boolean>(false);
@@ -65,7 +65,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   setIsLoading(true);
                   setError(null);
                   try {
-                    const user = await authService.loginWithGoogle({ credential: response.credential }, initialWords);
+                    const user = await authService.loginWithGoogle({ credential: response.credential }, guestWordsToMigrate);
                     confetti({ particleCount: 80, spread: 60, origin: { y: 0.6 } });
                     onSuccess(user);
                     onClose();
@@ -94,7 +94,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, initialWords, onSuccess, onClose]);
+  }, [isOpen, guestWordsToMigrate, onSuccess, onClose]);
 
   if (!isOpen) return null;
 
@@ -116,7 +116,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (mode === 'login') {
         user = await authService.login(email, password);
       } else {
-        user = await authService.register(name, email, password, initialWords);
+        user = await authService.register(name, email, password, guestWordsToMigrate);
       }
 
       confetti({ particleCount: 80, spread: 60, origin: { y: 0.6 } });
@@ -145,7 +145,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         email: clean,
         name: clean.split('@')[0],
         avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(clean)}`
-      }, initialWords);
+      }, guestWordsToMigrate);
 
       confetti({ particleCount: 80, spread: 60, origin: { y: 0.6 } });
       onSuccess(user);
@@ -183,7 +183,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   name: googleProfile.name || googleProfile.given_name || googleProfile.email.split('@')[0],
                   avatar: googleProfile.picture,
                   googleId: googleProfile.sub
-                }, initialWords);
+                }, guestWordsToMigrate);
 
                 confetti({ particleCount: 80, spread: 60, origin: { y: 0.6 } });
                 onSuccess(user);

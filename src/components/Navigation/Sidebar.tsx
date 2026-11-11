@@ -9,8 +9,10 @@ import {
   Sprout, 
   User,
   Sparkles,
-  Flame
+  Flame,
+  ShieldCheck
 } from 'lucide-react';
+import { AuthUser } from '../../types';
 
 export type ActiveTab = 'home' | 'shorts' | 'words' | 'listening' | 'speaking' | 'review' | 'garden' | 'profile';
 
@@ -19,13 +21,17 @@ interface SidebarProps {
   onSelectTab: (tab: ActiveTab) => void;
   savedWordsCount: number;
   streakDays: number;
+  currentUser?: AuthUser | null;
+  onOpenAdmin?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   onSelectTab,
   savedWordsCount,
-  streakDays
+  streakDays,
+  currentUser,
+  onOpenAdmin
 }) => {
   const navItems: { id: ActiveTab; label: string; icon: React.ComponentType<{ className?: string }>; color: string; badge?: string | number }[] = [
     { id: 'home', label: 'Trang chủ', icon: Home, color: 'text-teal-600' },
@@ -128,6 +134,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span>Hồ sơ học tập</span>
           </button>
         </div>
+
+        {currentUser?.role === 'admin' && onOpenAdmin && (
+          <div className="pt-2 px-1">
+            <button
+              onClick={onOpenAdmin}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 rounded-2xl text-xs font-black bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition-all shadow-xs"
+            >
+              <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>Quản trị Hệ thống</span>
+            </button>
+          </div>
+        )}
       </nav>
 
       {/* Pro Badge Footer */}

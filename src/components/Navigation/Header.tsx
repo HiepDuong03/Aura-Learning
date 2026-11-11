@@ -24,6 +24,7 @@ interface HeaderProps {
   onOpenProfileSwitcher?: () => void;
   onOpenAuth?: () => void;
   onLogout?: () => void;
+  onOpenAdmin?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -36,6 +37,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenProfileSwitcher,
   onOpenAuth,
   onLogout,
+  onOpenAdmin,
 }) => {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
@@ -141,6 +143,20 @@ export const Header: React.FC<HeaderProps> = ({
                       </span>
                     </div>
                   </div>
+
+                  {currentUser.role === 'admin' && onOpenAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsUserMenuOpen(false);
+                        onOpenAdmin();
+                      }}
+                      className="w-full px-3 py-2 text-left text-xs font-black text-amber-800 bg-amber-50 hover:bg-amber-100 rounded-xl flex items-center gap-2 transition-colors"
+                    >
+                      <ShieldCheck className="w-4 h-4 text-amber-600" />
+                      <span>Bảng Quản Trị Hệ Thống</span>
+                    </button>
+                  )}
 
                   <button
                     type="button"

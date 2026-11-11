@@ -7,8 +7,8 @@
  */
 
 import { SavedWord, AnkiReviewLogEntry, AnkiCollectionStats, AnkiUserProfile, VideoLesson } from '../types';
+import { ScopedStorage } from './scopedStorage';
 
-const DB_NAME = '4you_anki_db_v1';
 const DB_VERSION = 3;
 
 const STORES = {
@@ -33,22 +33,53 @@ export class AnkiDatabase {
   private isInitializing: Promise<void> | null = null;
   private currentUsn: number = 0;
   private activeProfileId: string = 'prof_default';
+  private currentUserId: string | null = null;
+
+  public getDbName(userId?: string | null): string {
+    const clean = (userId || '').trim();
+    return clean ? `4you_anki_db_u_${clean}` : '4you_anki_db_guest';
+  }
 
   /**
-   * Initializes the IndexedDB database and migrates data from legacy localStorage if necessary
+   * Seamlessly switches to another user's physical IndexedDB database partition
    */
-  public async init(): Promise<void> {
+  public async switchUser(userId: string | null): Promise<void> {
+    if (this.currentUserId === userId && this.db) {
+      return;
+    }
+    if (this.db) {
+      try {
+        this.db.close();
+      } catch {}
+      this.db = null;
+    }
+    this.currentUserId = userId;
+    this.activeProfileId = userId || 'prof_default';
+    this.isInitializing = null;
+    await this.init(userId);
+  }
+
+  /**
+   * Initializes the IndexedDB database for current or specified user
+   */
+  public async init(userId?: string | null): Promise<void> {
+    if (userId !== undefined) {
+      this.currentUserId = userId;
+      this.activeProfileId = userId || 'prof_default';
+    }
     if (this.db) return;
     if (this.isInitializing) return this.isInitializing;
 
+    const dbName = this.getDbName(this.currentUserId);
+
     this.isInitializing = new Promise<void>((resolve) => {
       if (typeof window === 'undefined' || !window.indexedDB) {
-        console.warn('[AnkiDB] IndexedDB is not supported in this environment. Falling back to localStorage.');
+        console.warn('[AnkiDB] IndexedDB is not supported in this environment. Falling back to ScopedStorage.');
         resolve();
         return;
       }
 
-      const request = window.indexedDB.open(DB_NAME, DB_VERSION);
+      const request = window.indexedDB.open(dbName, DB_VERSION);
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
@@ -329,12 +360,7 @@ export class AnkiDatabase {
    */
   public async getCustomLessons(): Promise<VideoLesson[]> {
     if (!this.db) {
-      try {
-        const raw = localStorage.getItem('4you_custom_lessons_v1');
-        return raw ? JSON.parse(raw) : [];
-      } catch {
-        return [];
-      }
+      return ScopedStorage.getCustomLessons(this.currentUserId);
     }
 
     return new Promise((resolve) => {
@@ -349,34 +375,21 @@ export class AnkiDatabase {
 
         request.onsuccess = () => {
           const lessons = (request.result as VideoLesson[]) || [];
-          // Sort by creation time descending (most recently imported first)
           lessons.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
           resolve(lessons);
         };
 
         request.onerror = () => {
-          console.warn('[AnkiDB] Failed to fetch custom lessons from IndexedDB, falling back to localStorage');
-          try {
-            const raw = localStorage.getItem('4you_custom_lessons_v1');
-            resolve(raw ? JSON.parse(raw) : []);
-          } catch {
-            resolve([]);
-          }
+          resolve(ScopedStorage.getCustomLessons(this.currentUserId));
         };
       } catch (err) {
-        console.warn('[AnkiDB] getCustomLessons transaction error:', err);
-        try {
-          const raw = localStorage.getItem('4you_custom_lessons_v1');
-          resolve(raw ? JSON.parse(raw) : []);
-        } catch {
-          resolve([]);
-        }
+        resolve(ScopedStorage.getCustomLessons(this.currentUserId));
       }
     });
   }
 
   /**
-   * Saves or updates a user-imported custom lesson in IndexedDB and localStorage mirror
+   * Saves or updates a user-imported custom lesson in IndexedDB and scoped storage
    */
   public async saveCustomLesson(lesson: VideoLesson): Promise<void> {
     const formattedLesson: VideoLesson = {
@@ -400,21 +413,21 @@ export class AnkiDatabase {
       });
     }
 
-    // Mirror to localStorage (only custom lessons to avoid 5MB quota errors)
+    // Mirror to ScopedStorage partitioned by userId
     try {
       const allCustom = await this.getCustomLessons();
       const exists = allCustom.some(l => l.id === formattedLesson.id);
       const updated = exists
         ? allCustom.map(l => l.id === formattedLesson.id ? formattedLesson : l)
         : [formattedLesson, ...allCustom];
-      localStorage.setItem('4you_custom_lessons_v1', JSON.stringify(updated));
+      ScopedStorage.setCustomLessons(this.currentUserId, updated);
     } catch {
       // Safe ignore storage quota
     }
   }
 
   /**
-   * Deletes a user-imported custom lesson from IndexedDB and localStorage
+   * Deletes a user-imported custom lesson from IndexedDB and scoped storage
    */
   public async deleteCustomLesson(lessonId: string): Promise<void> {
     if (this.db && this.db.objectStoreNames.contains(STORES.CUSTOM_LESSONS)) {
@@ -435,26 +448,19 @@ export class AnkiDatabase {
     try {
       const allCustom = await this.getCustomLessons();
       const filtered = allCustom.filter(l => l.id !== lessonId);
-      localStorage.setItem('4you_custom_lessons_v1', JSON.stringify(filtered));
+      ScopedStorage.setCustomLessons(this.currentUserId, filtered);
     } catch {
       // Safe ignore
     }
   }
 
   /**
-   * Retrieves words for a specific profile (or active profile)
+   * Retrieves words for a specific profile (or active profile).
+   * Since IndexedDB is partitioned per-user, results are strictly isolated.
    */
   public async getAllWords(profileId?: string): Promise<SavedWord[]> {
-    const targetProfileId = profileId || this.activeProfileId;
-
     if (!this.db) {
-      try {
-        const raw = localStorage.getItem('4you_saved_words_v2');
-        const words: SavedWord[] = raw ? JSON.parse(raw) : [];
-        return words.filter(w => !w.profileId || w.profileId === targetProfileId || targetProfileId === DEFAULT_PROFILE.id);
-      } catch {
-        return [];
-      }
+      return ScopedStorage.getSavedWords(this.currentUserId);
     }
 
     return new Promise((resolve, reject) => {
@@ -465,10 +471,7 @@ export class AnkiDatabase {
 
         request.onsuccess = () => {
           const allWords = (request.result as SavedWord[]) || [];
-          const profileWords = allWords.filter(w => 
-            !w.profileId || w.profileId === targetProfileId || (targetProfileId === DEFAULT_PROFILE.id && w.profileId === 'prof_default')
-          );
-          resolve(profileWords);
+          resolve(allWords);
         };
 
         request.onerror = () => {
@@ -481,10 +484,10 @@ export class AnkiDatabase {
   }
 
   /**
-   * Saves a single word into IndexedDB and updates localStorage mirror
+   * Saves a single word into IndexedDB and updates ScopedStorage mirror
    */
   public async saveWord(word: SavedWord, profileId?: string): Promise<void> {
-    const targetProfileId = profileId || word.profileId || this.activeProfileId;
+    const targetProfileId = profileId || word.profileId || this.activeProfileId || this.currentUserId || 'prof_default';
     const wordWithSync: SavedWord = {
       ...word,
       profileId: targetProfileId,
@@ -507,10 +510,10 @@ export class AnkiDatabase {
       });
     }
 
-    // Mirror to localStorage for dual-resilience
+    // Mirror to ScopedStorage for user-isolated cache
     try {
       const all = await this.getAllWords();
-      localStorage.setItem('4you_saved_words_v2', JSON.stringify(all));
+      ScopedStorage.setSavedWords(this.currentUserId, all);
     } catch {
       // Safe ignore storage quota
     }
@@ -520,10 +523,10 @@ export class AnkiDatabase {
    * Batch saves words into IndexedDB
    */
   public async saveWords(words: SavedWord[], profileId?: string): Promise<void> {
-    const targetProfileId = profileId || this.activeProfileId;
+    const targetProfileId = profileId || this.activeProfileId || this.currentUserId || 'prof_default';
 
     if (!this.db) {
-      localStorage.setItem('4you_saved_words_v2', JSON.stringify(words));
+      ScopedStorage.setSavedWords(this.currentUserId, words);
       return;
     }
 
@@ -543,7 +546,7 @@ export class AnkiDatabase {
 
         transaction.oncomplete = () => {
           try {
-            localStorage.setItem('4you_saved_words_v2', JSON.stringify(words));
+            ScopedStorage.setSavedWords(this.currentUserId, words);
           } catch {
             // Safe ignore
           }
@@ -565,7 +568,7 @@ export class AnkiDatabase {
   public async syncWithCloud(token: string, profileId?: string): Promise<SavedWord[]> {
     if (!token) return this.getAllWords(profileId);
 
-    const targetProfile = profileId || this.activeProfileId;
+    const targetProfile = profileId || this.activeProfileId || this.currentUserId || 'prof_default';
     const localWords = await this.getAllWords(targetProfile);
 
     try {
@@ -607,9 +610,9 @@ export class AnkiDatabase {
         });
       }
 
-      // Update mirror in localStorage
+      // Update mirror in ScopedStorage
       try {
-        localStorage.setItem('4you_saved_words_v2', JSON.stringify(serverWords));
+        ScopedStorage.setSavedWords(this.currentUserId, serverWords);
       } catch {}
 
       console.info(`[Anki Cloud Sync] Successfully synced ${serverWords.length} words with cloud.`);
@@ -648,10 +651,10 @@ export class AnkiDatabase {
       });
     }
 
-    // Mirror update to localStorage
+    // Mirror update to ScopedStorage
     try {
       const all = await this.getAllWords();
-      localStorage.setItem('4you_saved_words_v2', JSON.stringify(all));
+      ScopedStorage.setSavedWords(this.currentUserId, all);
     } catch {
       // Safe ignore
     }

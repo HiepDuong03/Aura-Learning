@@ -84,6 +84,7 @@ class AuthService {
         };
         this.currentUser = user;
         localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(user));
+        await ankiDb.switchUser(user.id);
         lingqWordService.setAuth(token, user.id);
         return user;
       } else if (res.status === 401) {
@@ -153,6 +154,9 @@ class AuthService {
     localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(authUser));
     localStorage.setItem(STORAGE_KEYS.TOKEN, data.token);
 
+    // Switch physical IndexedDB partition to this user
+    await ankiDb.switchUser(authUser.id);
+
     // Sync profile & vocabulary locally
     try {
       const newProfile = await ankiDb.createProfile(cleanName, authUser.avatar);
@@ -215,6 +219,9 @@ class AuthService {
     this.token = data.token;
     localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(authUser));
     localStorage.setItem(STORAGE_KEYS.TOKEN, data.token);
+
+    // Switch physical IndexedDB partition to this user
+    await ankiDb.switchUser(authUser.id);
 
     // Switch/create local Anki profile
     try {
@@ -307,6 +314,9 @@ class AuthService {
     localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(authUser));
     localStorage.setItem(STORAGE_KEYS.TOKEN, data.token);
 
+    // Switch physical IndexedDB partition to this user
+    await ankiDb.switchUser(authUser.id);
+
     // Switch or create local Anki profile for Google user
     try {
       const allProfiles = await ankiDb.getProfiles();
@@ -353,6 +363,8 @@ class AuthService {
     lingqWordService.setAuth(null, null);
 
     try {
+      // Physically switch back to guest IndexedDB database
+      await ankiDb.switchUser(null);
       await ankiDb.setActiveProfile(DEFAULT_PROFILE.id);
     } catch {
       // Safe ignore
