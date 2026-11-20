@@ -332,30 +332,6 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleUpdateAccountEmail = async (profileId: string, email: string) => {
-    try {
-      const prof = profiles.find(p => p.id === profileId);
-      if (prof) {
-        const updated: AnkiUserProfile = {
-          ...prof,
-          cloudAccount: {
-            email,
-            isLinked: true,
-            lastSyncedAt: Date.now()
-          }
-        };
-        await ankiDb.updateProfile(updated);
-        const all = await ankiDb.getProfiles();
-        setProfiles(all);
-        if (activeProfile.id === profileId) {
-          setActiveProfile(updated);
-        }
-      }
-    } catch (e) {
-      console.warn('[AnkiProfile] Update email error:', e);
-    }
-  };
-
   // Sync to ScopedStorage, Anki IndexedDB, and Cloud Server (only after boot hydration completes)
   useEffect(() => {
     if (!isBootHydrated) return;
@@ -989,10 +965,12 @@ export const App: React.FC = () => {
         onClose={() => setIsProfileSwitcherOpen(false)}
         profiles={profiles}
         activeProfileId={activeProfile.id}
+        currentUser={currentUser}
+        streakDays={streakDays}
         onSwitchProfile={handleSwitchProfile}
         onCreateProfile={handleCreateProfile}
         onDeleteProfile={handleDeleteProfile}
-        onUpdateAccountEmail={handleUpdateAccountEmail}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
       />
 
       {/* Authentication Modal (Register / Login) */}

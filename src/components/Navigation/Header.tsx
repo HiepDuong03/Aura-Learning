@@ -187,35 +187,14 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </div>
           ) : (
-            <div className="flex items-center gap-2">
-              {/* Profile Pill for Guest */}
-              {activeProfile && (
-                <button
-                  type="button"
-                  onClick={onOpenProfileSwitcher}
-                  className="hidden sm:flex items-center gap-1.5 h-10 px-3 rounded-full border border-slate-200 bg-white hover:bg-slate-50 transition-colors shadow-xs text-xs font-bold text-slate-700"
-                  title="Chuyển đổi hồ sơ Anki cục bộ"
-                >
-                  <img
-                    src={activeProfile.avatar}
-                    alt={activeProfile.name}
-                    className="size-5 rounded-full object-cover ring-1 ring-slate-300 shrink-0"
-                  />
-                  <span className="max-w-[80px] truncate">{activeProfile.name}</span>
-                  <ChevronDown className="w-3 h-3 text-slate-400" />
-                </button>
-              )}
-
-              {/* Login / Register Button */}
-              <button
-                type="button"
-                onClick={onOpenAuth}
-                className="flex items-center gap-1.5 h-10 px-3.5 sm:px-4 rounded-full bg-teal-600 hover:bg-teal-700 text-white font-black text-xs shadow-md shadow-teal-600/20 transition-all active:scale-95"
-              >
-                <LogIn className="w-4 h-4" />
-                <span>Đăng Nhập</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={onOpenAuth}
+              className="flex items-center gap-1.5 h-10 px-3.5 sm:px-4 rounded-full bg-teal-600 hover:bg-teal-700 text-white font-black text-xs shadow-md shadow-teal-600/20 transition-all active:scale-95"
+            >
+              <LogIn className="w-4 h-4" />
+              <span>Đăng Nhập</span>
+            </button>
           )}
 
           {/* Language Pair Selector */}
