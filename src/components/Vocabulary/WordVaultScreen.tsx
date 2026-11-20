@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { speakWord } from '../../services/dictionaryService';
 import { lingqWordService } from '../../services/lingqWordService';
-import { calculateRetrievability } from '../../services/ankiScheduler';
+import { calculateFsrsRetrievability } from '../../services/fsrsScheduler';
 import { useNotify } from '../Common/ToastProvider';
 
 interface WordVaultScreenProps {
@@ -327,7 +327,7 @@ export const WordVaultScreen: React.FC<WordVaultScreenProps> = ({
             const isEditing = editingWordId === word.id;
             const isDue = !word.dueAt || word.dueAt <= now;
             const isPhrase = word.word.trim().includes(' ');
-            const retrievability = calculateRetrievability(word);
+            const retrievability = calculateFsrsRetrievability(word, now);
             const lingqStatus = lingqWordService.getWordStatus(word.word);
             const lingqLabel = lingqWordService.getStatusLabel(lingqStatus).label;
             const hasVideoJump = Boolean(onOpenWordInVideo && (word.sourceLessonId || word.sourceYoutubeId));

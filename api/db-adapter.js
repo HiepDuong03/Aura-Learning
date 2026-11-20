@@ -205,6 +205,9 @@ class LocalFileDbAdapter {
         state: card.state,
         dueAt: card.dueAt,
         lastReviewedAt: card.lastReviewedAt,
+        stability: typeof card.stability === 'number' ? card.stability : undefined,
+        difficulty: typeof card.difficulty === 'number' ? card.difficulty : undefined,
+        schedulerVersion: card.schedulerVersion || undefined,
         usn: card.usn,
         isDirty: false,
         profileId: card.profileId
@@ -299,6 +302,9 @@ class LocalFileDbAdapter {
           lapses: typeof inc.lapses === 'number' ? inc.lapses : 0,
           dueAt: inc.dueAt || now,
           lastReviewedAt: inc.lastReviewedAt || now,
+          stability: typeof inc.stability === 'number' ? inc.stability : existingCard?.stability,
+          difficulty: typeof inc.difficulty === 'number' ? inc.difficulty : existingCard?.difficulty,
+          schedulerVersion: inc.schedulerVersion || existingCard?.schedulerVersion || undefined,
           usn: Math.max(incUsn, prevUsn) + 1,
           createdAt: existingCard?.createdAt || inc.savedAt || now
         };
@@ -561,6 +567,9 @@ class PostgresDbAdapter {
         ALTER TABLE user_vocabulary_notes ADD COLUMN IF NOT EXISTS source_video_title VARCHAR(255);
         ALTER TABLE user_vocabulary_notes ADD COLUMN IF NOT EXISTS source_youtube_id VARCHAR(64);
         ALTER TABLE user_vocabulary_notes ADD COLUMN IF NOT EXISTS source_timestamp_sec FLOAT;
+        ALTER TABLE srs_cards ADD COLUMN IF NOT EXISTS stability FLOAT;
+        ALTER TABLE srs_cards ADD COLUMN IF NOT EXISTS difficulty FLOAT;
+        ALTER TABLE srs_cards ADD COLUMN IF NOT EXISTS scheduler_version VARCHAR(16);
 
         CREATE TABLE IF NOT EXISTS user_learning_state (
           user_id VARCHAR(128) PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -706,7 +715,7 @@ class PostgresDbAdapter {
     const res = await this.pool.query(`
       SELECT
         c.id, c.state, c.ease_factor, c.interval_days, c.repetitions, c.lapses,
-        c.due_at, c.last_reviewed_at, c.usn, c.created_at, c.profile_id,
+        c.due_at, c.last_reviewed_at, c.stability, c.difficulty, c.scheduler_version, c.usn, c.created_at, c.profile_id,
         n.custom_translation, n.context_sentence, n.source_lesson_id, n.source_video_title, n.source_youtube_id, n.source_timestamp_sec,
         w.lemma, w.phonetic, w.part_of_speech, w.default_translation_vi, w.definition_en
       FROM srs_cards c
@@ -736,6 +745,9 @@ class PostgresDbAdapter {
       state: r.state,
       dueAt: Number(r.due_at),
       lastReviewedAt: r.last_reviewed_at ? Number(r.last_reviewed_at) : Number(r.created_at),
+      stability: r.stability !== null && r.stability !== undefined ? Number(r.stability) : undefined,
+      difficulty: r.difficulty !== null && r.difficulty !== undefined ? Number(r.difficulty) : undefined,
+      schedulerVersion: r.scheduler_version || undefined,
       usn: Number(r.usn),
       isDirty: false,
       profileId: r.profile_id
@@ -815,17 +827,20 @@ class PostgresDbAdapter {
         const cardId = `card_${noteId}`;
         const incUsn = Number(inc.usn || 0);
         await client.query(`
-          INSERT INTO srs_cards (id, note_id, user_id, profile_id, card_type, state, ease_factor, interval_days, repetitions, lapses, due_at, last_reviewed_at, usn, created_at)
-          VALUES ($1, $2, $3, $4, 'recognition', $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          INSERT INTO srs_cards (id, note_id, user_id, profile_id, card_type, state, ease_factor, interval_days, repetitions, lapses, due_at, last_reviewed_at, stability, difficulty, scheduler_version, usn, created_at)
+          VALUES ($1, $2, $3, $4, 'recognition', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
           ON CONFLICT (id) DO UPDATE SET
-            state = CASE WHEN $12 >= srs_cards.usn THEN EXCLUDED.state ELSE srs_cards.state END,
-            ease_factor = CASE WHEN $12 >= srs_cards.usn THEN EXCLUDED.ease_factor ELSE srs_cards.ease_factor END,
-            interval_days = CASE WHEN $12 >= srs_cards.usn THEN EXCLUDED.interval_days ELSE srs_cards.interval_days END,
-            repetitions = CASE WHEN $12 >= srs_cards.usn THEN EXCLUDED.repetitions ELSE srs_cards.repetitions END,
-            lapses = CASE WHEN $12 >= srs_cards.usn THEN EXCLUDED.lapses ELSE srs_cards.lapses END,
-            due_at = CASE WHEN $12 >= srs_cards.usn THEN EXCLUDED.due_at ELSE srs_cards.due_at END,
-            last_reviewed_at = CASE WHEN $12 >= srs_cards.usn THEN EXCLUDED.last_reviewed_at ELSE srs_cards.last_reviewed_at END,
-            usn = GREATEST(srs_cards.usn, $12) + 1
+            state = CASE WHEN $15 >= srs_cards.usn THEN EXCLUDED.state ELSE srs_cards.state END,
+            ease_factor = CASE WHEN $15 >= srs_cards.usn THEN EXCLUDED.ease_factor ELSE srs_cards.ease_factor END,
+            interval_days = CASE WHEN $15 >= srs_cards.usn THEN EXCLUDED.interval_days ELSE srs_cards.interval_days END,
+            repetitions = CASE WHEN $15 >= srs_cards.usn THEN EXCLUDED.repetitions ELSE srs_cards.repetitions END,
+            lapses = CASE WHEN $15 >= srs_cards.usn THEN EXCLUDED.lapses ELSE srs_cards.lapses END,
+            due_at = CASE WHEN $15 >= srs_cards.usn THEN EXCLUDED.due_at ELSE srs_cards.due_at END,
+            last_reviewed_at = CASE WHEN $15 >= srs_cards.usn THEN EXCLUDED.last_reviewed_at ELSE srs_cards.last_reviewed_at END,
+            stability = CASE WHEN $15 >= srs_cards.usn THEN COALESCE(EXCLUDED.stability, srs_cards.stability) ELSE srs_cards.stability END,
+            difficulty = CASE WHEN $15 >= srs_cards.usn THEN COALESCE(EXCLUDED.difficulty, srs_cards.difficulty) ELSE srs_cards.difficulty END,
+            scheduler_version = CASE WHEN $15 >= srs_cards.usn THEN COALESCE(EXCLUDED.scheduler_version, srs_cards.scheduler_version) ELSE srs_cards.scheduler_version END,
+            usn = GREATEST(srs_cards.usn, $15) + 1
         `, [
           cardId,
           noteId,
@@ -838,6 +853,9 @@ class PostgresDbAdapter {
           Number(inc.lapses || 0),
           Number(inc.dueAt || now),
           Number(inc.lastReviewedAt || now),
+          typeof inc.stability === 'number' ? inc.stability : null,
+          typeof inc.difficulty === 'number' ? inc.difficulty : null,
+          inc.schedulerVersion || null,
           incUsn + 1,
           inc.savedAt || now
         ]);

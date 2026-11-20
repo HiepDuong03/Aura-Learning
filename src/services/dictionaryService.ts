@@ -1,4 +1,4 @@
-import { ContextExplanation, WordDefinition } from '../types';
+import { ContextExplanation, SentenceEvaluationResult, WordDefinition } from '../types';
 
 // Built-in offline quick dictionary for instant zero-latency responses
 const BUILTIN_DICT: Record<string, WordDefinition> = {
@@ -225,6 +225,42 @@ export async function explainInContext(params: {
   return data as ContextExplanation;
 }
 
+export async function evaluateSentencePractice(params: {
+  targetWord: string;
+  userSentence: string;
+  scenario: 'work' | 'daily';
+  contextSentence?: string;
+  token?: string | null;
+}): Promise<SentenceEvaluationResult> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  };
+  if (params.token) {
+    headers.Authorization = `Bearer ${params.token}`;
+  }
+
+  const res = await fetch('/api/ai/evaluate-sentence', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      targetWord: params.targetWord,
+      userSentence: params.userSentence,
+      scenario: params.scenario,
+      contextSentence: params.contextSentence || ''
+    })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const errMsg = typeof data?.error === 'string' && data.error
+      ? data.error
+      : `Không thể chấm câu bằng AI (HTTP ${res.status})`;
+    throw new Error(errMsg);
+  }
+
+  return data as SentenceEvaluationResult;
+}
+
 /**
  * Dịch hàng loạt phụ đề qua Backend Proxy (/api/dict/translate-batch) để tránh bị Google rate-limit trực tiếp từ browser.
  */
@@ -270,16 +306,35 @@ export async function batchTranslateSubtitles(
 // Current active audio instance to prevent overlapping speech
 let currentAudio: HTMLAudioElement | null = null;
 
+export interface SpeakCallbacks {
+  onStart?: () => void;
+  onEnd?: () => void;
+}
+
 /**
  * Phát âm tiếng Anh tự nhiên (Natural Human-like Audio)
  * Ưu tiên:
  * 1. Google Neural Speech Stream (Âm thanh tự nhiên, ngữ điệu chuẩn bản xứ)
  * 2. Microsoft Natural Online / Google US English Neural Voices (không bị máy móc như David Desktop)
  */
-export function speakWord(text: string, lang: 'en' | 'zh' = 'en', rate: number = 0.95) {
-  if (!text || !text.trim()) return;
+export function speakWord(
+  text: string,
+  lang: 'en' | 'zh' = 'en',
+  rate: number = 0.95,
+  callbacks?: SpeakCallbacks
+) {
+  if (!text || !text.trim()) {
+    callbacks?.onEnd?.();
+    return;
+  }
 
   const cleanText = text.trim();
+  let ended = false;
+  const finishOnce = () => {
+    if (ended) return;
+    ended = true;
+    callbacks?.onEnd?.();
+  };
 
   // Dừng âm thanh đang phát trước đó nếu có
   if (currentAudio) {
@@ -289,6 +344,8 @@ export function speakWord(text: string, lang: 'en' | 'zh' = 'en', rate: number =
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
+
+  callbacks?.onStart?.();
 
   // 1. Phương án 1: Google Neural High-Definition Audio (Giọng tự nhiên nhất, không máy móc)
   try {
@@ -300,11 +357,16 @@ export function speakWord(text: string, lang: 'en' | 'zh' = 'en', rate: number =
     audio.playbackRate = rate; // Tốc độ tùy chỉnh (0.75x chậm, 0.95x tự nhiên, 1.0x chuẩn)
     currentAudio = audio;
 
+    audio.onended = finishOnce;
+    audio.onerror = () => {
+      speakWithNeuralBrowserVoice(cleanText, lang, rate, finishOnce);
+    };
+
     const playPromise = audio.play();
     if (playPromise !== undefined) {
       playPromise.catch((err) => {
         console.warn('Google TTS audio playback blocked, falling back to Neural Browser Voice', err);
-        speakWithNeuralBrowserVoice(cleanText, lang, rate);
+        speakWithNeuralBrowserVoice(cleanText, lang, rate, finishOnce);
       });
       return;
     }
@@ -313,16 +375,26 @@ export function speakWord(text: string, lang: 'en' | 'zh' = 'en', rate: number =
   }
 
   // 2. Phương án 2: Lọc giọng Neural Browser (Jenny, Guy, Aria Natural)
-  speakWithNeuralBrowserVoice(cleanText, lang, rate);
+  speakWithNeuralBrowserVoice(cleanText, lang, rate, finishOnce);
 }
 
-function speakWithNeuralBrowserVoice(text: string, lang: 'en' | 'zh', rate: number = 0.95) {
-  if (!('speechSynthesis' in window)) return;
+function speakWithNeuralBrowserVoice(
+  text: string,
+  lang: 'en' | 'zh',
+  rate: number = 0.95,
+  onFinished?: () => void
+) {
+  if (!('speechSynthesis' in window)) {
+    onFinished?.();
+    return;
+  }
 
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = lang === 'zh' ? 'zh-CN' : 'en-US';
   utterance.rate = rate;
   utterance.pitch = 1.0;
+  utterance.onend = () => onFinished?.();
+  utterance.onerror = () => onFinished?.();
 
   const voices = window.speechSynthesis.getVoices();
 

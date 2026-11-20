@@ -559,9 +559,40 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
       const mission = String(body.mission || '');
       const history = Array.isArray(body.history) ? body.history : [];
 
+      const computeFallbackMissionProgress = () => {
+        const allUserText = [
+          ...history.filter(m => m && m.sender === 'User').map(m => String(m.text || '')),
+          userMessage
+        ].join(' ').toLowerCase();
+
+        const personaChecklists = {
+          'cafe-barista': [['latte', 'coffee', 'iced'], ['oat', 'less sweet', '50%', 'half sweet', 'sugar'], ['wifi', 'wi-fi', 'password']],
+          'airport-officer': [['passport', 'here'], ['travel', 'tourism', 'vacation', 'holiday', '10 days', 'ten days'], ['hotel', 'stay', 'staying']],
+          'hotel-reception': [['minibar', 'bill', 'charge', 'didn\'t use', 'did not use'], ['check out', 'checkout', '402'], ['luggage', 'bag', 'afternoon', 'store', 'leave']],
+          'tech-interviewer': [['project', 'experience', 'built', 'worked'], ['delay', 'deadline', 'late', 'behind'], ['communicate', 'prioritize', 'solution', 'team']]
+        };
+
+        const steps = personaChecklists[personaId] || [];
+        if (steps.length === 0) {
+          const turns = history.filter(m => m && m.sender === 'User').length + 1;
+          const pct = Math.min(100, turns * 35);
+          return { missionProgress: pct, missionCompleted: pct >= 100 };
+        }
+        const matched = steps.filter(group => group.some(kw => allUserText.includes(kw))).length;
+        const pct = Math.round((matched / steps.length) * 100);
+        return { missionProgress: pct, missionCompleted: pct >= 100 };
+      };
+
       if (options.aiResponder) {
         const result = await options.aiResponder({ personaId, personaName, personaRole, situation, mission, history, userMessage });
-        sendJson(req, res, 200, { ...result, source: 'gemini', isFallback: false, quota });
+        const fallbackMission = computeFallbackMissionProgress();
+        const missionProgress = typeof result.missionProgress === 'number'
+          ? Math.max(0, Math.min(100, Math.round(result.missionProgress)))
+          : fallbackMission.missionProgress;
+        const missionCompleted = typeof result.missionCompleted === 'boolean'
+          ? result.missionCompleted
+          : missionProgress >= 100;
+        sendJson(req, res, 200, { ...result, missionProgress, missionCompleted, source: 'gemini', isFallback: false, quota });
         return true;
       }
 
@@ -574,16 +605,27 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
             `Learner Mission: ${mission}`,
             recentHistory ? `Recent Conversation:\n${recentHistory}` : '',
             `Learner just said: "${userMessage}"`,
-            `Respond in JSON with exactly 3 string fields:`,
+            `Respond in JSON with exact fields:`,
             `- "reply": Natural, concise 1-3 sentence in-character English reply continuing the conversation.`,
             `- "nativeRephrase": A more natural native-speaker way to say what the learner just said (in English).`,
-            `- "grammarTip": One short, helpful Vietnamese feedback tip (max 25 words) about phrasing or grammar.`
+            `- "grammarTip": One short, helpful Vietnamese feedback tip (max 25 words) about phrasing or grammar.`,
+            `- "missionProgress": integer 0 to 100 estimating cumulative completion of the Learner Mission across the conversation so far.`,
+            `- "missionCompleted": boolean (true if the learner has completed all key goals in the Learner Mission).`
           ].filter(Boolean).join('\n');
           const parsed = await callGeminiJson(apiKey, prompt);
+          const fallbackMission = computeFallbackMissionProgress();
+          const missionProgress = typeof parsed.missionProgress === 'number'
+            ? Math.max(0, Math.min(100, Math.round(parsed.missionProgress)))
+            : fallbackMission.missionProgress;
+          const missionCompleted = typeof parsed.missionCompleted === 'boolean'
+            ? parsed.missionCompleted
+            : missionProgress >= 100;
           sendJson(req, res, 200, {
             reply: String(parsed.reply || '').trim() || 'Could you tell me a bit more?',
             nativeRephrase: String(parsed.nativeRephrase || '').trim() || generateFallbackRephrase(userMessage),
             grammarTip: String(parsed.grammarTip || '').trim(),
+            missionProgress,
+            missionCompleted,
             source: 'gemini',
             isFallback: false,
             quota
@@ -595,7 +637,8 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
       }
 
       const fallback = generateFallbackRoleplay(personaId, userMessage);
-      sendJson(req, res, 200, { ...fallback, source: 'offline-fallback', isFallback: true, quota });
+      const fallbackMission = computeFallbackMissionProgress();
+      sendJson(req, res, 200, { ...fallback, ...fallbackMission, source: 'offline-fallback', isFallback: true, quota });
       return true;
     } catch (err) {
       sendJson(req, res, 500, { error: err.message || 'Lỗi xử lý AI Roleplay.' });
@@ -805,6 +848,119 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
       return true;
     } catch (err) {
       sendJson(req, res, 500, { error: err.message || 'Lỗi tạo tình huống Speaking AI.' });
+      return true;
+    }
+  }
+
+  // 5. POST /api/ai/evaluate-sentence (Active Production: evaluate learner's own sentence in Work or Daily context)
+  if (pathname === '/api/ai/evaluate-sentence' && req.method === 'POST') {
+    try {
+      const body = await parseJsonBody(req);
+      const targetWord = normalizeLookupQuery(body.targetWord || '');
+      const userSentence = String(body.userSentence || '').trim().slice(0, 320);
+      const scenario = body.scenario === 'work' ? 'work' : 'daily';
+      const contextSentence = String(body.contextSentence || '').trim().slice(0, 320);
+
+      if (!targetWord) {
+        sendJson(req, res, 400, { error: 'Thiếu từ vựng mục tiêu cần luyện đặt câu.' });
+        return true;
+      }
+      if (!userSentence || userSentence.length < 4) {
+        sendJson(req, res, 400, { error: 'Vui lòng viết 1 câu tiếng Anh hoàn chỉnh (ít nhất 4 ký tự).' });
+        return true;
+      }
+
+      const quota = await consumeAiQuota({ db, currentUser, req, res, sendJson });
+      if (!quota) return true;
+
+      if (options.aiSentenceResponder) {
+        const result = await options.aiSentenceResponder({ targetWord, userSentence, scenario, contextSentence });
+        sendJson(req, res, 200, {
+          targetWord,
+          userSentence,
+          scenario,
+          ...result,
+          source: 'gemini',
+          isFallback: false,
+          quota
+        });
+        return true;
+      }
+
+      if (apiKey) {
+        try {
+          const contextLabel = scenario === 'work'
+            ? 'professional workplace communication (emails, meetings, Slack, presentations)'
+            : 'natural everyday spoken English with friends or colleagues';
+          const prompt = [
+            `You are an elite English communication coach helping a Vietnamese learner turn passive vocabulary into active speaking/writing fluency.`,
+            `Target word or phrase: "${targetWord}"`,
+            contextSentence ? `Original video reference sentence: "${contextSentence}"` : '',
+            `Intended real-life context: ${contextLabel}`,
+            `Learner's sentence: "${userSentence}"`,
+            `Evaluate the learner's sentence and return strict JSON with exact keys:`,
+            `- "score": integer 1 to 10 (naturalness + grammatical & contextual accuracy).`,
+            `- "isCorrectUsage": boolean (true if targetWord is used accurately in meaning and grammar).`,
+            `- "feedbackVi": 1-2 concise Vietnamese sentences praising what works and pointing out any grammar/collocation/register mistake.`,
+            `- "naturalVersion": One polished, natural native-speaker rewrite of the learner's sentence tailored for ${contextLabel} that still uses "${targetWord}".`,
+            `- "collocationTip": One short Vietnamese tip showing a high-value collocation or pattern with "${targetWord}" for work/daily use.`
+          ].filter(Boolean).join('\n');
+
+          const parsed = await callGeminiJson(apiKey, prompt);
+          const scoreNum = Math.max(1, Math.min(10, Math.round(Number(parsed.score) || 7)));
+          sendJson(req, res, 200, {
+            targetWord,
+            userSentence,
+            scenario,
+            score: scoreNum,
+            isCorrectUsage: Boolean(parsed.isCorrectUsage),
+            feedbackVi: String(parsed.feedbackVi || '').trim() || 'Câu của bạn khá rõ ý!',
+            naturalVersion: String(parsed.naturalVersion || '').trim() || userSentence,
+            collocationTip: String(parsed.collocationTip || '').trim(),
+            source: 'gemini',
+            isFallback: false,
+            quota
+          });
+          return true;
+        } catch (aiErr) {
+          console.warn('[AI Sentence Eval] Gemini call failed, using offline evaluator:', aiErr.message);
+        }
+      }
+
+      // Deterministic offline fallback evaluator (honest, clear isFallback: true)
+      const lowerSent = userSentence.toLowerCase();
+      const targetRoot = targetWord.toLowerCase().replace(/(ing|ed|s)$/, '');
+      const hasTarget = lowerSent.includes(targetWord.toLowerCase()) || (targetRoot.length >= 4 && lowerSent.includes(targetRoot));
+      const wordCount = userSentence.split(/\s+/).filter(Boolean).length;
+      const endsWithPunct = /[.!?]$/.test(userSentence);
+      const score = !hasTarget ? 4 : wordCount >= 6 && endsWithPunct ? 8 : 7;
+
+      const naturalSuggestion = scenario === 'work'
+        ? `In today's team update, I want to highlight "${targetWord}" so we stay aligned on the timeline.`
+        : `Honestly, "${targetWord}" really came up in my day today and made me think twice.`;
+
+      sendJson(req, res, 200, {
+        targetWord,
+        userSentence,
+        scenario,
+        score,
+        isCorrectUsage: hasTarget && wordCount >= 4,
+        feedbackVi: !hasTarget
+          ? `Câu của bạn chưa chứa từ/cụm "${targetWord}". Hãy thử đưa trực tiếp "${targetWord}" vào câu để luyện phản xạ chủ động nhé! (Chế độ Offline — cần GEMINI_API_KEY để chấm sâu ngữ pháp)`
+          : wordCount < 5
+          ? `Bạn đã dùng đúng "${targetWord}", nhưng câu hơi ngắn (${wordCount} từ). Hãy thêm bối cảnh cụ thể (thời gian, mục tiêu hoặc lý do) để dùng tự nhiên hơn ngoài thực tế.`
+          : `Tốt lắm! Bạn đã chủ động dùng "${targetWord}" trong câu ${wordCount} từ. Cấu hình GEMINI_API_KEY trên server để nhận nhận xét sắc thái ngữ pháp chi tiết hơn.`,
+        naturalVersion: hasTarget ? userSentence : naturalSuggestion,
+        collocationTip: scenario === 'work'
+          ? `Mẹo công sở: Hãy gắn "${targetWord}" vào câu đề xuất, cập nhật tiến độ hoặc email phản hồi sếp/đồng nghiệp.`
+          : `Mẹo đời sống: Nói to câu chứa "${targetWord}" 2 lần (Production Effect) để lần sau bật ra tự nhiên không cần dịch.`,
+        source: 'offline-fallback',
+        isFallback: true,
+        quota
+      });
+      return true;
+    } catch (err) {
+      sendJson(req, res, 500, { error: err.message || 'Lỗi chấm câu luyện tập AI.' });
       return true;
     }
   }

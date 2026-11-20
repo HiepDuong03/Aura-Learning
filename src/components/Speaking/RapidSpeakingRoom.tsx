@@ -26,6 +26,11 @@ import { RoleplayChatRoom, RoleplayPersona, ChatMessage } from './RoleplayChatRo
 import { VoiceActivityDetector } from '../../utils/voiceActivityDetector';
 import { assessSpeech, DetailedSpeechAssessment } from '../../utils/speechAssessor';
 import { soundEffects } from '../../utils/audioFeedback';
+import {
+  computeSpeechReactionLatencyMs,
+  mergeScenarioCompletion,
+  ScenarioCompletionRecord
+} from '../../utils/speakingMetrics';
 
 interface RapidSpeakingRoomProps {
   scenarios: SpeakingScenario[];
@@ -34,6 +39,9 @@ interface RapidSpeakingRoomProps {
   currentUser?: AuthUser | null;
   onOpenAuth?: () => void;
   onRoleplayHistoryChange?: (history: Record<string, PersistedRoleplayMessage[]>) => void;
+  completedScenarios?: Record<string, ScenarioCompletionRecord>;
+  onCompletedScenariosChange?: (records: Record<string, ScenarioCompletionRecord>) => void;
+  onSavePhraseToSrs?: (phrase: string, contextSentence: string, tip?: string) => void;
 }
 
 const AI_PERSONAS: RoleplayPersona[] = [
@@ -87,7 +95,10 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
   onAddCustomScenario,
   currentUser,
   onOpenAuth,
-  onRoleplayHistoryChange
+  onRoleplayHistoryChange,
+  completedScenarios: completedScenariosProp,
+  onCompletedScenariosChange,
+  onSavePhraseToSrs
 }) => {
   const { toast } = useNotify();
   const [activeTab, setActiveTab] = useState<'guided' | 'roleplay'>('guided');
@@ -151,11 +162,48 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
   const [roleplayStartTime, setRoleplayStartTime] = useState<number>(Date.now());
   const [aiEngineLabel, setAiEngineLabel] = useState<string>('Live AI Roleplay');
   const [quotaBadge, setQuotaBadge] = useState<string | undefined>(undefined);
+  const [autoSendVoice, setAutoSendVoice] = useState<boolean>(true);
+  const [missionProgressMap, setMissionProgressMap] = useState<Record<string, { progress: number; completed: boolean }>>({});
+  const [localCompletedScenarios, setLocalCompletedScenarios] = useState<Record<string, ScenarioCompletionRecord>>(() =>
+    ScopedStorage.getCompletedScenarios(currentUser?.id)
+  );
+  const completedScenarios = completedScenariosProp ?? localCompletedScenarios;
 
-  // Refs for Web Speech & Web Audio VAD
+  // Refs for Web Speech, VAD acoustic-echo guard, true reaction latency & Safari iOS onend fallback
   const recognitionRef = useRef<any>(null);
   const vadRef = useRef<VoiceActivityDetector | null>(null);
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isRecordingRef = useRef<boolean>(false);
+  const isAiSpeakingRef = useRef<boolean>(false);
+  const speechStartMsRef = useRef<number | null>(null);
+  const latestTranscriptRef = useRef<string>('');
+  const hasFinalizedRecRef = useRef<boolean>(false);
+  const turnScoresRef = useRef<number[]>([]);
+  const turnLatenciesRef = useRef<number[]>([]);
+  const autoSendVoiceRef = useRef<boolean>(autoSendVoice);
+  const sendRoleplayTextRef = useRef<(text: string) => void>(() => {});
+
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
+  useEffect(() => {
+    autoSendVoiceRef.current = autoSendVoice;
+  }, [autoSendVoice]);
+
+  // Speak AI text while temporarily locking Hands-free VAD to prevent acoustic echo feedback
+  const speakWithVadGuard = (text: string) => {
+    speakWord(text, 'en', 0.95, {
+      onStart: () => {
+        isAiSpeakingRef.current = true;
+      },
+      onEnd: () => {
+        setTimeout(() => {
+          isAiSpeakingRef.current = false;
+        }, 250);
+      }
+    });
+  };
 
   const currentTurn = selectedScenario.turns[currentTurnIndex] || selectedScenario.turns[0];
 
@@ -209,14 +257,22 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
   // Reset turn clock on turn index change
   useEffect(() => {
     setTurnStartTime(Date.now());
+    speechStartMsRef.current = null;
+    latestTranscriptRef.current = '';
+    hasFinalizedRecRef.current = false;
     setSpokenText('');
     setScore(null);
     setDetailedAssessment(null);
     setLatencyMs(null);
 
-    // If turn is AI, speak it out automatically
+    if (currentTurnIndex === 0) {
+      turnScoresRef.current = [];
+      turnLatenciesRef.current = [];
+    }
+
+    // If turn is AI, speak it out automatically with VAD acoustic echo guard
     if (currentTurn && currentTurn.speaker === 'AI') {
-      speakWord(currentTurn.text, 'en', 0.95);
+      speakWithVadGuard(currentTurn.text);
     } else if (currentTurn && currentTurn.speaker === 'User') {
       // Start 3.0s countdown if in Scaffolding Step 2 or 3 (SuperChinese REA)
       if (scaffoldingStep >= 2) {
@@ -244,17 +300,23 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
     };
   }, [currentTurnIndex, selectedScenario, scaffoldingStep]);
 
-  // Production-grade Speech Evaluation using ELSA REA Engine
+  // Production-grade Speech Evaluation using true reaction latency (turnStart -> speechstart)
   const evaluateSpeech = (spoken: string) => {
     if (!currentTurn) return;
 
-    const elapsed = Date.now() - turnStartTime;
+    const elapsed = computeSpeechReactionLatencyMs({
+      turnStartMs: turnStartTime,
+      speechStartMs: speechStartMsRef.current,
+      fallbackEndMs: Date.now()
+    });
     setLatencyMs(elapsed);
 
-    // Run ELSA 3-tier phonetic assessment
+    // Run 3-tier speech assessment
     const assessment = assessSpeech(currentTurn.text, spoken, elapsed);
     setDetailedAssessment(assessment);
     setScore(assessment.overallScore);
+    turnScoresRef.current.push(assessment.overallScore);
+    turnLatenciesRef.current.push(elapsed);
 
     // Immediate sound effect & confetti based on 3-tier threshold (BR-07)
     if (assessment.overallScore >= 85) {
@@ -267,7 +329,7 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
     }
   };
 
-  // Web Speech API Initialization
+  // Web Speech API Initialization (with onspeechstart latency & Safari iOS onend fallback)
   useEffect(() => {
     const SpeechRecognition = (window as unknown as { SpeechRecognition?: any; webkitSpeechRecognition?: any }).SpeechRecognition ||
       (window as unknown as { webkitSpeechRecognition?: any }).webkitSpeechRecognition;
@@ -278,35 +340,69 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
       recognition.interimResults = true;
       recognition.lang = 'en-US';
 
-      recognition.onresult = (event: any) => {
-        const transcript = Array.from(event.results)
-          .map((result: any) => result[0]?.transcript ?? '')
-          .join('');
-        
+      recognition.onspeechstart = () => {
+        if (speechStartMsRef.current === null) {
+          speechStartMsRef.current = Date.now();
+        }
+      };
+
+      const finalizeTranscript = (transcript: string) => {
+        if (hasFinalizedRecRef.current) return;
+        hasFinalizedRecRef.current = true;
+        isRecordingRef.current = false;
+        setIsRecording(false);
+
+        const clean = transcript.trim();
+        if (!clean) {
+          if (vadRef.current) vadRef.current.resumeListening();
+          return;
+        }
+
         if (activeTab === 'guided') {
-          setSpokenText(transcript);
-          const isFinal = Boolean(event.results[0]?.isFinal);
-          if (isFinal) {
-            evaluateSpeech(transcript);
-            setIsRecording(false);
-            if (vadRef.current) vadRef.current.resumeListening();
-          }
+          setSpokenText(clean);
+          evaluateSpeech(clean);
+          if (vadRef.current) vadRef.current.resumeListening();
         } else {
-          setRoleplayInput(transcript);
-          const isFinal = Boolean(event.results[0]?.isFinal);
-          if (isFinal) {
-            setIsRecording(false);
+          setRoleplayInput(clean);
+          if (autoSendVoiceRef.current) {
+            sendRoleplayTextRef.current(clean);
           }
         }
       };
 
+      recognition.onresult = (event: any) => {
+        const transcript = Array.from(event.results)
+          .map((result: any) => result[0]?.transcript ?? '')
+          .join('');
+        latestTranscriptRef.current = transcript;
+
+        if (activeTab === 'guided') {
+          setSpokenText(transcript);
+        } else {
+          setRoleplayInput(transcript);
+        }
+
+        const lastResult = event.results[event.results.length - 1];
+        if (lastResult?.isFinal) {
+          finalizeTranscript(transcript);
+        }
+      };
+
       recognition.onerror = () => {
+        isRecordingRef.current = false;
         setIsRecording(false);
         if (vadRef.current) vadRef.current.resumeListening();
       };
 
       recognition.onend = () => {
+        // Safari iOS WebKit fallback: finalize if onend fires without an isFinal result event
+        if (!hasFinalizedRecRef.current && latestTranscriptRef.current.trim()) {
+          finalizeTranscript(latestTranscriptRef.current);
+          return;
+        }
+        isRecordingRef.current = false;
         setIsRecording(false);
+        if (vadRef.current) vadRef.current.resumeListening();
       };
 
       recognitionRef.current = recognition;
@@ -323,7 +419,7 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
     };
   }, [currentTurn, activeTab, turnStartTime]);
 
-  // SuperChinese Hands-free VAD Engine Lifecycle
+  // SuperChinese Hands-free VAD Engine Lifecycle (with acoustic-echo lock & ref-based state)
   useEffect(() => {
     if (isVadEnabled && activeTab === 'guided') {
       const vad = new VoiceActivityDetector({
@@ -331,20 +427,26 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
         silenceTimeoutMs: 850,
         minSpeechDurationMs: 400,
         onVolumeChange: (rms) => {
-          setAudioEnergy(rms);
+          setAudioEnergy(isAiSpeakingRef.current ? 0 : rms);
         },
         onSpeechStart: () => {
-          if (!isRecording && recognitionRef.current) {
-            try {
-              recognitionRef.current.start();
-              setIsRecording(true);
-            } catch {
-              // Safe ignore if already active
-            }
+          if (isAiSpeakingRef.current || isRecordingRef.current || !recognitionRef.current) {
+            return;
+          }
+          try {
+            speechStartMsRef.current = Date.now();
+            latestTranscriptRef.current = '';
+            hasFinalizedRecRef.current = false;
+            isRecordingRef.current = true;
+            setIsRecording(true);
+            recognitionRef.current.start();
+          } catch {
+            isRecordingRef.current = false;
+            setIsRecording(false);
           }
         },
         onSpeechEnd: () => {
-          if (recognitionRef.current && isRecording) {
+          if (recognitionRef.current && isRecordingRef.current) {
             try {
               recognitionRef.current.stop();
             } catch {
@@ -379,40 +481,63 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
 
   const toggleRecording = () => {
     if (!recognitionRef.current) {
-      toast.info('Trình duyệt chưa hỗ trợ Web Speech API. Vui lòng dùng Chrome hoặc Edge.');
+      toast.info('Trình duyệt chưa hỗ trợ Web Speech API (ví dụ Firefox). Vui lòng dùng Chrome/Safari/Edge hoặc gõ trực tiếp.');
       return;
     }
 
-    if (isRecording) {
+    if (isRecordingRef.current) {
       recognitionRef.current.stop();
+      isRecordingRef.current = false;
       setIsRecording(false);
     } else {
+      speechStartMsRef.current = null;
+      latestTranscriptRef.current = '';
+      hasFinalizedRecRef.current = false;
       setSpokenText('');
       setScore(null);
       setDetailedAssessment(null);
       try {
         recognitionRef.current.start();
+        isRecordingRef.current = true;
         setIsRecording(true);
       } catch (e) {
         console.warn(e);
+        isRecordingRef.current = false;
         setIsRecording(false);
       }
     }
   };
 
-  // Next guided turn
+  // Next guided turn + persist scenario mastery on completion
   const handleNextTurn = () => {
     if (currentTurnIndex < selectedScenario.turns.length - 1) {
       setCurrentTurnIndex(prev => prev + 1);
     } else {
+      const avgScore =
+        turnScoresRef.current.length > 0
+          ? Math.round(turnScoresRef.current.reduce((a, b) => a + b, 0) / turnScoresRef.current.length)
+          : (score ?? 85);
+      const bestLatency =
+        turnLatenciesRef.current.length > 0
+          ? Math.min(...turnLatenciesRef.current)
+          : latencyMs;
+      const updatedRecords = mergeScenarioCompletion(
+        completedScenarios,
+        selectedScenario.id,
+        avgScore,
+        bestLatency
+      );
+      setLocalCompletedScenarios(updatedRecords);
+      ScopedStorage.setCompletedScenarios(currentUser?.id, updatedRecords);
+      onCompletedScenariosChange?.(updatedRecords);
       confetti({ particleCount: 100, spread: 80 });
       setIsScenarioComplete(true);
     }
   };
 
-  // Roleplay send message via authenticated Backend AI API
-  const handleSendRoleplay = async () => {
-    const trimmed = roleplayInput.trim();
+  // Roleplay send message via authenticated Backend AI API (used by Send button & Voice Auto-Send)
+  const sendRoleplayText = async (rawText: string) => {
+    const trimmed = rawText.trim();
     if (!trimmed || isAiThinking) return;
 
     const token = authService.getToken();
@@ -475,6 +600,19 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
         );
       }
 
+      if (typeof data.missionProgress === 'number') {
+        const prevDone = Boolean(missionProgressMap[selectedPersona.id]?.completed);
+        const nowDone = Boolean(data.missionCompleted) || data.missionProgress >= 100;
+        setMissionProgressMap((prev) => ({
+          ...prev,
+          [selectedPersona.id]: { progress: data.missionProgress, completed: nowDone }
+        }));
+        if (!prevDone && nowDone) {
+          confetti({ particleCount: 90, spread: 70, origin: { y: 0.6 } });
+          toast.success(`🎉 Chúc mừng! Bạn đã hoàn thành nhiệm vụ cùng ${selectedPersona.name}!`);
+        }
+      }
+
       setRoleplayMessages(prev => {
         const updated: ChatMessage[] = [
           ...prev.map(m =>
@@ -494,13 +632,21 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
 
       setRoleplayStartTime(Date.now());
       if (data.reply) {
-        speakWord(data.reply, 'en', 0.95);
+        speakWithVadGuard(data.reply);
       }
     } catch (err: any) {
       toast.error(err?.message || 'Lỗi kết nối máy chủ AI Roleplay.');
     } finally {
       setIsAiThinking(false);
     }
+  };
+
+  sendRoleplayTextRef.current = (text: string) => {
+    void sendRoleplayText(text);
+  };
+
+  const handleSendRoleplay = () => {
+    void sendRoleplayText(roleplayInput);
   };
 
   return (
@@ -677,31 +823,41 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
               </div>
             ) : (
               <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
-                {levelScenarios.map((sc) => (
-                  <button
-                    key={sc.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedScenario(sc);
-                      setCurrentTurnIndex(0);
-                      setIsScenarioComplete(false);
-                    }}
-                    className={`p-3.5 rounded-3xl border text-left shrink-0 w-64 transition-all duration-200 ${
-                      selectedScenario?.id === sc.id
-                        ? 'bg-teal-50/90 border-teal-500 shadow-sm ring-2 ring-teal-400/20'
-                        : 'bg-white border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <span className="text-xl">{sc.icon}</span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-slate-100 text-slate-700">
-                        {sc.category}
-                      </span>
-                    </div>
-                    <h4 className="text-xs font-black text-slate-900 line-clamp-1">{sc.title}</h4>
-                    <p className="text-[11px] text-slate-500 line-clamp-2 mt-1">{sc.targetGoal}</p>
-                  </button>
-                ))}
+                {levelScenarios.map((sc) => {
+                  const completion = completedScenarios[sc.id];
+                  return (
+                    <button
+                      key={sc.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedScenario(sc);
+                        setCurrentTurnIndex(0);
+                        setIsScenarioComplete(false);
+                      }}
+                      className={`p-3.5 rounded-3xl border text-left shrink-0 w-64 transition-all duration-200 ${
+                        selectedScenario?.id === sc.id
+                          ? 'bg-teal-50/90 border-teal-500 shadow-sm ring-2 ring-teal-400/20'
+                          : 'bg-white border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">{sc.icon}</span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-slate-100 text-slate-700">
+                            {sc.category}
+                          </span>
+                        </div>
+                        {completion && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 shrink-0">
+                            ✓ {completion.bestScore}%
+                          </span>
+                        )}
+                      </div>
+                      <h4 className="text-xs font-black text-slate-900 line-clamp-1">{sc.title}</h4>
+                      <p className="text-[11px] text-slate-500 line-clamp-2 mt-1">{sc.targetGoal}</p>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -769,13 +925,22 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
             ];
             setRoleplayMessages(resetSeed);
             persistRoleplayForPersona(selectedPersona.id, resetSeed);
-            speakWord(selectedPersona.initialMessage, 'en', 0.95);
+            setMissionProgressMap((prev) => ({
+              ...prev,
+              [selectedPersona.id]: { progress: 0, completed: false }
+            }));
+            speakWithVadGuard(selectedPersona.initialMessage);
           }}
-          onSpeakText={(t) => speakWord(t, 'en', 0.95)}
+          onSpeakText={(t) => speakWithVadGuard(t)}
           aiEngineLabel={aiEngineLabel}
           quotaBadge={quotaBadge}
           isLockedForGuest={!currentUser}
           onRequestLogin={onOpenAuth}
+          missionProgress={missionProgressMap[selectedPersona.id]?.progress || 0}
+          missionCompleted={Boolean(missionProgressMap[selectedPersona.id]?.completed)}
+          autoSendVoice={autoSendVoice}
+          onToggleAutoSendVoice={() => setAutoSendVoice((prev) => !prev)}
+          onSavePhraseToSrs={onSavePhraseToSrs}
         />
       )}
 

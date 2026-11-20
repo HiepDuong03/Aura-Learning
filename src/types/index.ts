@@ -66,6 +66,24 @@ export interface ContextExplanation {
   };
 }
 
+export interface SentenceEvaluationResult {
+  targetWord: string;
+  userSentence: string;
+  scenario: 'work' | 'daily';
+  score: number;
+  isCorrectUsage: boolean;
+  feedbackVi: string;
+  naturalVersion: string;
+  collocationTip: string;
+  source?: string;
+  isFallback?: boolean;
+  quota?: {
+    used: number;
+    limit: number | null;
+    unlimited: boolean;
+  };
+}
+
 export type AnkiRating = 1 | 2 | 3 | 4; // 1: Again, 2: Hard, 3: Good, 4: Easy
 export type CardState = 'new' | 'learning' | 'review' | 'relearning';
 
@@ -91,7 +109,7 @@ export interface SavedWord {
   sourceTimestampSec?: number;
   savedAt: number;
   
-  // Thuật toán Anki SM-2 Core Parameters
+  // Thuật toán SRS (Anki SM-2 legacy + FSRS-6 DSR Model)
   easeFactor: number; // Mặc định: 2.50 (250%), tối thiểu: 1.30
   interval: number;   // Khoảng cách ôn tiếp theo tính theo ngày
   repetitions: number;// Số lần nhớ đúng liên tiếp
@@ -99,6 +117,9 @@ export interface SavedWord {
   state: CardState;   // Trạng thái thẻ
   dueAt: number;      // Thời điểm thẻ đến hạn ôn tập (timestamp ms)
   lastReviewedAt?: number;
+  stability?: number; // FSRS-6: Số ngày để xác suất nhớ R giảm từ 100% xuống 90%
+  difficulty?: number;// FSRS-6: Độ khó thực tế của thẻ (1.0 - 10.0)
+  schedulerVersion?: 'fsrs6' | 'sm2';
   reviewLogs?: ReviewLog[];
   usn?: number;       // Anki Update Sequence Number
   isDirty?: boolean;  // Cờ báo dữ liệu đã sửa cục bộ chưa đồng bộ

@@ -105,6 +105,13 @@ const authModule = createAuthAndSyncHandler({
       hintPrompt: idx % 2 === 1 ? `Trả lời lượt ${idx + 1}` : undefined,
       expectedKeywords: ['turn', 'topic']
     }))
+  }),
+  aiSentenceResponder: async ({ targetWord, userSentence, scenario }) => ({
+    score: 9,
+    isCorrectUsage: userSentence.toLowerCase().includes(targetWord.toLowerCase()),
+    feedbackVi: `Bạn dùng "${targetWord}" rất tự nhiên trong ngữ cảnh ${scenario === 'work' ? 'công sở' : 'đời sống'}.`,
+    naturalVersion: `We need to resolve this ${targetWord} before the sprint ends.`,
+    collocationTip: `Thường đi cùng: address / eliminate a ${targetWord}.`
   })
 });
 
@@ -425,7 +432,90 @@ async function run() {
   assert.equal(tsWord.videoTitle, 'Stanford Commencement');
   console.log('✅ TEST 18 PASSED: SavedWord sourceLessonId, sourceYoutubeId & sourceTimestampSec persisted');
 
-  console.log('\n🎯 ALL 18 SECURITY, RBAC, AI, CACHE, PHRASE & SYNC TESTS PASSED!');
+  // 19. SRS 2.0: FSRS-6 (stability/difficulty) Round-Trip Persistence & AI Sentence Production Evaluator
+  const guestSentEval = await api('/api/ai/evaluate-sentence', 'POST', {
+    targetWord: 'bottleneck',
+    userSentence: 'This approval process is a bottleneck.',
+    scenario: 'work'
+  });
+  assert.equal(guestSentEval.status, 401);
+
+  const exhaustedSentEval = await api('/api/ai/evaluate-sentence', 'POST', {
+    targetWord: 'bottleneck',
+    userSentence: 'This approval process is a bottleneck.',
+    scenario: 'work'
+  }, tokenB);
+  assert.equal(exhaustedSentEval.status, 429, 'Shared 20/day AI quota must apply to /api/ai/evaluate-sentence');
+
+  const proSentEval = await api('/api/ai/evaluate-sentence', 'POST', {
+    targetWord: 'bottleneck',
+    userSentence: 'This approval process is our main bottleneck.',
+    scenario: 'work'
+  }, tokenProA);
+  assert.equal(proSentEval.status, 200);
+  assert.equal(proSentEval.data.score, 9);
+  assert.equal(proSentEval.data.isCorrectUsage, true);
+  assert.ok(proSentEval.data.naturalVersion.includes('bottleneck'));
+
+  const syncFsrsWord = await api('/api/sync/words', 'POST', {
+    words: [
+      {
+        id: 'word-fsrs-sync-1',
+        word: 'bottleneck',
+        translation: 'nút thắt cổ chai',
+        contextSentence: 'We need to remove this bottleneck.',
+        videoTitle: 'Tech Talk',
+        easeFactor: 2.3,
+        interval: 12,
+        repetitions: 3,
+        lapses: 0,
+        state: 'review',
+        dueAt: Date.now() + 12 * 86400000,
+        stability: 12.45,
+        difficulty: 4.12,
+        schedulerVersion: 'fsrs6',
+        usn: 3
+      }
+    ],
+    deletedWords: []
+  }, tokenProA);
+  assert.equal(syncFsrsWord.status, 200);
+
+  const fetchFsrsWords = await api('/api/sync/words', 'GET', null, tokenProA);
+  const fsrsWord = fetchFsrsWords.data.words.find((w) => w.word === 'bottleneck');
+  assert.ok(fsrsWord, 'FSRS word must be persisted');
+  assert.equal(fsrsWord.stability, 12.45);
+  assert.equal(fsrsWord.difficulty, 4.12);
+  assert.equal(fsrsWord.schedulerVersion, 'fsrs6');
+  console.log('✅ TEST 19 PASSED: SRS 2.0 FSRS-6 persistence & AI Sentence Production evaluator verified');
+
+  // 20. Speaking 2.0: Roleplay Mission Progress Tracker & Completed CEFR Scenarios Cloud Sync
+  const missionTurn = await api('/api/ai/roleplay', 'POST', {
+    personaId: 'cafe-barista',
+    history: [
+      { sender: 'User', text: 'I would like an iced latte with oat milk and less sweet please.' }
+    ],
+    userMessage: 'Also, could you share the wifi password?'
+  }, tokenProA);
+  assert.equal(missionTurn.status, 200);
+  assert.equal(typeof missionTurn.data.missionProgress, 'number');
+  assert.equal(missionTurn.data.missionProgress, 100);
+  assert.equal(missionTurn.data.missionCompleted, true);
+
+  const postCompletedState = await api('/api/sync/state', 'POST', {
+    state: {
+      streakDays: 21,
+      completedScenarios: {
+        'a1-cafe-order': { scenarioId: 'a1-cafe-order', bestScore: 92, bestLatencyMs: 880, attempts: 2, completedAt: Date.now() }
+      }
+    }
+  }, tokenProA);
+  assert.equal(postCompletedState.status, 200);
+  const getCompletedState = await api('/api/sync/state', 'GET', null, tokenProA);
+  assert.equal(getCompletedState.data.state.completedScenarios['a1-cafe-order'].bestScore, 92);
+  console.log('✅ TEST 20 PASSED: Speaking 2.0 Mission Progress Tracker & CEFR completion state sync verified');
+
+  console.log('\n🎯 ALL 20 SECURITY, RBAC, AI, FSRS-6, SPEAKING 2.0, CACHE, PHRASE & SYNC TESTS PASSED!');
 }
 
 try {

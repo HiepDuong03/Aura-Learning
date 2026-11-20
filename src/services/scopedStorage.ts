@@ -7,6 +7,7 @@
 
 import { SavedWord, VideoLesson, AnkiUserProfile } from '../types';
 import { SpeakingScenario } from '../data/speakingScenarios';
+import { ScenarioCompletionRecord } from '../utils/speakingMetrics';
 
 export interface PersistedRoleplayMessage {
   id: string;
@@ -237,6 +238,35 @@ export class ScopedStorage {
       localStorage.setItem(key, JSON.stringify(history));
     } catch (e) {
       console.warn('[ScopedStorage] Error writing roleplay history:', e);
+    }
+  }
+
+  // --- Completed Speaking Scenarios (Scoped per User) ---
+  public static getCompletedScenarios(userId?: string | null): Record<string, ScenarioCompletionRecord> {
+    try {
+      const key = `${this.getPrefix(userId)}_completed_scenarios`;
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Record<string, ScenarioCompletionRecord>;
+        }
+      }
+    } catch {
+      return {};
+    }
+    return {};
+  }
+
+  public static setCompletedScenarios(
+    userId: string | null | undefined,
+    records: Record<string, ScenarioCompletionRecord>
+  ): void {
+    try {
+      const key = `${this.getPrefix(userId)}_completed_scenarios`;
+      localStorage.setItem(key, JSON.stringify(records));
+    } catch (e) {
+      console.warn('[ScopedStorage] Error writing completed scenarios:', e);
     }
   }
 

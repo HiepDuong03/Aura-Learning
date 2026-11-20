@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { VideoLesson, SavedWord, WordDefinition, AnkiRating, AnkiUserProfile, AuthUser } from './types';
 import { MOCK_LESSONS, MOCK_SHORTS, INITIAL_SAVED_WORDS } from './data/mockLessons';
-import { calculateAnkiSchedule } from './services/ankiScheduler';
+import { calculateFsrsSchedule } from './services/fsrsScheduler';
+import { lingqWordService } from './services/lingqWordService';
 import { Sidebar, ActiveTab } from './components/Navigation/Sidebar';
 import { Header } from './components/Navigation/Header';
 import { MobileNav } from './components/Navigation/MobileNav';
@@ -14,6 +15,7 @@ import { lookupWord } from './services/dictionaryService';
 import { ankiDb, DEFAULT_PROFILE } from './services/ankiDatabase';
 import { authService } from './services/authService';
 import { ScopedStorage, PersistedRoleplayMessage } from './services/scopedStorage';
+import { ScenarioCompletionRecord } from './utils/speakingMetrics';
 import { loadYouTubeIframeAPI } from './services/youtubeLoader';
 import { ProductionErrorBoundary } from './components/Common/ProductionErrorBoundary';
 import { LoadingFallback } from './components/Common/LoadingFallback';
@@ -129,6 +131,15 @@ export const App: React.FC = () => {
     }
   });
 
+  const [completedScenarios, setCompletedScenarios] = useState<Record<string, ScenarioCompletionRecord>>(() => {
+    try {
+      const user = authService.getCurrentUser();
+      return ScopedStorage.getCompletedScenarios(user?.id);
+    } catch {
+      return {};
+    }
+  });
+
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isImportOpen, setIsImportOpen] = useState<boolean>(false);
 
@@ -182,6 +193,10 @@ export const App: React.FC = () => {
         setRoleplayHistory(cloudState.roleplayHistory);
         ScopedStorage.setRoleplayHistory(user.id, cloudState.roleplayHistory);
       }
+      if (cloudState.completedScenarios && typeof cloudState.completedScenarios === 'object') {
+        setCompletedScenarios(cloudState.completedScenarios);
+        ScopedStorage.setCompletedScenarios(user.id, cloudState.completedScenarios);
+      }
     }
   };
 
@@ -218,6 +233,7 @@ export const App: React.FC = () => {
     setScenarios(SPEAKING_SCENARIOS);
     setStreakDays(ScopedStorage.getStreakDays(null));
     setRoleplayHistory(ScopedStorage.getRoleplayHistory(null));
+    setCompletedScenarios(ScopedStorage.getCompletedScenarios(null));
   };
 
   // Sequential Boot Hydration: prevents race conditions between session verification, IndexedDB init, and cloud sync
@@ -395,13 +411,14 @@ export const App: React.FC = () => {
             streakDays,
             customShorts: ScopedStorage.getCustomShorts(currentUser.id),
             shortsOffsets: ScopedStorage.getShortsOffsets(currentUser.id),
-            roleplayHistory
+            roleplayHistory,
+            completedScenarios
           }
         })
       }).catch(console.warn);
     }, 1500);
     return () => clearTimeout(timer);
-  }, [scenarios, streakDays, roleplayHistory, currentUser, isBootHydrated]);
+  }, [scenarios, streakDays, roleplayHistory, completedScenarios, currentUser, isBootHydrated]);
 
   // Real-world daily streak tracking based on calendar date
   useEffect(() => {
@@ -541,6 +558,47 @@ export const App: React.FC = () => {
     }
   };
 
+  // Save a native rephrase from AI Roleplay directly into the FSRS-6 vocabulary deck
+  const handleSaveRoleplayPhraseToSrs = (phrase: string, originalUserLine: string, grammarTip?: string) => {
+    const cleanPhrase = phrase.trim();
+    if (!cleanPhrase) return;
+    const normalized = cleanPhrase.toLowerCase();
+    const alreadyExists = savedWords.some((w) => w?.word && w.word.toLowerCase().trim() === normalized);
+    if (alreadyExists) {
+      toast.info('Câu/cụm từ này đã có trong Kho từ vựng FSRS-6 của bạn.');
+      return;
+    }
+
+    const newWord: SavedWord = {
+      id: `word-rp-${Date.now()}`,
+      word: cleanPhrase.slice(0, 80),
+      phonetic: '',
+      partOfSpeech: 'native phrase',
+      translation: grammarTip?.trim() || 'Cách diễn đạt chuẩn bản xứ từ AI Roleplay',
+      definitionEn: `Natural native phrasing (improved from: "${originalUserLine}")`,
+      contextSentence: cleanPhrase,
+      videoTitle: 'AI Roleplay Coaching',
+      savedAt: Date.now(),
+      easeFactor: 2.5,
+      interval: 0,
+      repetitions: 0,
+      lapses: 0,
+      state: 'new',
+      dueAt: Date.now(),
+      lastReviewedAt: Date.now(),
+      schedulerVersion: 'fsrs6',
+      usn: 1,
+      isDirty: true
+    };
+
+    setSavedWords((prev) => [newWord, ...prev]);
+    ankiDb.saveWord(newWord).catch(console.warn);
+    if (!currentUser) {
+      ScopedStorage.addGuestTransientWord(newWord);
+    }
+    toast.success('Đã lưu câu bản xứ vào Kho từ vựng FSRS-6 để ôn tập!');
+  };
+
   // Update translation / context sentence inline from Word Vault
   const handleUpdateWord = (wordId: string, patch: { translation: string; contextSentence: string }) => {
     setSavedWords((prev) =>
@@ -614,12 +672,23 @@ export const App: React.FC = () => {
     toast.info('Từ vựng này chưa có thông tin video gốc để tua lại.');
   };
 
-  // Anki SM-2 Review execution & revlog audit recording (BR-13)
+  // FSRS-6 Review execution, revlog audit recording & Anki -> LingQ status sync
   const handleReviewWord = (wordId: string, rating: AnkiRating) => {
     setSavedWords((prev) =>
       prev.map((w) => {
         if (w.id !== wordId) return w;
-        const res = calculateAnkiSchedule(w, rating);
+        const res = calculateFsrsSchedule(w, rating);
+
+        // Auto-sync mastery milestone back into LingQ subtitle highlight matrix
+        if (rating === 1) {
+          lingqWordService.setWordStatus(w.word, 1);
+        } else if (res.newStability >= 21) {
+          lingqWordService.setWordStatus(w.word, 4);
+        } else if (res.newStability >= 7) {
+          lingqWordService.setWordStatus(w.word, 3);
+        } else if (res.newStability >= 2) {
+          lingqWordService.setWordStatus(w.word, 2);
+        }
 
         // Record immutable audit entry into Anki revlog & sync to cloud if signed in
         const reviewPayload = {
@@ -649,6 +718,9 @@ export const App: React.FC = () => {
           lapses: res.newLapses,
           state: res.newState,
           dueAt: res.dueAt,
+          stability: res.newStability,
+          difficulty: res.newDifficulty,
+          schedulerVersion: 'fsrs6',
           lastReviewedAt: Date.now(),
           usn: (w.usn ?? 0) + 1,
           isDirty: true
@@ -870,16 +942,21 @@ export const App: React.FC = () => {
                   currentUser={currentUser}
                   onOpenAuth={() => setIsAuthModalOpen(true)}
                   onRoleplayHistoryChange={(history) => setRoleplayHistory(history)}
+                  completedScenarios={completedScenarios}
+                  onCompletedScenariosChange={(records) => setCompletedScenarios(records)}
+                  onSavePhraseToSrs={handleSaveRoleplayPhraseToSrs}
                 />
               </ProductionErrorBoundary>
             )}
 
             {activeTab === 'review' && (
-              <ProductionErrorBoundary componentName="Ôn tập Anki" onGoHome={() => setActiveTab('home')}>
+              <ProductionErrorBoundary componentName="Ôn tập FSRS-6" onGoHome={() => setActiveTab('home')}>
                 <VocabularyReview
                   savedWords={savedWords}
                   onReviewWord={handleReviewWord}
                   onOpenWordInVideo={handleOpenWordInVideo}
+                  currentUser={currentUser}
+                  onOpenAuth={() => setIsAuthModalOpen(true)}
                 />
               </ProductionErrorBoundary>
             )}

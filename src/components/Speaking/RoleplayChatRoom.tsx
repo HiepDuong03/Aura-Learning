@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { 
   Sparkles, 
   RotateCcw, 
@@ -7,7 +7,11 @@ import {
   Bot, 
   Mic, 
   MicOff, 
-  Send
+  Send,
+  BookmarkPlus,
+  BookmarkCheck,
+  CheckCircle2,
+  Target
 } from 'lucide-react';
 
 export interface RoleplayPersona {
@@ -48,6 +52,11 @@ interface RoleplayChatRoomProps {
   quotaBadge?: string;
   isLockedForGuest?: boolean;
   onRequestLogin?: () => void;
+  missionProgress?: number;
+  missionCompleted?: boolean;
+  autoSendVoice?: boolean;
+  onToggleAutoSendVoice?: () => void;
+  onSavePhraseToSrs?: (phrase: string, contextSentence: string, tip?: string) => void;
 }
 
 export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
@@ -66,9 +75,15 @@ export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
   aiEngineLabel,
   quotaBadge,
   isLockedForGuest = false,
-  onRequestLogin
+  onRequestLogin,
+  missionProgress = 0,
+  missionCompleted = false,
+  autoSendVoice = true,
+  onToggleAutoSendVoice,
+  onSavePhraseToSrs
 }) => {
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const [savedRephraseIds, setSavedRephraseIds] = useState<Set<string>>(new Set());
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -148,14 +163,53 @@ export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onRestartChat}
-            className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-            title="Bắt đầu lại cuộc hội thoại"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {onToggleAutoSendVoice && (
+              <button
+                type="button"
+                onClick={onToggleAutoSendVoice}
+                className={`hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-bold border transition-all ${
+                  autoSendVoice
+                    ? 'bg-teal-50 border-teal-200 text-teal-700'
+                    : 'bg-slate-50 border-slate-200 text-slate-500'
+                }`}
+                title="Tự động gửi câu nói ngay khi bạn dừng nói bằng Mic"
+              >
+                <Mic className="w-3 h-3" />
+                <span>{autoSendVoice ? 'Tự gửi giọng nói: Bật' : 'Tự gửi giọng nói: Tắt'}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onRestartChat}
+              className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+              title="Bắt đầu lại cuộc hội thoại"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Mission Completion Progress Bar */}
+        <div className="pt-2.5 pb-1 flex items-center gap-3">
+          <div className="flex items-center gap-1.5 text-[11px] font-black text-slate-600 shrink-0">
+            {missionCompleted ? (
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            ) : (
+              <Target className="w-3.5 h-3.5 text-teal-600" />
+            )}
+            <span className={missionCompleted ? 'text-emerald-700' : ''}>
+              {missionCompleted ? 'Hoàn thành nhiệm vụ!' : `Tiến độ nhiệm vụ: ${missionProgress}%`}
+            </span>
+          </div>
+          <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-500 ${
+                missionCompleted ? 'bg-emerald-500' : 'bg-teal-500'
+              }`}
+              style={{ width: `${Math.max(4, Math.min(100, missionProgress))}%` }}
+            />
+          </div>
         </div>
 
         {/* Message History List */}
@@ -200,16 +254,44 @@ export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
                     )}
                   </div>
 
-                  {/* Native Rephrase & Grammar Tip */}
+                  {/* Native Rephrase & Grammar Tip + 1-Click Save to FSRS-6 */}
                   {isUser && (msg.nativeRephrase || msg.grammarTip) && (
-                    <div className="p-2.5 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-1 animate-fade-in">
+                    <div className="p-2.5 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-1.5 animate-fade-in">
                       {msg.nativeRephrase && (
-                        <div className="flex items-start gap-1.5">
-                          <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                          <div>
-                            <span className="font-bold">Gợi ý cách nói tự nhiên hơn: </span>
-                            <span>"{msg.nativeRephrase}"</span>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                            <div>
+                              <span className="font-bold">Gợi ý cách nói tự nhiên hơn: </span>
+                              <span>"{msg.nativeRephrase}"</span>
+                            </div>
                           </div>
+                          {onSavePhraseToSrs && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!msg.nativeRephrase || savedRephraseIds.has(msg.id)) return;
+                                onSavePhraseToSrs(msg.nativeRephrase, msg.text, msg.grammarTip);
+                                setSavedRephraseIds((prev) => new Set(prev).add(msg.id));
+                              }}
+                              className={`px-2 py-1 rounded-lg text-[10px] font-black flex items-center gap-1 shrink-0 transition-all ${
+                                savedRephraseIds.has(msg.id)
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                  : 'bg-white hover:bg-amber-100 text-amber-800 border border-amber-300'
+                              }`}
+                              title="Lưu câu chuẩn bản xứ này vào Kho từ vựng FSRS-6 để ôn tập"
+                            >
+                              {savedRephraseIds.has(msg.id) ? (
+                                <>
+                                  <BookmarkCheck className="w-3 h-3" /> Đã lưu SRS
+                                </>
+                              ) : (
+                                <>
+                                  <BookmarkPlus className="w-3 h-3" /> + Lưu SRS
+                                </>
+                              )}
+                            </button>
+                          )}
                         </div>
                       )}
                       {msg.grammarTip && (
@@ -240,7 +322,7 @@ export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
         {isLockedForGuest ? (
           <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50 p-3.5 rounded-2xl">
             <p className="text-xs font-bold text-slate-700">
-              Đăng nhập tài khoản miễn phí để mở khóa 10 lượt AI Roleplay mỗi ngày (hoặc không giới hạn với Pro).
+              Đăng nhập tài khoản miễn phí để mở khóa 20 lượt AI mỗi ngày (hoặc không giới hạn với Pro).
             </p>
             {onRequestLogin && (
               <button
