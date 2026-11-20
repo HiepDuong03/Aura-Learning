@@ -16,6 +16,9 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { speakWord } from '../../services/dictionaryService';
+import { authService } from '../../services/authService';
+import { AuthUser } from '../../types';
+import { useNotify } from '../Common/ToastProvider';
 import { GuidedSpeakingCard, ReflexScaffoldingStep } from './GuidedSpeakingCard';
 import { RoleplayChatRoom, RoleplayPersona, ChatMessage } from './RoleplayChatRoom';
 import { VoiceActivityDetector } from '../../utils/voiceActivityDetector';
@@ -26,6 +29,8 @@ interface RapidSpeakingRoomProps {
   scenarios: SpeakingScenario[];
   onBack: () => void;
   onAddCustomScenario: (scenario: SpeakingScenario) => void;
+  currentUser?: AuthUser | null;
+  onOpenAuth?: () => void;
 }
 
 const AI_PERSONAS: RoleplayPersona[] = [
@@ -76,8 +81,11 @@ const CATEGORIES = ['Tất cả', 'Ăn uống', 'Mua sắm', 'Du lịch', 'Công
 export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
   scenarios,
   onBack,
-  onAddCustomScenario
+  onAddCustomScenario,
+  currentUser,
+  onOpenAuth
 }) => {
+  const { toast } = useNotify();
   const [activeTab, setActiveTab] = useState<'guided' | 'roleplay'>('guided');
   
   // Guided Mode States
@@ -135,6 +143,8 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
   const [roleplayInput, setRoleplayInput] = useState<string>('');
   const [isAiThinking, setIsAiThinking] = useState<boolean>(false);
   const [roleplayStartTime, setRoleplayStartTime] = useState<number>(Date.now());
+  const [aiEngineLabel, setAiEngineLabel] = useState<string>('Live AI Roleplay');
+  const [quotaBadge, setQuotaBadge] = useState<string | undefined>(undefined);
 
   // Refs for Web Speech & Web Audio VAD
   const recognitionRef = useRef<any>(null);
@@ -344,7 +354,7 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
 
   const toggleRecording = () => {
     if (!recognitionRef.current) {
-      alert('Trình duyệt chưa hỗ trợ Web Speech API. Vui lòng dùng Chrome hoặc Edge.');
+      toast.info('Trình duyệt chưa hỗ trợ Web Speech API. Vui lòng dùng Chrome hoặc Edge.');
       return;
     }
 
@@ -375,68 +385,92 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
     }
   };
 
-  // Roleplay send message
-  const handleSendRoleplay = () => {
-    if (!roleplayInput.trim() || isAiThinking) return;
+  // Roleplay send message via authenticated Backend AI API
+  const handleSendRoleplay = async () => {
+    const trimmed = roleplayInput.trim();
+    if (!trimmed || isAiThinking) return;
 
+    const token = authService.getToken();
+    if (!token || !currentUser) {
+      toast.error('Vui lòng đăng nhập để sử dụng AI Roleplay.');
+      onOpenAuth?.();
+      return;
+    }
+
+    const userMsgId = `usr-${Date.now()}`;
     const userMsg: ChatMessage = {
-      id: `usr-${Date.now()}`,
+      id: userMsgId,
       sender: 'User',
-      text: roleplayInput.trim(),
+      text: trimmed,
       latencyMs: Date.now() - roleplayStartTime,
-      nativeRephrase: generateNativeRephrase(roleplayInput.trim())
     };
 
-    setRoleplayMessages(prev => [...prev, userMsg]);
+    const nextHistory = [...roleplayMessages, userMsg];
+    setRoleplayMessages(nextHistory);
     setRoleplayInput('');
     setIsAiThinking(true);
 
-    setTimeout(() => {
-      const aiReplyText = getRealisticAiReply(selectedPersona.id, userMsg.text);
-      const aiMsg: ChatMessage = {
-        id: `ai-${Date.now()}`,
-        sender: 'AI',
-        text: aiReplyText,
-      };
+    try {
+      const res = await fetch('/api/ai/roleplay', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          personaId: selectedPersona.id,
+          personaName: selectedPersona.name,
+          personaRole: selectedPersona.role,
+          situation: selectedPersona.situation,
+          mission: selectedPersona.mission,
+          history: nextHistory.slice(-6).map(m => ({ sender: m.sender, text: m.text })),
+          userMessage: trimmed
+        })
+      });
 
-      setRoleplayMessages(prev => [...prev, aiMsg]);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || 'Không thể kết nối AI Roleplay.');
+        setIsAiThinking(false);
+        return;
+      }
+
+      if (data.isFallback) {
+        setAiEngineLabel('Chế độ Offline / Chưa cấu hình AI Key');
+      } else {
+        setAiEngineLabel('Live AI (Gemini)');
+      }
+
+      if (data.quota) {
+        setQuotaBadge(
+          data.quota.unlimited
+            ? 'Pro Unlimited'
+            : `${data.quota.used}/${data.quota.limit} lượt hôm nay`
+        );
+      }
+
+      setRoleplayMessages(prev => [
+        ...prev.map(m =>
+          m.id === userMsgId
+            ? { ...m, nativeRephrase: data.nativeRephrase, grammarTip: data.grammarTip }
+            : m
+        ),
+        {
+          id: `ai-${Date.now()}`,
+          sender: 'AI',
+          text: data.reply || 'Could you elaborate on that?'
+        }
+      ]);
+
+      setRoleplayStartTime(Date.now());
+      if (data.reply) {
+        speakWord(data.reply, 'en', 0.95);
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Lỗi kết nối máy chủ AI Roleplay.');
+    } finally {
       setIsAiThinking(false);
-      speakWord(aiReplyText, 'en', 0.95);
-    }, 700);
-  };
-
-  const generateNativeRephrase = (text: string): string => {
-    const lower = text.toLowerCase();
-    if (lower.includes('i want to have') || lower.includes('i want')) {
-      return text.replace(/i want to have|i want/gi, 'Could I please get');
     }
-    if (lower.includes('how much money') || lower.includes('how much is it')) {
-      return "What's the damage on this? / How much does that come out to?";
-    }
-    if (lower.includes('give me')) {
-      return text.replace(/give me/gi, 'May I have');
-    }
-    return `In natural conversation, you can say: "${text}, please."`;
-  };
-
-  const getRealisticAiReply = (personaId: string, userInput: string): string => {
-    const input = userInput.toLowerCase();
-    if (personaId === 'cafe-barista') {
-      if (input.includes('latte') || input.includes('coffee')) {
-        return "Coming right up! That will be an iced oat latte, half-sweet. Anything from our fresh bakery today?";
-      }
-      if (input.includes('wifi') || input.includes('password')) {
-        return "The Wifi network is 'CentralRoast_Guest' and the password is on the bottom of your receipt: 'coffeelover2026'.";
-      }
-      return "Sure thing! That comes to $5.50. Will you be paying with card or cash today?";
-    }
-    if (personaId === 'airport-officer') {
-      if (input.includes('hotel') || input.includes('stay') || input.includes('vacation') || input.includes('holiday')) {
-        return "Very good. How long do you plan to remain in the United Kingdom, and do you have a return ticket?";
-      }
-      return "Thank you. Welcome to the UK! Please collect your luggage at carousel number four. Have a pleasant stay.";
-    }
-    return "Understood! I'll take care of that right away for you. Is there anything else you need assistance with?";
   };
 
   return (
@@ -703,6 +737,10 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
             speakWord(selectedPersona.initialMessage, 'en', 0.95);
           }}
           onSpeakText={(t) => speakWord(t, 'en', 0.95)}
+          aiEngineLabel={aiEngineLabel}
+          quotaBadge={quotaBadge}
+          isLockedForGuest={!currentUser}
+          onRequestLogin={onOpenAuth}
         />
       )}
 

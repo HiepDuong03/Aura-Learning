@@ -47,6 +47,7 @@ import { shortsFeedService } from '../../services/shortsFeedService';
 import { youglishEngine, AccentZone, ContextRegister, YouGlishOccurrence } from '../../services/youglishEngine';
 import { speechScoringService, SpeechScoreResult } from '../../services/speechScoringService';
 import { YouGlishLiveWidget } from './YouGlishLiveWidget';
+import { useNotify } from '../Common/ToastProvider';
 
 type ShortsFeedMode = 'youglish' | 'search';
 
@@ -77,6 +78,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   activeProfileId = 'default_profile',
   onImportShortClick
 }) => {
+  const { toast } = useNotify();
   // Feed Mode State: Pure YouGlish Study & Search
   const [feedMode, setFeedMode] = useState<ShortsFeedMode>('youglish');
   const [selectedWordFilter, setSelectedWordFilter] = useState<string>('all');
@@ -766,7 +768,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   // 1-Tap Shadowing (Speech Recognition & Anki SRS Loop)
   const handleStartShadowing = () => {
     if (!speechScoringService.isSupported()) {
-      alert('Trình duyệt của bạn chưa hỗ trợ Web Speech API. Vui lòng dùng Chrome, Edge hoặc Safari.');
+      toast.info('Trình duyệt của bạn chưa hỗ trợ Web Speech API. Vui lòng dùng Chrome, Edge hoặc Safari.');
       return;
     }
 

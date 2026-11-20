@@ -1,5 +1,6 @@
 import { LingQWordStatus, SubtitleLine, SavedWord } from '../types';
 import { tokenizeText } from '../utils/textTokenizer';
+import { ScopedStorage } from './scopedStorage';
 
 const LINGQ_STORAGE_KEY = '4you_lingq_words';
 
@@ -77,10 +78,9 @@ class LingQWordService {
         });
       }
 
-      // Synchronize with existing Anki SavedWords
-      const savedWordsRaw = localStorage.getItem('4you_saved_words_v2') || localStorage.getItem('4you_saved_words');
-      if (savedWordsRaw) {
-        const savedWords: SavedWord[] = JSON.parse(savedWordsRaw);
+      // Synchronize with scoped Anki SavedWords for the current user partition
+      const savedWords = ScopedStorage.getSavedWords(this.currentUserId);
+      if (savedWords.length > 0) {
         savedWords.forEach(sw => {
           const w = sw.word.toLowerCase();
           if (!this.statusMap.has(w)) {

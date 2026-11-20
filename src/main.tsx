@@ -3,11 +3,14 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 import { ProductionErrorBoundary } from './components/Common/ProductionErrorBoundary';
+import { ToastProvider } from './components/Common/ToastProvider';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ProductionErrorBoundary componentName="AURA Learning">
-      <App />
+      <ToastProvider>
+        <App />
+      </ToastProvider>
     </ProductionErrorBoundary>
   </React.StrictMode>
 );

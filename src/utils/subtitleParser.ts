@@ -308,7 +308,7 @@ export function parseTimestampedTranscript(raw: string): SubtitleLine[] {
   let id = 1;
 
   // Regex matching [01:23] or (01:23) or 01:23 at start of line
-  const timeRegex = /^[\(\[]?(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)[\)\]]?\s*(.*)$/;
+  const timeRegex = /^[([]?(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)[)\]]?\s*(.*)$/;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]?.trim();

@@ -15,6 +15,30 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/youtube-oembed/, ''),
       },
+      '/api/auth': {
+        target: process.env.API_URL || 'http://localhost:3000',
+        changeOrigin: true,
+      },
+      '/api/sync': {
+        target: process.env.API_URL || 'http://localhost:3000',
+        changeOrigin: true,
+      },
+      '/api/admin': {
+        target: process.env.API_URL || 'http://localhost:3000',
+        changeOrigin: true,
+      },
+      '/api/ai': {
+        target: process.env.API_URL || 'http://localhost:3000',
+        changeOrigin: true,
+      },
+      '/api/dict': {
+        target: process.env.API_URL || 'http://localhost:3000',
+        changeOrigin: true,
+      },
+      '/api/health': {
+        target: process.env.API_URL || 'http://localhost:3000',
+        changeOrigin: true,
+      },
     },
   },
   build: {

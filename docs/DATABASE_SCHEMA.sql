@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
     avatar_url TEXT,                                   -- Đường dẫn ảnh đại diện
     role VARCHAR(20) NOT NULL DEFAULT 'user',          -- RBAC Role: 'guest' | 'user' | 'pro' | 'admin'
     status VARCHAR(20) NOT NULL DEFAULT 'active',      -- 'active' | 'suspended' | 'pending'
+    token_version INTEGER NOT NULL DEFAULT 1,          -- Token revocation counter (incremented on logout/role change)
     created_at BIGINT NOT NULL,                        -- Epoch timestamp (ms)
     updated_at BIGINT NOT NULL                         -- Epoch timestamp (ms)
 );

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { VideoLesson, SubtitleLine } from '../../types';
+import { VideoLesson, SubtitleLine, AuthUser } from '../../types';
+import { PermissionGate } from '../Auth/PermissionGate';
 import { 
   X, 
   Video, 
@@ -28,13 +29,25 @@ interface ImportVideoModalProps {
   isOpen: boolean;
   onClose: () => void;
   onImportLesson: (lesson: VideoLesson) => void;
+  currentUser?: AuthUser | null;
+  customLessonsCount?: number;
+  onOpenAuth?: () => void;
 }
+
+const GUEST_IMPORT_LIMIT = 1;
+const USER_IMPORT_LIMIT = 5;
 
 export const ImportVideoModal: React.FC<ImportVideoModalProps> = ({
   isOpen,
   onClose,
-  onImportLesson
+  onImportLesson,
+  currentUser,
+  customLessonsCount = 0,
+  onOpenAuth
 }) => {
+  const isUnlimitedImport = currentUser?.role === 'pro' || currentUser?.role === 'admin';
+  const maxAllowedImports = !currentUser ? GUEST_IMPORT_LIMIT : isUnlimitedImport ? Infinity : USER_IMPORT_LIMIT;
+  const isQuotaExceeded = !isUnlimitedImport && customLessonsCount >= maxAllowedImports;
   const [activeTab, setActiveTab] = useState<ImportTab>('youtube');
   const [url, setUrl] = useState<string>('');
   const [customTitle, setCustomTitle] = useState<string>('');
@@ -219,6 +232,15 @@ export const ImportVideoModal: React.FC<ImportVideoModalProps> = ({
     e.preventDefault();
     setError('');
 
+    if (isQuotaExceeded) {
+      setError(
+        !currentUser
+          ? `Phiên Khách chỉ hỗ trợ tối đa ${GUEST_IMPORT_LIMIT} bài học tự nhập. Vui lòng đăng nhập để mở rộng lên ${USER_IMPORT_LIMIT} bài miễn phí.`
+          : `Tài khoản User tiêu chuẩn tối đa ${USER_IMPORT_LIMIT} bài tự nhập. Hãy xóa bớt bài cũ hoặc nâng cấp Pro để nhập không giới hạn.`
+      );
+      return;
+    }
+
     let finalYtId = 'RKK7wGAYP6k'; // Default background video if text or subtitle without video
     let finalTitle = '';
     let finalChannel = '4You LingQ Studio';
@@ -331,7 +353,7 @@ export const ImportVideoModal: React.FC<ImportVideoModalProps> = ({
         </button>
 
         {/* Modal Header */}
-        <div className="flex items-center gap-3 mb-4">
+        <div className="flex items-center gap-3 mb-3">
           <div className="size-11 rounded-2xl bg-teal-50 text-teal-600 flex items-center justify-center">
             <Zap className="w-6 h-6 fill-current" />
           </div>
@@ -339,6 +361,42 @@ export const ImportVideoModal: React.FC<ImportVideoModalProps> = ({
             <h2 className="text-xl font-black text-slate-900">Nhập Bài Học Mới (Chuẩn LingQ)</h2>
             <p className="text-xs text-slate-500 font-medium">Hỗ trợ YouTube, Tệp phụ đề SRT/VTT và Bài đọc văn bản</p>
           </div>
+        </div>
+
+        {/* RBAC Quota Status Banner */}
+        <div className="mb-4">
+          <PermissionGate
+            permission="import:unlimited"
+            currentUser={currentUser}
+            fallback={
+              <div className={`px-3.5 py-2.5 rounded-2xl border text-xs font-bold flex items-center justify-between gap-2 ${
+                isQuotaExceeded ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-amber-50 border-amber-200 text-amber-800'
+              }`}>
+                <span>
+                  {!currentUser
+                    ? `Chế độ Khách: Đã dùng ${customLessonsCount}/${GUEST_IMPORT_LIMIT} bài tự nhập`
+                    : `Gói Tiêu chuẩn: Đã dùng ${customLessonsCount}/${USER_IMPORT_LIMIT} bài tự nhập`}
+                </span>
+                {!currentUser && onOpenAuth && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenAuth();
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-teal-600 text-white text-[11px] font-black hover:bg-teal-700 shrink-0"
+                  >
+                    Đăng nhập (+4 bài)
+                  </button>
+                )}
+              </div>
+            }
+          >
+            <div className="px-3.5 py-2 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>Quyền Pro/Admin: Nhập bài học không giới hạn ({customLessonsCount} bài đã lưu)</span>
+            </div>
+          </PermissionGate>
         </div>
 
         {/* Source Tab Selector */}

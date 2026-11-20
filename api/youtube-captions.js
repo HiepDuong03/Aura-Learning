@@ -1,6 +1,35 @@
 import https from 'node:https';
 
-async function fetchFromYouTube(videoId) {
+export const YOUTUBE_ID_REGEX = /^[a-zA-Z0-9_-]{11}$/;
+
+export function isValidYouTubeId(videoId) {
+  return typeof videoId === 'string' && YOUTUBE_ID_REGEX.test(videoId.trim());
+}
+
+const captionRateHits = new Map();
+function checkCaptionRateLimit(ip, windowMs = 60_000, maxReq = 20) {
+  const now = Date.now();
+  if (captionRateHits.size > 1000) {
+    for (const [k, rec] of captionRateHits.entries()) {
+      if (now > rec.resetAt) captionRateHits.delete(k);
+    }
+  }
+  const existing = captionRateHits.get(ip);
+  if (!existing || now > existing.resetAt) {
+    captionRateHits.set(ip, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  existing.count += 1;
+  return existing.count <= maxReq;
+}
+
+export async function fetchFromYouTube(rawVideoId) {
+  const videoId = String(rawVideoId || '').trim();
+  if (!isValidYouTubeId(videoId)) {
+    const err = new Error('Invalid YouTube videoId format.');
+    err.statusCode = 400;
+    throw err;
+  }
   // 1. Fetch watch page to extract INNERTUBE_API_KEY
   const html = await new Promise((resolve, reject) => {
     https.get(`https://www.youtube.com/watch?v=${videoId}`, {
@@ -183,11 +212,24 @@ export default async function handler(req, res) {
   }
 
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const videoId = url.searchParams.get('v') || req.query?.v;
+  const videoId = (url.searchParams.get('v') || req.query?.v || '').trim();
 
   if (!videoId) {
     res.statusCode = 400;
     res.end(JSON.stringify({ error: 'Missing videoId parameter (?v=...)' }));
+    return;
+  }
+
+  if (!isValidYouTubeId(videoId)) {
+    res.statusCode = 400;
+    res.end(JSON.stringify({ error: 'Invalid YouTube videoId format. Must be 11 characters [a-zA-Z0-9_-].' }));
+    return;
+  }
+
+  const clientIp = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown').toString().split(',')[0].trim();
+  if (!checkCaptionRateLimit(clientIp)) {
+    res.statusCode = 429;
+    res.end(JSON.stringify({ error: 'Quá nhiều yêu cầu lấy phụ đề. Vui lòng thử lại sau 1 phút.' }));
     return;
   }
 
@@ -196,7 +238,7 @@ export default async function handler(req, res) {
     res.statusCode = 200;
     res.end(JSON.stringify(result));
   } catch (err) {
-    res.statusCode = 500;
+    res.statusCode = err.statusCode || 500;
     res.end(JSON.stringify({ error: err.message || 'Lỗi khi tải phụ đề từ YouTube' }));
   }
 }

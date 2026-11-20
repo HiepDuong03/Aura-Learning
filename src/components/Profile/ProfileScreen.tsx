@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SavedWord, AnkiCollectionStats } from '../../types';
+import { SavedWord, AnkiCollectionStats, AuthUser } from '../../types';
 import { 
   Flame, 
   BookOpen, 
@@ -19,10 +19,12 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { ankiDb } from '../../services/ankiDatabase';
+import { useNotify } from '../Common/ToastProvider';
 
 interface ProfileScreenProps {
   savedWords: SavedWord[];
   streakDays: number;
+  currentUser?: AuthUser | null;
   onResetProgress?: () => void;
   onImportWords?: (words: SavedWord[]) => void;
 }
@@ -30,9 +32,11 @@ interface ProfileScreenProps {
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   savedWords,
   streakDays,
+  currentUser,
   onResetProgress,
   onImportWords
 }) => {
+  const { toast, confirmDialog } = useNotify();
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [autoPlayAudio, setAutoPlayAudio] = useState(true);
   const [ankiStats, setAnkiStats] = useState<AnkiCollectionStats | null>(null);
@@ -61,7 +65,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   // Export to Anki Desktop TSV format
   const handleExportAnkiTxt = () => {
     if (savedWords.length === 0) {
-      alert('Chưa có từ vựng nào để xuất tệp Anki.');
+      toast.info('Chưa có từ vựng nào để xuất tệp Anki.');
       return;
     }
     const txtContent = ankiDb.exportToAnkiTxt(savedWords);
@@ -72,7 +76,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   // Export complete JSON backup
   const handleExportJson = async () => {
     if (savedWords.length === 0) {
-      alert('Chưa có dữ liệu nào để sao lưu.');
+      toast.info('Chưa có dữ liệu nào để sao lưu.');
       return;
     }
     const jsonContent = await ankiDb.exportFullBackupJSON(savedWords);
@@ -96,7 +100,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         setImportNotification(`Đã khôi phục thành công ${result.importedCount} thẻ từ vựng!`);
         setTimeout(() => setImportNotification(null), 4000);
       } catch (err) {
-        alert(err instanceof Error ? err.message : 'Lỗi khi nhập tệp sao lưu.');
+        toast.error(err instanceof Error ? err.message : 'Lỗi khi nhập tệp sao lưu.');
       }
     };
     reader.readAsText(file);
@@ -110,27 +114,55 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         <div className="absolute -right-8 -bottom-8 w-48 h-48 bg-white/10 rounded-full blur-2xl pointer-events-none" />
         
         <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5 relative z-10 text-center sm:text-left">
-          <div className="size-20 sm:size-24 rounded-3xl bg-white text-teal-700 font-black text-3xl flex items-center justify-center shadow-lg ring-4 ring-white/20 shrink-0">
-            4U
-          </div>
+          {currentUser?.avatar ? (
+            <img
+              src={currentUser.avatar}
+              alt={currentUser.name}
+              className="size-20 sm:size-24 rounded-3xl object-cover bg-white shadow-lg ring-4 ring-white/20 shrink-0"
+            />
+          ) : (
+            <div className="size-20 sm:size-24 rounded-3xl bg-white text-teal-700 font-black text-3xl flex items-center justify-center shadow-lg ring-4 ring-white/20 shrink-0">
+              {currentUser?.name ? currentUser.name.slice(0, 2).toUpperCase() : '4U'}
+            </div>
+          )}
           
           <div className="space-y-1.5 flex-1 min-w-0">
             <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-              <h1 className="text-2xl font-black tracking-tight">Học Viên Chăm Chỉ</h1>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-400 text-amber-950 flex items-center gap-1 shadow-sm">
-                <Sparkles className="w-3.5 h-3.5 fill-current" /> Anki Pro Member
+              <h1 className="text-2xl font-black tracking-tight truncate">
+                {currentUser ? currentUser.name : 'Khách (Chưa đăng nhập)'}
+              </h1>
+              <span className={`px-2.5 py-0.5 rounded-full text-xs font-black flex items-center gap-1 shadow-sm ${
+                currentUser?.role === 'admin'
+                  ? 'bg-rose-500 text-white'
+                  : currentUser?.role === 'pro'
+                  ? 'bg-amber-400 text-amber-950'
+                  : 'bg-white/20 text-white'
+              }`}>
+                <Sparkles className="w-3.5 h-3.5 fill-current" />
+                {currentUser?.role === 'admin'
+                  ? 'Admin'
+                  : currentUser?.role === 'pro'
+                  ? 'Pro Member'
+                  : currentUser
+                  ? 'Standard Member'
+                  : 'Guest Session'}
               </span>
             </div>
             <p className="text-xs sm:text-sm text-teal-100 font-medium">
-              Cơ sở dữ liệu Local-First IndexedDB & Thuật toán lặp lại ngắt quãng (SM-2)
+              {currentUser
+                ? `${currentUser.email} • Đồng bộ Cloud Database (3NF) & Local IndexedDB`
+                : 'Dữ liệu hiện lưu cục bộ cho phiên Khách. Đăng nhập để đồng bộ lên Cloud.'}
             </p>
             <div className="flex items-center justify-center sm:justify-start gap-2 pt-2 text-xs font-bold text-teal-200">
               <span className="flex items-center gap-1">
-                <Calendar className="w-3.5 h-3.5" /> Thành viên từ tháng 10/2026
+                <Calendar className="w-3.5 h-3.5" />{' '}
+                {currentUser?.createdAt
+                  ? `Tham gia từ ${new Date(currentUser.createdAt).toLocaleDateString('vi-VN')}`
+                  : 'Chế độ dùng thử Offline'}
               </span>
               <span>•</span>
               <span className="flex items-center gap-1 text-emerald-300">
-                <ShieldCheck className="w-3.5 h-3.5" /> Bản quyền trọn đời
+                <ShieldCheck className="w-3.5 h-3.5" /> {currentUser ? 'Đã xác thực' : 'Chưa liên kết Cloud'}
               </span>
             </div>
           </div>
@@ -396,9 +428,16 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         {onResetProgress && (
           <div className="pt-2">
             <button
-              onClick={() => {
-                if (window.confirm('Bạn có chắc chắn muốn đặt lại toàn bộ tiến độ học và từ vựng?')) {
+              onClick={async () => {
+                const ok = await confirmDialog({
+                  title: 'Đặt lại tiến độ học tập',
+                  message: 'Bạn có chắc chắn muốn đặt lại toàn bộ tiến độ học và từ vựng về mặc định?',
+                  confirmLabel: 'Đặt lại',
+                  destructive: true
+                });
+                if (ok) {
                   onResetProgress();
+                  toast.success('Đã khôi phục dữ liệu học tập mặc định.');
                 }
               }}
               className="text-xs font-bold text-rose-600 hover:text-rose-700 flex items-center gap-1.5 p-2 rounded-xl hover:bg-rose-50 transition-colors"

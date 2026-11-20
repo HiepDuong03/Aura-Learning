@@ -112,6 +112,8 @@ const BUILTIN_DICT: Record<string, WordDefinition> = {
   }
 };
 
+const clientWordCache = new Map<string, WordDefinition>();
+
 export async function lookupWord(rawWord: string): Promise<WordDefinition> {
   // Keep internal apostrophes for contractions (e.g. "don't", "I'm", "Steve's")
   const normalized = rawWord.trim().replace(/^[^a-zA-Z]+|[^a-zA-Z]+$/g, '');
@@ -122,7 +124,7 @@ export async function lookupWord(rawWord: string): Promise<WordDefinition> {
     throw new Error('Từ không hợp lệ');
   }
 
-  // 1. Check local dictionary first for zero-latency response
+  // 1. Check local dictionary & in-memory cache first
   const simpleKey = cleanWord.replace(/[^a-zA-Z]/g, '');
   if (BUILTIN_DICT[cleanWord]) {
     return BUILTIN_DICT[cleanWord];
@@ -130,57 +132,38 @@ export async function lookupWord(rawWord: string): Promise<WordDefinition> {
   if (BUILTIN_DICT[simpleKey]) {
     return BUILTIN_DICT[simpleKey];
   }
+  if (clientWordCache.has(cleanWord)) {
+    return clientWordCache.get(cleanWord)!;
+  }
 
-  // 2. Query ultra-fast Google Translate API (No CORS issues, real Vietnamese meaning & POS)
+  // 2. Query server-side cached master dictionary (/api/dict/lookup -> words_master DB cache)
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const timeoutId = setTimeout(() => controller.abort(), 4500);
 
-    const res = await fetch(
-      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=vi&dt=t&dt=bd&dt=rm&q=${encodeURIComponent(cleanWord)}`,
-      { signal: controller.signal }
-    );
+    const res = await fetch(`/api/dict/lookup?w=${encodeURIComponent(cleanWord)}`, {
+      signal: controller.signal
+    });
     clearTimeout(timeoutId);
 
     if (res.ok) {
       const data = await res.json();
-      const primaryTranslation = data[0]?.[0]?.[0] || cleanWord;
-      
-      // Extract dictionary entries (pos & alternative translations)
-      let partOfSpeech = 'vocabulary';
-      const synonyms: string[] = [];
-
-      if (Array.isArray(data[1]) && data[1].length > 0) {
-        const firstCategory = data[1][0];
-        partOfSpeech = firstCategory[0] || 'vocabulary';
-        if (Array.isArray(firstCategory[1])) {
-          synonyms.push(...firstCategory[1].slice(0, 5));
-        }
+      if (data && data.word) {
+        const entry: WordDefinition = {
+          word: data.word,
+          phonetic: data.phonetic || `/${cleanWord}/`,
+          partOfSpeech: data.partOfSpeech || 'vocabulary',
+          translation: data.translation || cleanWord,
+          definitionEn: data.definitionEn || `Meaning of "${cleanWord}"`,
+          exampleEn: data.exampleEn || '',
+          synonyms: Array.isArray(data.synonyms) && data.synonyms.length > 0 ? data.synonyms : undefined
+        };
+        clientWordCache.set(cleanWord, entry);
+        return entry;
       }
-
-      // POS translation mapping for display
-      const posDisplayMap: Record<string, string> = {
-        noun: 'danh từ (noun)',
-        verb: 'động từ (verb)',
-        adjective: 'tính từ (adj)',
-        adverb: 'phó từ (adv)',
-        preposition: 'giới từ (prep)',
-        conjunction: 'liên từ (conj)',
-        pronoun: 'đại từ (pron)'
-      };
-
-      return {
-        word: cleanWord,
-        phonetic: `/${cleanWord}/`,
-        partOfSpeech: posDisplayMap[partOfSpeech] || partOfSpeech,
-        translation: primaryTranslation,
-        definitionEn: `Ý nghĩa của "${cleanWord}" trong ngữ cảnh: ${primaryTranslation}`,
-        exampleEn: synonyms.length > 0 ? `Các nghĩa liên quan: ${synonyms.join(', ')}` : `Từ vựng tiếng Anh trong bài học.`,
-        synonyms: synonyms.length > 0 ? synonyms : undefined
-      };
     }
   } catch (err) {
-    console.warn('Google Translate API error, falling back to offline dictionary', err);
+    console.warn('[Dictionary] Backend lookup unavailable, falling back to offline entry:', err);
   }
 
   // Fallback if network offline
@@ -195,37 +178,36 @@ export async function lookupWord(rawWord: string): Promise<WordDefinition> {
 }
 
 /**
- * Dịch hàng loạt các câu phụ đề từ tiếng Anh sang tiếng Việt (Chuẩn 4You / 4English)
- * Dịch theo từng lô 12 câu để tối ưu tốc độ và tránh bị chặn.
+ * Dịch hàng loạt phụ đề qua Backend Proxy (/api/dict/translate-batch) để tránh bị Google rate-limit trực tiếp từ browser.
  */
 export async function batchTranslateSubtitles(
   subtitles: { text: string }[],
   onProgress?: (done: number, total: number) => void
 ): Promise<string[]> {
   const results: string[] = [];
-  const CHUNK_SIZE = 12;
+  const CHUNK_SIZE = 40;
 
   for (let i = 0; i < subtitles.length; i += CHUNK_SIZE) {
     const chunk = subtitles.slice(i, i + CHUNK_SIZE);
-    const joinedText = chunk.map((c) => c.text.replace(/\n/g, ' ')).join('\n');
+    const texts = chunk.map(c => c.text.replace(/\n/g, ' '));
 
     try {
-      const res = await fetch(
-        `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=vi&dt=t&q=${encodeURIComponent(joinedText)}`
-      );
+      const res = await fetch('/api/dict/translate-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texts })
+      });
       if (res.ok) {
         const data = await res.json();
-        const rawTranslated = data[0].map((item: any) => item[0]).join('');
-        const splitLines = rawTranslated.split('\n');
-
+        const translated: string[] = Array.isArray(data.translations) ? data.translations : [];
         for (let j = 0; j < chunk.length; j++) {
-          results.push(splitLines[j]?.trim() || chunk[j].text);
+          results.push(translated[j]?.trim() || chunk[j].text);
         }
       } else {
         chunk.forEach((c) => results.push(c.text));
       }
     } catch (e) {
-      console.warn('Batch translation error, fallback to original', e);
+      console.warn('[Dictionary] Batch translation fallback to original text:', e);
       chunk.forEach((c) => results.push(c.text));
     }
 

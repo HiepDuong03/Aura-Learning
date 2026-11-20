@@ -5,7 +5,7 @@
  * strictly by `userId`. Guest / anonymous sessions use a dedicated clean partition.
  */
 
-import { SavedWord, VideoLesson } from '../types';
+import { SavedWord, VideoLesson, AnkiUserProfile } from '../types';
 import { SpeakingScenario } from '../data/speakingScenarios';
 
 export class ScopedStorage {
@@ -130,15 +130,89 @@ export class ScopedStorage {
     } catch {}
   }
 
-  // --- Clean User Session Partition on Logout ---
-  public static clearUserMemory(userId: string): void {
+  // --- Anki Profiles (Scoped per User) ---
+  public static getProfiles(userId?: string | null): AnkiUserProfile[] | null {
     try {
-      const prefix = `4you_u_${userId}`;
-      Object.keys(localStorage).forEach((k) => {
-        if (k.startsWith(prefix)) {
-          // Keep cached data in localStorage if needed, or remove
+      const key = `${this.getPrefix(userId)}_profiles`;
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : null;
+      }
+    } catch {}
+    return null;
+  }
+
+  public static setProfiles(userId: string | null | undefined, profiles: AnkiUserProfile[]): void {
+    try {
+      const key = `${this.getPrefix(userId)}_profiles`;
+      localStorage.setItem(key, JSON.stringify(profiles));
+    } catch {}
+  }
+
+  public static getActiveProfileId(userId?: string | null): string | null {
+    try {
+      return localStorage.getItem(`${this.getPrefix(userId)}_active_profile_id`);
+    } catch {
+      return null;
+    }
+  }
+
+  public static setActiveProfileId(userId: string | null | undefined, profileId: string): void {
+    try {
+      localStorage.setItem(`${this.getPrefix(userId)}_active_profile_id`, profileId);
+    } catch {}
+  }
+
+  // --- Shorts Feed (Custom Shorts & Offsets Scoped per User) ---
+  public static getCustomShorts(userId?: string | null): VideoLesson[] {
+    try {
+      const key = `${this.getPrefix(userId)}_custom_shorts`;
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      }
+    } catch {}
+    return [];
+  }
+
+  public static setCustomShorts(userId: string | null | undefined, shorts: VideoLesson[]): void {
+    try {
+      const key = `${this.getPrefix(userId)}_custom_shorts`;
+      localStorage.setItem(key, JSON.stringify(shorts));
+    } catch {}
+  }
+
+  public static getShortsOffsets(userId?: string | null): Record<string, number> {
+    try {
+      const key = `${this.getPrefix(userId)}_shorts_offsets`;
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  public static setShortsOffsets(userId: string | null | undefined, offsets: Record<string, number>): void {
+    try {
+      const key = `${this.getPrefix(userId)}_shorts_offsets`;
+      localStorage.setItem(key, JSON.stringify(offsets));
+    } catch {}
+  }
+
+  // --- Clean User Session Partition Caches ---
+  public static clearPartitionCaches(userId?: string | null): void {
+    try {
+      const prefix = `${this.getPrefix(userId)}_`;
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(prefix)) {
+          keysToRemove.push(key);
         }
-      });
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
     } catch {}
   }
 }

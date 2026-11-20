@@ -17,6 +17,7 @@ import { ScopedStorage } from './services/scopedStorage';
 import { loadYouTubeIframeAPI } from './services/youtubeLoader';
 import { ProductionErrorBoundary } from './components/Common/ProductionErrorBoundary';
 import { LoadingFallback } from './components/Common/LoadingFallback';
+import { useNotify } from './components/Common/ToastProvider';
 import { BookOpen } from 'lucide-react';
 
 import { VideoStudyRoom } from './components/Player/VideoStudyRoom';
@@ -38,6 +39,7 @@ const STORAGE_KEYS = {
 };
 
 export const App: React.FC = () => {
+  const { toast } = useNotify();
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
   const [currentLesson, setCurrentLesson] = useState<VideoLesson | null>(null);
   const [currentLessonMode, setCurrentLessonMode] = useState<'subtitles' | 'dictation' | 'shadowing' | 'quiz'>('subtitles');
@@ -58,6 +60,7 @@ export const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => authService.getCurrentUser());
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState<boolean>(false);
+  const [isBootHydrated, setIsBootHydrated] = useState<boolean>(false);
 
   // Persistent state with ScopedStorage & Database-per-User isolation
   const [lessons, setLessons] = useState<VideoLesson[]>(() => {
@@ -118,30 +121,68 @@ export const App: React.FC = () => {
   const [activeProfile, setActiveProfile] = useState<AnkiUserProfile>(DEFAULT_PROFILE);
   const [isProfileSwitcherOpen, setIsProfileSwitcherOpen] = useState<boolean>(false);
 
+  const hydrateCloudAccountData = async (user: AuthUser, token: string, isCancelled?: () => boolean) => {
+    const [cloudWords, cloudLessons, cloudState] = await Promise.all([
+      ankiDb.syncWithCloud(token, user.id),
+      fetch('/api/sync/lessons', { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => (d?.lessons as VideoLesson[] | undefined) || [])
+        .catch(() => [] as VideoLesson[]),
+      fetch('/api/sync/state', { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => d?.state || null)
+        .catch(() => null)
+    ]);
+    if (isCancelled?.()) return;
+
+    setSavedWords(cloudWords || []);
+    ScopedStorage.setSavedWords(user.id, cloudWords || []);
+
+    const localCustom = await ankiDb.getCustomLessons();
+    if (isCancelled?.()) return;
+    const mergedCustomMap = new Map<string, VideoLesson>();
+    for (const l of [...cloudLessons, ...localCustom]) {
+      if (l && l.id && l.title) mergedCustomMap.set(l.id, l);
+    }
+    const validCustom = Array.from(mergedCustomMap.values());
+    setLessons([...validCustom, ...MOCK_LESSONS]);
+
+    if (cloudState && typeof cloudState === 'object') {
+      if (Array.isArray(cloudState.scenarios) && cloudState.scenarios.length > 0) {
+        setScenarios(cloudState.scenarios);
+        ScopedStorage.setScenarios(user.id, cloudState.scenarios);
+      }
+      if (typeof cloudState.streakDays === 'number' && cloudState.streakDays > 0) {
+        setStreakDays(cloudState.streakDays);
+        ScopedStorage.setStreakDays(user.id, cloudState.streakDays);
+      }
+      if (Array.isArray(cloudState.customShorts)) {
+        ScopedStorage.setCustomShorts(user.id, cloudState.customShorts);
+      }
+      if (cloudState.shortsOffsets && typeof cloudState.shortsOffsets === 'object') {
+        ScopedStorage.setShortsOffsets(user.id, cloudState.shortsOffsets);
+      }
+    }
+  };
+
   const handleAuthSuccess = async (user: AuthUser) => {
     setCurrentUser(user);
     ScopedStorage.clearGuestTransientWords();
     const token = authService.getToken();
-    let words: SavedWord[] = [];
-    if (token) {
-      words = await ankiDb.syncWithCloud(token, user.id);
-    } else {
-      words = await ankiDb.getAllWords(user.id);
-    }
     const loadedProfiles = await ankiDb.getProfiles();
     const active = await ankiDb.getActiveProfile();
     setProfiles(loadedProfiles);
     setActiveProfile(active);
-    if (words && words.length > 0) {
-      setSavedWords(words);
-      ScopedStorage.setSavedWords(user.id, words);
-    } else {
-      setSavedWords(words || []);
-    }
 
-    const dbCustom = await ankiDb.getCustomLessons();
-    const validCustom = (dbCustom || []).filter(c => Boolean(c && typeof c === 'object' && c.id && c.title));
-    setLessons([...validCustom, ...MOCK_LESSONS]);
+    if (token) {
+      await hydrateCloudAccountData(user, token);
+    } else {
+      const words = await ankiDb.getAllWords(user.id);
+      setSavedWords(words || []);
+      const dbCustom = await ankiDb.getCustomLessons();
+      const validCustom = (dbCustom || []).filter(c => Boolean(c && typeof c === 'object' && c.id && c.title));
+      setLessons([...validCustom, ...MOCK_LESSONS]);
+    }
   };
 
   const handleLogout = async () => {
@@ -154,60 +195,64 @@ export const App: React.FC = () => {
     const guestWords = await ankiDb.getAllWords();
     setSavedWords(guestWords && guestWords.length > 0 ? guestWords : INITIAL_SAVED_WORDS);
     setLessons(MOCK_LESSONS);
+    setScenarios(SPEAKING_SCENARIOS);
+    setStreakDays(ScopedStorage.getStreakDays(null));
   };
 
-  // Verify session & sync with cloud on boot
+  // Sequential Boot Hydration: prevents race conditions between session verification, IndexedDB init, and cloud sync
   useEffect(() => {
-    authService.verifySession().then((user) => {
-      if (user) {
-        setCurrentUser(user);
-        const token = authService.getToken();
-        if (token) {
-          ankiDb.syncWithCloud(token, user.id).then((cloudWords) => {
-            if (cloudWords && cloudWords.length > 0) {
-              setSavedWords(cloudWords);
-              ScopedStorage.setSavedWords(user.id, cloudWords);
-            }
-          }).catch(console.warn);
-        }
-      }
-    });
-  }, []);
+    let cancelled = false;
+    const isCancelled = () => cancelled;
 
-  // Initialize Anki Local-First Database on boot with active profile & persistent custom lessons
-  useEffect(() => {
-    const user = authService.getCurrentUser();
-    ankiDb.init(user?.id)
-      .then(async () => {
+    const bootstrap = async () => {
+      try {
+        const cachedUser = authService.getCurrentUser();
+        await ankiDb.init(cachedUser?.id);
+
+        const verifiedUser = await authService.verifySession();
+        if (cancelled) return;
+
+        const effectiveUser = verifiedUser || null;
+        setCurrentUser(effectiveUser);
+
         const loadedProfiles = await ankiDb.getProfiles();
         const active = await ankiDb.getActiveProfile();
+        if (cancelled) return;
         setProfiles(loadedProfiles);
         setActiveProfile(active);
 
-        // Load custom user-imported lessons from persistent IndexedDB
-        const dbCustomLessons = await ankiDb.getCustomLessons();
-        if (dbCustomLessons && dbCustomLessons.length > 0) {
-          setLessons((prev) => {
+        const token = effectiveUser ? authService.getToken() : null;
+        if (effectiveUser && token) {
+          await hydrateCloudAccountData(effectiveUser, token, isCancelled);
+        } else {
+          const dbCustomLessons = await ankiDb.getCustomLessons();
+          if (cancelled) return;
+          if (dbCustomLessons && dbCustomLessons.length > 0) {
             const validCustom = dbCustomLessons.filter(c => Boolean(c && typeof c === 'object' && c.id && c.title));
-            const customIds = new Set(validCustom.map(c => c.id));
-            const nonCustomPrev = (prev || []).filter(l => Boolean(l && l.id && !customIds.has(l.id) && !MOCK_LESSONS.some(m => m && m.id === l.id)));
-            return [...validCustom, ...nonCustomPrev, ...MOCK_LESSONS];
-          });
-        }
-
-        return ankiDb.getAllWords(active.id);
-      })
-      .then((dbWords) => {
-        if (dbWords && dbWords.length > 0) {
-          const safeWords = dbWords.filter((w): w is SavedWord => Boolean(w && typeof w === 'object' && typeof w.word === 'string' && w.word.trim().length > 0));
-          if (safeWords.length > 0) {
-            setSavedWords(safeWords);
+            setLessons([...validCustom, ...MOCK_LESSONS]);
+          }
+          const dbWords = await ankiDb.getAllWords(active.id);
+          if (cancelled) return;
+          if (dbWords && dbWords.length > 0) {
+            const safeWords = dbWords.filter((w): w is SavedWord => Boolean(w && typeof w === 'object' && typeof w.word === 'string' && w.word.trim().length > 0));
+            if (safeWords.length > 0) {
+              setSavedWords(safeWords);
+            }
           }
         }
-      })
-      .catch((err) => {
-        console.warn('[AnkiDB] Boot initialization fallback to localStorage:', err);
-      });
+      } catch (err) {
+        console.warn('[Boot] Initialization fallback to ScopedStorage:', err);
+      } finally {
+        if (!cancelled) {
+          setIsBootHydrated(true);
+        }
+      }
+    };
+
+    bootstrap();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Pre-warm YouTube Iframe API in background during idle time for instant 0ms startup
@@ -262,7 +307,7 @@ export const App: React.FC = () => {
       const words = await ankiDb.getAllWords(active.id);
       setSavedWords(words);
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Lỗi khi xoá hồ sơ.');
+      toast.error(e instanceof Error ? e.message : 'Lỗi khi xoá hồ sơ.');
     }
   };
 
@@ -290,8 +335,9 @@ export const App: React.FC = () => {
     }
   };
 
-  // Sync to ScopedStorage, Anki IndexedDB, and Cloud Server
+  // Sync to ScopedStorage, Anki IndexedDB, and Cloud Server (only after boot hydration completes)
   useEffect(() => {
+    if (!isBootHydrated) return;
     try {
       ScopedStorage.setSavedWords(currentUser?.id, savedWords);
       ankiDb.saveWords(savedWords, activeProfile.id).catch(() => {});
@@ -299,21 +345,14 @@ export const App: React.FC = () => {
       const token = authService.getToken();
       if (token && currentUser) {
         const timer = setTimeout(() => {
-          fetch('/api/sync/words', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({ words: savedWords })
-          }).catch(console.warn);
-        }, 1500);
+          ankiDb.syncWithCloud(token, currentUser.id).catch(console.warn);
+        }, 1200);
         return () => clearTimeout(timer);
       }
     } catch (e) {
       console.warn('Storage sync error', e);
     }
-  }, [savedWords, activeProfile.id, currentUser]);
+  }, [savedWords, activeProfile.id, currentUser, isBootHydrated]);
 
   useEffect(() => {
     try {
@@ -339,6 +378,32 @@ export const App: React.FC = () => {
       console.warn('ScopedStorage streak error', e);
     }
   }, [streakDays, currentUser]);
+
+  // Cloud State Sync for scenarios, streakDays, profiles, customShorts & shortsOffsets
+  useEffect(() => {
+    if (!isBootHydrated || !currentUser) return;
+    const token = authService.getToken();
+    if (!token) return;
+
+    const timer = setTimeout(() => {
+      fetch('/api/sync/state', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          state: {
+            scenarios,
+            streakDays,
+            customShorts: ScopedStorage.getCustomShorts(currentUser.id),
+            shortsOffsets: ScopedStorage.getShortsOffsets(currentUser.id)
+          }
+        })
+      }).catch(console.warn);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [scenarios, streakDays, currentUser, isBootHydrated]);
 
   // Real-world daily streak tracking based on calendar date
   useEffect(() => {
@@ -428,7 +493,7 @@ export const App: React.FC = () => {
     const existing = savedWords.find((w) => w?.word && w.word.toLowerCase().trim() === cleanDefWord);
     if (existing) {
       setSavedWords((prev) => prev.filter((w) => w.id !== existing.id));
-      ankiDb.deleteWord(existing.id).catch(console.warn);
+      ankiDb.deleteWord(existing.id, existing.word).catch(console.warn);
     } else {
       const newWord: SavedWord = {
         id: `word-${Date.now()}`,
@@ -468,8 +533,8 @@ export const App: React.FC = () => {
         if (w.id !== wordId) return w;
         const res = calculateAnkiSchedule(w, rating);
 
-        // Record immutable audit entry into Anki revlog
-        ankiDb.recordReview({
+        // Record immutable audit entry into Anki revlog & sync to cloud if signed in
+        const reviewPayload = {
           wordId: w.id,
           word: w.word,
           rating,
@@ -477,7 +542,16 @@ export const App: React.FC = () => {
           lastInterval: w.interval || 0,
           easeFactor: res.newEaseFactor,
           reviewedAt: Date.now()
-        }).catch(console.warn);
+        };
+        ankiDb.recordReview(reviewPayload).catch(console.warn);
+        const token = authService.getToken();
+        if (token && currentUser) {
+          fetch('/api/sync/reviews', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ review: reviewPayload })
+          }).catch(console.warn);
+        }
 
         return {
           ...w,
@@ -501,6 +575,23 @@ export const App: React.FC = () => {
       isCustom: true,
       createdAt: newLesson.createdAt || Date.now(),
     };
+    const token = authService.getToken();
+    if (token && currentUser) {
+      try {
+        const res = await fetch('/api/sync/lessons', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ lessons: [taggedLesson] })
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          toast.error(errData.error || 'Không thể đồng bộ bài học mới.');
+          return;
+        }
+      } catch (e) {
+        console.warn('[Sync] Cloud lesson sync warning, saved locally:', e);
+      }
+    }
     try {
       await ankiDb.saveCustomLesson(taggedLesson);
     } catch (e) {
@@ -513,6 +604,14 @@ export const App: React.FC = () => {
   const handleDeleteLesson = async (lessonId: string) => {
     try {
       await ankiDb.deleteCustomLesson(lessonId);
+      const token = authService.getToken();
+      if (token && currentUser) {
+        fetch('/api/sync/lessons', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ lessons: [], deletedLessonIds: [lessonId] })
+        }).catch(console.warn);
+      }
     } catch (e) {
       console.warn('[Storage] Error deleting custom lesson:', e);
     }
@@ -673,6 +772,8 @@ export const App: React.FC = () => {
                   scenarios={scenarios}
                   onBack={() => setActiveTab('home')}
                   onAddCustomScenario={(sc) => setScenarios((prev) => [sc, ...prev])}
+                  currentUser={currentUser}
+                  onOpenAuth={() => setIsAuthModalOpen(true)}
                 />
               </ProductionErrorBoundary>
             )}
@@ -702,6 +803,7 @@ export const App: React.FC = () => {
                 <ProfileScreen
                   savedWords={savedWords}
                   streakDays={streakDays}
+                  currentUser={currentUser}
                   onResetProgress={() => {
                     setSavedWords(INITIAL_SAVED_WORDS);
                     setLessons(MOCK_LESSONS);
@@ -751,6 +853,9 @@ export const App: React.FC = () => {
             isOpen={isImportOpen}
             onClose={() => setIsImportOpen(false)}
             onImportLesson={handleImportLesson}
+            currentUser={currentUser}
+            customLessonsCount={lessons.filter(l => Boolean(l && (l.isCustom || (typeof l.id === 'string' && l.id.startsWith('lesson-custom-'))))).length}
+            onOpenAuth={() => setIsAuthModalOpen(true)}
           />
         </React.Suspense>
       )}

@@ -24,6 +24,7 @@ import {
   WordAssessment 
 } from '../../utils/speechAssessor';
 import { soundEffects } from '../../utils/audioFeedback';
+import { useNotify } from '../Common/ToastProvider';
 
 export type ReflexScaffoldingStep = 1 | 2 | 3;
 
@@ -72,6 +73,7 @@ export const GuidedSpeakingCard: React.FC<GuidedSpeakingCardProps> = ({
   onSpeakText,
   onScaffoldingStepChange,
 }) => {
+  const { toast } = useNotify();
   const activeLevelSpec = CEFR_LEVEL_SPECS[selectedLevel];
   const isSpeedAchieved = latencyMs !== null && latencyMs <= activeLevelSpec.latencyMaxMs;
   const [hideEnglish, setHideEnglish] = useState(false);
@@ -98,7 +100,7 @@ export const GuidedSpeakingCard: React.FC<GuidedSpeakingCardProps> = ({
       (window as unknown as { webkitSpeechRecognition?: any }).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      alert('Trình duyệt của bạn chưa hỗ trợ nhận diện giọng nói. Vui lòng thử trên Chrome hoặc Edge.');
+      toast.info('Trình duyệt của bạn chưa hỗ trợ nhận diện giọng nói. Vui lòng thử trên Chrome hoặc Edge.');
       return;
     }
 

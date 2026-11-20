@@ -8,6 +8,7 @@
 import { AuthUser, AnkiUserProfile, SavedWord, UserRole, UserPermission } from '../types';
 import { ankiDb, DEFAULT_PROFILE } from './ankiDatabase';
 import { lingqWordService } from './lingqWordService';
+import { shortsFeedService } from './shortsFeedService';
 
 const STORAGE_KEYS = {
   SESSION: '4you_auth_session_v2',
@@ -37,8 +38,9 @@ class AuthService {
       if (rawUser && rawToken) {
         this.currentUser = JSON.parse(rawUser);
         this.token = rawToken;
-        // Bind auth to LingQ service
-        lingqWordService.setAuth(this.token, this.currentUser?.id || null);
+        const uid = this.currentUser?.id || null;
+        lingqWordService.setAuth(this.token, uid);
+        shortsFeedService.setUserId(uid);
       }
     } catch {
       this.currentUser = null;
@@ -86,6 +88,7 @@ class AuthService {
         localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(user));
         await ankiDb.switchUser(user.id);
         lingqWordService.setAuth(token, user.id);
+        shortsFeedService.setUserId(user.id);
         return user;
       } else if (res.status === 401) {
         console.warn('[Auth] Session token expired or invalid. Logging out.');
@@ -137,6 +140,16 @@ class AuthService {
       throw new Error(data.error || 'Đăng ký tài khoản không thành công.');
     }
 
+    return this.completeAuthSession(data, { syncCloud: false });
+  }
+
+  /**
+   * Shared session hydration helper across register, email login, and Google OAuth
+   */
+  private async completeAuthSession(
+    data: { user: any; token: string },
+    options: { syncCloud?: boolean } = { syncCloud: true }
+  ): Promise<AuthUser> {
     const authUser: AuthUser = {
       id: data.user.id,
       name: data.user.name,
@@ -154,26 +167,42 @@ class AuthService {
     localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(authUser));
     localStorage.setItem(STORAGE_KEYS.TOKEN, data.token);
 
-    // Switch physical IndexedDB partition to this user
+    // Physically switch IndexedDB & Shorts partitions to this user
     await ankiDb.switchUser(authUser.id);
+    shortsFeedService.setUserId(authUser.id);
 
-    // Sync profile & vocabulary locally
     try {
-      const newProfile = await ankiDb.createProfile(cleanName, authUser.avatar);
-      const updatedProfile: AnkiUserProfile = {
-        ...newProfile,
-        id: authUser.id,
-        cloudAccount: {
-          email: cleanEmail,
-          isLinked: true,
-          lastSyncedAt: Date.now(),
-        },
-      };
-      await ankiDb.updateProfile(updatedProfile);
-      await ankiDb.setActiveProfile(authUser.id);
-      lingqWordService.setAuth(data.token, authUser.id);
+      const allProfiles = await ankiDb.getProfiles();
+      const existing = allProfiles.find(
+        p => p.id === authUser.id || p.cloudAccount?.email === authUser.email
+      );
+      if (existing) {
+        await ankiDb.setActiveProfile(existing.id);
+      } else {
+        const newProf = await ankiDb.createProfile(authUser.name, authUser.avatar);
+        const updated: AnkiUserProfile = {
+          ...newProf,
+          id: authUser.id,
+          cloudAccount: {
+            email: authUser.email,
+            isLinked: true,
+            lastSyncedAt: Date.now()
+          }
+        };
+        await ankiDb.updateProfile(updated);
+        await ankiDb.setActiveProfile(authUser.id);
+      }
     } catch (e) {
-      console.warn('[Auth] Anki Profile init warning:', e);
+      console.warn('[Auth] Profile sync warning:', e);
+    }
+
+    lingqWordService.setAuth(data.token, authUser.id);
+    if (options.syncCloud !== false) {
+      try {
+        await ankiDb.syncWithCloud(data.token, authUser.id);
+      } catch (e) {
+        console.warn('[Auth] Post-login cloud sync warning:', e);
+      }
     }
 
     return authUser;
@@ -203,59 +232,7 @@ class AuthService {
       throw new Error(data.error || 'Email hoặc mật khẩu không chính xác.');
     }
 
-    const authUser: AuthUser = {
-      id: data.user.id,
-      name: data.user.name,
-      email: data.user.email,
-      avatar: data.user.avatar,
-      role: data.user.role || 'user',
-      permissions: data.user.permissions || ['vocab:read', 'vocab:write', 'vocab:sync'],
-      profileId: data.user.id,
-      token: data.token,
-      createdAt: data.user.createdAt,
-    };
-
-    this.currentUser = authUser;
-    this.token = data.token;
-    localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(authUser));
-    localStorage.setItem(STORAGE_KEYS.TOKEN, data.token);
-
-    // Switch physical IndexedDB partition to this user
-    await ankiDb.switchUser(authUser.id);
-
-    // Switch/create local Anki profile
-    try {
-      const allProfiles = await ankiDb.getProfiles();
-      const existing = allProfiles.find(p => p.id === authUser.id || p.cloudAccount?.email === cleanEmail);
-      if (existing) {
-        await ankiDb.setActiveProfile(existing.id);
-      } else {
-        const newProf = await ankiDb.createProfile(authUser.name, authUser.avatar);
-        const updated: AnkiUserProfile = {
-          ...newProf,
-          id: authUser.id,
-          cloudAccount: {
-            email: cleanEmail,
-            isLinked: true,
-            lastSyncedAt: Date.now()
-          }
-        };
-        await ankiDb.updateProfile(updated);
-        await ankiDb.setActiveProfile(authUser.id);
-      }
-    } catch (e) {
-      console.warn('[Auth] Profile sync warning:', e);
-    }
-
-    // Connect LingQ & sync vocabulary from server
-    lingqWordService.setAuth(data.token, authUser.id);
-    try {
-      await ankiDb.syncWithCloud(data.token, authUser.id);
-    } catch (e) {
-      console.warn('[Auth] Post-login sync warning:', e);
-    }
-
-    return authUser;
+    return this.completeAuthSession(data, { syncCloud: true });
   }
 
   /**
@@ -277,16 +254,20 @@ class AuthService {
    * Log in or register using Google Identity Services (GIS) / Google OAuth
    */
   public async loginWithGoogle(
-    payload: { credential?: string; email?: string; name?: string; avatar?: string; googleId?: string },
+    payload: { credential?: string; accessToken?: string },
     initialWords?: SavedWord[]
   ): Promise<AuthUser> {
+    if (!payload.credential && !payload.accessToken) {
+      throw new Error('Thiếu mã xác thực Google hợp lệ.');
+    }
     const res = await fetch('/api/auth/google', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        ...payload,
+        credential: payload.credential,
+        accessToken: payload.accessToken,
         initialWords: initialWords || []
       })
     });
@@ -297,70 +278,31 @@ class AuthService {
       throw new Error(data.error || 'Đăng nhập bằng tài khoản Google thất bại.');
     }
 
-    const authUser: AuthUser = {
-      id: data.user.id,
-      name: data.user.name,
-      email: data.user.email,
-      avatar: data.user.avatar,
-      role: data.user.role || 'user',
-      permissions: data.user.permissions || ['vocab:read', 'vocab:write', 'vocab:sync'],
-      profileId: data.user.id,
-      token: data.token,
-      createdAt: data.user.createdAt,
-    };
-
-    this.currentUser = authUser;
-    this.token = data.token;
-    localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(authUser));
-    localStorage.setItem(STORAGE_KEYS.TOKEN, data.token);
-
-    // Switch physical IndexedDB partition to this user
-    await ankiDb.switchUser(authUser.id);
-
-    // Switch or create local Anki profile for Google user
-    try {
-      const allProfiles = await ankiDb.getProfiles();
-      const existing = allProfiles.find(p => p.id === authUser.id || p.cloudAccount?.email === authUser.email);
-      if (existing) {
-        await ankiDb.setActiveProfile(existing.id);
-      } else {
-        const newProf = await ankiDb.createProfile(authUser.name, authUser.avatar);
-        const updated: AnkiUserProfile = {
-          ...newProf,
-          id: authUser.id,
-          cloudAccount: {
-            email: authUser.email,
-            isLinked: true,
-            lastSyncedAt: Date.now()
-          }
-        };
-        await ankiDb.updateProfile(updated);
-        await ankiDb.setActiveProfile(authUser.id);
-      }
-    } catch (e) {
-      console.warn('[Auth] Google Profile sync warning:', e);
-    }
-
-    // Connect LingQ & sync vocabulary from server
-    lingqWordService.setAuth(data.token, authUser.id);
-    try {
-      await ankiDb.syncWithCloud(data.token, authUser.id);
-    } catch (e) {
-      console.warn('[Auth] Post-Google login sync warning:', e);
-    }
-
-    return authUser;
+    return this.completeAuthSession(data, { syncCloud: true });
   }
 
   /**
-   * Log out of current account and reset to guest
+   * Log out of current account, revoke token on backend, and reset to guest
    */
   public async logout(): Promise<void> {
+    const activeToken = this.token;
+    if (activeToken) {
+      try {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${activeToken}` }
+        });
+      } catch {
+        // Proceed with local cleanup even if offline
+      }
+    }
+
     this.currentUser = null;
     this.token = null;
     localStorage.removeItem(STORAGE_KEYS.SESSION);
     localStorage.removeItem(STORAGE_KEYS.TOKEN);
     lingqWordService.setAuth(null, null);
+    shortsFeedService.setUserId(null);
 
     try {
       // Physically switch back to guest IndexedDB database

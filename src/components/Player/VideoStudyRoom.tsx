@@ -30,6 +30,7 @@ import { SubtitlesTab } from './SubtitlesTab';
 import { DictationTab } from './DictationTab';
 import { ShadowingTab } from './ShadowingTab';
 import { QuizTab } from './QuizTab';
+import { useNotify } from '../Common/ToastProvider';
 
 interface VideoStudyRoomProps {
   lesson: VideoLesson;
@@ -48,6 +49,7 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
   onUpdateLesson,
   initialMode = 'subtitles'
 }) => {
+  const { toast } = useNotify();
   const [activeMode, setActiveMode] = useState<StudyMode>(initialMode);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -586,7 +588,7 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
 
   const toggleRecording = () => {
     if (!recognitionRef.current) {
-      alert('Trình duyệt của bạn chưa hỗ trợ Web Speech API. Vui lòng dùng Chrome hoặc Edge.');
+      toast.info('Trình duyệt của bạn chưa hỗ trợ Web Speech API. Vui lòng dùng Chrome hoặc Edge.');
       return;
     }
 

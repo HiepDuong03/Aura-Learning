@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { VideoLesson } from '../../types';
+import { useNotify } from '../Common/ToastProvider';
 import { 
   Play, 
   Sparkles, 
@@ -34,6 +35,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onOpenImport,
   onDeleteLesson,
 }) => {
+  const { confirmDialog, toast } = useNotify();
   const [selectedLevel, setSelectedLevel] = useState<string>('All');
   const [selectedTopic, setSelectedTopic] = useState<string>('All');
   const [showOnlyCustom, setShowOnlyCustom] = useState<boolean>(false);
@@ -402,10 +404,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                         {isCustomLesson && onDeleteLesson && (
                           <button
                             type="button"
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               e.stopPropagation();
-                              if (window.confirm(`Bạn có chắc chắn muốn xoá video "${lesson.title}" khỏi danh sách bài học?`)) {
+                              const ok = await confirmDialog({
+                                title: 'Xóa bài học tự nhập',
+                                message: `Bạn có chắc chắn muốn xoá video "${lesson.title}" khỏi danh sách bài học?`,
+                                confirmLabel: 'Xóa bài học',
+                                destructive: true
+                              });
+                              if (ok) {
                                 onDeleteLesson(lesson.id);
+                                toast.success('Đã xóa bài học khỏi danh sách.');
                               }
                             }}
                             className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"

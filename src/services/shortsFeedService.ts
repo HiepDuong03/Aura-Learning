@@ -11,12 +11,7 @@
  */
 
 import { VideoLesson, SubtitleLine, SavedWord } from '../types';
-
-const STORAGE_KEYS = {
-  CUSTOM_SHORTS: '4you_custom_shorts',
-  SHORTS_OFFSETS: '4you_shorts_offsets',
-  BOOKMARKED_SHORTS: '4you_bookmarked_shorts'
-};
+import { ScopedStorage } from './scopedStorage';
 
 // Rich curated database of high-retention English learning shorts
 export const EXPANDED_CURATED_SHORTS: VideoLesson[] = [
@@ -207,6 +202,12 @@ export const EXPANDED_CURATED_SHORTS: VideoLesson[] = [
 ];
 
 export class ShortsFeedService {
+  private currentUserId: string | null = null;
+
+  setUserId(userId: string | null): void {
+    this.currentUserId = userId;
+  }
+
   /**
    * Retrieves all available daily shorts (curated + user custom imported)
    */
@@ -225,48 +226,34 @@ export class ShortsFeedService {
   }
 
   /**
-   * User-imported custom Shorts persistence
+   * User-imported custom Shorts persistence (Scoped per user)
    */
   getCustomShorts(): VideoLesson[] {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEYS.CUSTOM_SHORTS);
-      if (!raw) return [];
-      const parsed: VideoLesson[] = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) {
-      console.warn('[ShortsFeedService] Error parsing custom shorts:', e);
-      return [];
-    }
+    return ScopedStorage.getCustomShorts(this.currentUserId);
   }
 
   saveCustomShort(short: VideoLesson): void {
     try {
       const existing = this.getCustomShorts();
       const updated = [short, ...existing.filter(s => s.id !== short.id)];
-      localStorage.setItem(STORAGE_KEYS.CUSTOM_SHORTS, JSON.stringify(updated));
+      ScopedStorage.setCustomShorts(this.currentUserId, updated);
     } catch (e) {
       console.warn('[ShortsFeedService] Error saving custom short:', e);
     }
   }
 
   /**
-   * Subtitle timing offset calibration persistence
+   * Subtitle timing offset calibration persistence (Scoped per user)
    */
   getAllOffsets(): Record<string, number> {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEYS.SHORTS_OFFSETS);
-      if (!raw) return {};
-      return JSON.parse(raw);
-    } catch {
-      return {};
-    }
+    return ScopedStorage.getShortsOffsets(this.currentUserId);
   }
 
   setShortOffset(shortId: string, offset: number): void {
     try {
       const all = this.getAllOffsets();
       all[shortId] = Number(offset.toFixed(2));
-      localStorage.setItem(STORAGE_KEYS.SHORTS_OFFSETS, JSON.stringify(all));
+      ScopedStorage.setShortsOffsets(this.currentUserId, all);
     } catch (e) {
       console.warn('[ShortsFeedService] Error saving offset:', e);
     }

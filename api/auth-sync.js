@@ -2,355 +2,117 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createDbAdapter, ROLE_PERMISSIONS } from './db-adapter.js';
+import {
+  handlePublicDictRoutes,
+  handleAuthenticatedAiRoutes,
+  MAX_USER_CUSTOM_LESSONS
+} from './ai-dict-router.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const DB_PATH = path.join(DATA_DIR, 'aura_cloud_db.json');
-const SECRET_PATH = path.join(DATA_DIR, '.jwt_secret');
+const DEFAULT_DATA_DIR = path.join(__dirname, '..', 'data');
+const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-// Ensure data directory exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
-// Persistent Secret for Token Signing
-function getSecretKey() {
+function resolveSecretKey(explicitSecret, secretDir) {
+  if (explicitSecret && explicitSecret.length >= 16) {
+    return explicitSecret;
+  }
   if (process.env.JWT_SECRET && process.env.JWT_SECRET.length >= 16) {
     return process.env.JWT_SECRET;
   }
-  if (fs.existsSync(SECRET_PATH)) {
-    return fs.readFileSync(SECRET_PATH, 'utf8').trim();
+  if (process.env.NODE_ENV === 'production') {
+    console.error('[CRITICAL SECURITY] JWT_SECRET is not configured (>=16 chars) in production!');
+  }
+  const secretPath = path.join(secretDir, '.jwt_secret');
+  if (!fs.existsSync(secretDir)) {
+    fs.mkdirSync(secretDir, { recursive: true });
+  }
+  if (fs.existsSync(secretPath)) {
+    return fs.readFileSync(secretPath, 'utf8').trim();
   }
   const generated = crypto.randomBytes(32).toString('hex');
-  fs.writeFileSync(SECRET_PATH, generated, 'utf8');
+  fs.writeFileSync(secretPath, generated, 'utf8');
   return generated;
 }
 
-const JWT_SECRET = getSecretKey();
-const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-
-// ==============================================================================
-// RBAC (ROLE-BASED ACCESS CONTROL) PERMISSIONS MATRIX
-// ==============================================================================
-const ROLE_PERMISSIONS = {
-  guest: ['vocab:read'],
-  user: ['vocab:read', 'vocab:write', 'vocab:sync', 'import:limited'],
-  pro: ['vocab:read', 'vocab:write', 'vocab:sync', 'import:unlimited', 'speech:ai_score'],
-  admin: [
-    'vocab:read',
-    'vocab:write',
-    'vocab:sync',
-    'import:unlimited',
-    'speech:ai_score',
-    'admin:manage_users',
-    'admin:view_metrics'
-  ]
-};
-
-// ==============================================================================
-// IN-MEMORY NORMALIZED RELATIONAL DATABASE WITH ATOMIC DISK PERSISTENCE
-// Tables: users, words_master, vocabulary_notes, srs_cards, srs_review_logs, user_lingq
-// ==============================================================================
-class RelationalCloudDatabase {
-  constructor() {
-    this.tables = {
-      users: {},            // userId -> { id, name, email, salt, hash, avatar, role, status, createdAt, updatedAt }
-      words_master: {},     // wordId -> { id, lemma, phonetic, partOfSpeech, defaultTranslationVi, definitionEn, cefrLevel }
-      vocabulary_notes: {}, // noteId -> { id, userId, profileId, wordId, customTranslation, contextSentence, sourceLessonId, createdAt }
-      srs_cards: {},        // cardId -> { id, noteId, userId, state, easeFactor, intervalDays, repetitions, lapses, dueAt, usn }
-      srs_review_logs: [],  // [ { id, cardId, userId, rating, scheduledInterval, easeFactor, reviewedAt } ]
-      user_lingq: {},       // userId -> { [lemma]: status }
-      meta: { version: 2, lastUpdatedAt: Date.now() }
-    };
-    this.load();
-  }
-
-  load() {
-    try {
-      if (fs.existsSync(DB_PATH)) {
-        const raw = fs.readFileSync(DB_PATH, 'utf8');
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object') {
-          // Backward-compatible schema migration from v1 (flat words) to v2 (relational tables)
-          if (parsed.users) {
-            this.tables.users = parsed.users;
-          }
-          if (parsed.words_master) {
-            this.tables.words_master = parsed.words_master;
-            this.tables.vocabulary_notes = parsed.vocabulary_notes || {};
-            this.tables.srs_cards = parsed.srs_cards || {};
-            this.tables.srs_review_logs = parsed.srs_review_logs || [];
-            this.tables.user_lingq = parsed.lingq || parsed.user_lingq || {};
-          } else if (parsed.words) {
-            // Migrate v1 flat words into v2 relational entities
-            this.migrateV1Words(parsed.words);
-            this.tables.user_lingq = parsed.lingq || {};
-          }
-          console.info(`[AURA Relational DB] Loaded ${Object.keys(this.tables.users).length} users, ${Object.keys(this.tables.words_master).length} master dictionary entries, ${Object.keys(this.tables.srs_cards).length} SRS cards.`);
-        }
-      }
-    } catch (err) {
-      console.error('[AURA Relational DB] Error loading database from disk, starting fresh:', err);
-    }
-  }
-
-  /**
-   * Migrate legacy flat words into 3NF normalized tables
-   */
-  migrateV1Words(wordsByUser) {
-    Object.entries(wordsByUser || {}).forEach(([userId, words]) => {
-      if (Array.isArray(words)) {
-        this.saveUserWords(userId, words);
-      }
-    });
-  }
-
-  save() {
-    try {
-      this.tables.meta.lastUpdatedAt = Date.now();
-      const tempPath = `${DB_PATH}.tmp.${Date.now()}`;
-      fs.writeFileSync(tempPath, JSON.stringify(this.tables, null, 2), 'utf8');
-      fs.renameSync(tempPath, DB_PATH);
-    } catch (err) {
-      console.error('[AURA Relational DB] Failed to save database to disk:', err);
-    }
-  }
-
-  findUserByEmail(email) {
-    const cleanEmail = (email || '').trim().toLowerCase();
-    return Object.values(this.tables.users).find(u => u.email.toLowerCase() === cleanEmail);
-  }
-
-  getUser(userId) {
-    return this.tables.users[userId] || null;
-  }
-
-  getAllUsers() {
-    return Object.values(this.tables.users).map(u => ({
-      id: u.id,
-      name: u.name,
-      email: u.email,
-      avatar: u.avatar,
-      role: u.role || 'user',
-      permissions: ROLE_PERMISSIONS[u.role || 'user'] || ROLE_PERMISSIONS.user,
-      createdAt: u.createdAt,
-      cardCount: Object.values(this.tables.srs_cards).filter(c => c.userId === u.id).length
-    }));
-  }
-
-  updateUserRole(userId, newRole) {
-    const user = this.tables.users[userId];
-    if (!user) return null;
-    if (!ROLE_PERMISSIONS[newRole]) {
-      throw new Error(`Invalid role: ${newRole}. Must be one of: guest, user, pro, admin`);
-    }
-    user.role = newRole;
-    user.updatedAt = Date.now();
-    this.save();
-    return user;
-  }
-
-  saveUser(user) {
-    const role = user.role || (user.email.endsWith('@aura.ai') ? 'admin' : 'user');
-    this.tables.users[user.id] = {
-      ...user,
-      role,
-      status: user.status || 'active',
-      updatedAt: Date.now()
-    };
-    this.save();
-  }
-
-  /**
-   * Normalizes incoming words into:
-   * 1. words_master (Global dictionary)
-   * 2. vocabulary_notes (Context & translation)
-   * 3. srs_cards (Anki SM-2 state)
-   * 4. Returns combined client SavedWord format for zero UI breakage
-   */
-  saveUserWords(userId, incomingWords) {
-    const now = Date.now();
-
-    (incomingWords || []).forEach(inc => {
-      if (!inc || !inc.word) return;
-      const lemma = inc.word.toLowerCase().trim();
-      const wordId = `wm_${Buffer.from(lemma).toString('base64url')}`;
-
-      // 1. Table: words_master
-      if (!this.tables.words_master[wordId]) {
-        this.tables.words_master[wordId] = {
-          id: wordId,
-          lemma,
-          phonetic: inc.phonetic || `/${lemma}/`,
-          partOfSpeech: inc.partOfSpeech || 'n.',
-          defaultTranslationVi: inc.translation || '',
-          definitionEn: inc.definitionEn || '',
-          cefrLevel: 'B1',
-          createdAt: now
-        };
-      }
-
-      // 2. Table: vocabulary_notes
-      const noteId = `note_${userId}_${wordId}`;
-      const existingNote = this.tables.vocabulary_notes[noteId];
-      this.tables.vocabulary_notes[noteId] = {
-        id: noteId,
-        userId,
-        profileId: inc.profileId || userId,
-        wordId,
-        customTranslation: inc.translation || existingNote?.customTranslation || '',
-        contextSentence: inc.contextSentence || existingNote?.contextSentence || '',
-        sourceLessonId: inc.videoTitle || existingNote?.sourceLessonId || 'YouTube Lesson',
-        createdAt: existingNote?.createdAt || inc.savedAt || now,
-        updatedAt: now
-      };
-
-      // 3. Table: srs_cards
-      const cardId = `card_${noteId}`;
-      const existingCard = this.tables.srs_cards[cardId];
-      const incUsn = inc.usn || 0;
-      const prevUsn = existingCard?.usn || 0;
-
-      if (!existingCard || incUsn >= prevUsn) {
-        this.tables.srs_cards[cardId] = {
-          id: cardId,
-          noteId,
-          userId,
-          profileId: inc.profileId || userId,
-          cardType: 'recognition',
-          state: inc.state || 'new',
-          easeFactor: inc.easeFactor || 2.50,
-          intervalDays: typeof inc.interval === 'number' ? inc.interval : 0,
-          repetitions: typeof inc.repetitions === 'number' ? inc.repetitions : 0,
-          lapses: typeof inc.lapses === 'number' ? inc.lapses : 0,
-          dueAt: inc.dueAt || now,
-          lastReviewedAt: inc.lastReviewedAt || now,
-          usn: Math.max(incUsn, prevUsn) + 1,
-          createdAt: existingCard?.createdAt || inc.savedAt || now
-        };
-      }
-    });
-
-    this.save();
-    return this.getUserWords(userId);
-  }
-
-  /**
-   * Reconstitutes normalized tables into client SavedWord[]
-   */
-  getUserWords(userId) {
-    const userCards = Object.values(this.tables.srs_cards).filter(c => c.userId === userId);
-    
-    return userCards.map(card => {
-      const note = this.tables.vocabulary_notes[card.noteId];
-      const master = note ? this.tables.words_master[note.wordId] : null;
-
-      return {
-        id: card.id,
-        word: master?.lemma || 'unknown',
-        phonetic: master?.phonetic || '',
-        partOfSpeech: master?.partOfSpeech || '',
-        translation: note?.customTranslation || master?.defaultTranslationVi || '',
-        definitionEn: master?.definitionEn || '',
-        contextSentence: note?.contextSentence || '',
-        videoTitle: note?.sourceLessonId || 'Lesson',
-        savedAt: card.createdAt,
-        easeFactor: card.easeFactor,
-        interval: card.intervalDays,
-        repetitions: card.repetitions,
-        lapses: card.lapses,
-        state: card.state,
-        dueAt: card.dueAt,
-        lastReviewedAt: card.lastReviewedAt,
-        usn: card.usn,
-        isDirty: false,
-        profileId: card.profileId
-      };
-    });
-  }
-
-  getUserLingq(userId) {
-    return this.tables.user_lingq[userId] || {};
-  }
-
-  saveUserLingq(userId, incomingStatuses) {
-    const current = this.tables.user_lingq[userId] || {};
-    const merged = { ...current, ...(incomingStatuses || {}) };
-    this.tables.user_lingq[userId] = merged;
-    this.save();
-    return merged;
-  }
-
-  getMetrics() {
-    return {
-      totalUsers: Object.keys(this.tables.users).length,
-      totalWordsMaster: Object.keys(this.tables.words_master).length,
-      totalVocabularyNotes: Object.keys(this.tables.vocabulary_notes).length,
-      totalSRSCards: Object.keys(this.tables.srs_cards).length,
-      totalReviewLogs: this.tables.srs_review_logs.length,
-      lastUpdatedAt: this.tables.meta.lastUpdatedAt
-    };
-  }
-}
-
-const db = new RelationalCloudDatabase();
-
-// Cryptographic helpers
 function hashPassword(password, salt) {
   return crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
 }
 
-function generateToken(userId, role = 'user') {
-  const timestamp = Date.now();
-  const payload = `${userId}.${role}.${timestamp}`;
-  const signature = crypto.createHmac('sha256', JWT_SECRET).update(payload).digest('hex');
-  return `${payload}.${signature}`;
+function createRateLimiter({ windowMs = 60_000, maxRequests = 25 } = {}) {
+  const hits = new Map();
+
+  return function checkLimit(ip) {
+    const now = Date.now();
+    // Periodically prune stale entries
+    if (hits.size > 1000) {
+      for (const [k, rec] of hits.entries()) {
+        if (now > rec.resetAt) hits.delete(k);
+      }
+    }
+    const existing = hits.get(ip);
+    if (!existing || now > existing.resetAt) {
+      hits.set(ip, { count: 1, resetAt: now + windowMs });
+      return { allowed: true, retryAfterSec: 0 };
+    }
+    existing.count += 1;
+    if (existing.count > maxRequests) {
+      return {
+        allowed: false,
+        retryAfterSec: Math.max(1, Math.ceil((existing.resetAt - now) / 1000))
+      };
+    }
+    return { allowed: true, retryAfterSec: 0 };
+  };
 }
 
-function verifyToken(token) {
-  if (!token || typeof token !== 'string') return null;
-  const parts = token.split('.');
-  if (parts.length !== 4 && parts.length !== 3) return null;
+function resolveCorsOrigin(req) {
+  const requestOrigin = req.headers.origin;
+  if (!requestOrigin) return null;
 
-  let userId, role, timestampStr, signature;
-  if (parts.length === 4) {
-    [userId, role, timestampStr, signature] = parts;
-  } else {
-    // Backward compatibility with 3-part tokens
-    [userId, timestampStr, signature] = parts;
-    role = 'user';
+  const allowedEnv = (process.env.ALLOWED_ORIGIN || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  if (allowedEnv.length > 0) {
+    return allowedEnv.includes(requestOrigin) ? requestOrigin : null;
   }
 
-  const payload = parts.length === 4 ? `${userId}.${role}.${timestampStr}` : `${userId}.${timestampStr}`;
-  const expectedSig = crypto.createHmac('sha256', JWT_SECRET).update(payload).digest('hex');
-
-  if (signature.length !== expectedSig.length) return null;
-  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) return null;
-
-  const timestamp = parseInt(timestampStr, 10);
-  if (isNaN(timestamp) || Date.now() - timestamp > TOKEN_TTL_MS) {
-    return null; // Expired
+  // Same-origin or local dev origins allowed by default
+  const host = req.headers.host;
+  if (host && (requestOrigin === `https://${host}` || requestOrigin === `http://${host}`)) {
+    return requestOrigin;
   }
-
-  return { userId, role };
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(requestOrigin)) {
+    return requestOrigin;
+  }
+  return null;
 }
 
-function sendJson(res, statusCode, body) {
-  res.writeHead(statusCode, {
+function sendJson(req, res, statusCode, body, extraHeaders = {}) {
+  const headers = {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store, no-cache, must-revalidate',
-    'Access-Control-Allow-Origin': '*',
+    'X-Content-Type-Options': 'nosniff',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  });
+    ...extraHeaders
+  };
+  const corsOrigin = resolveCorsOrigin(req);
+  if (corsOrigin) {
+    headers['Access-Control-Allow-Origin'] = corsOrigin;
+    headers['Vary'] = 'Origin';
+  }
+  res.writeHead(statusCode, headers);
   res.end(JSON.stringify(body));
 }
 
 function parseJsonBody(req, limit = 5 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0;
-    let chunks = [];
+    const chunks = [];
 
     req.on('data', chunk => {
       size += chunk.length;
@@ -370,7 +132,7 @@ function parseJsonBody(req, limit = 5 * 1024 * 1024) {
           return;
         }
         resolve(JSON.parse(raw));
-      } catch (err) {
+      } catch {
         reject(new Error('Invalid JSON format.'));
       }
     });
@@ -396,106 +158,289 @@ function sanitizeUser(user) {
     email: user.email,
     avatar: user.avatar,
     role,
+    status: user.status || 'active',
     permissions: ROLE_PERMISSIONS[role] || ROLE_PERMISSIONS.user,
-    createdAt: user.createdAt,
+    createdAt: user.createdAt
   };
 }
 
 /**
- * Decode JWT payload (standard for Google ID Token verification)
+ * Verifies Google OAuth credentials (ID Token or Access Token) directly against Google servers.
+ * Never trusts unsigned client-supplied emails or unverified JWT payloads.
  */
-function decodeJwtPayload(jwt) {
-  try {
-    if (!jwt || typeof jwt !== 'string') return null;
-    const parts = jwt.split('.');
-    if (parts.length < 2) return null;
-    const base64Url = parts[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonStr = Buffer.from(base64, 'base64').toString('utf8');
-    return JSON.parse(jsonStr);
-  } catch {
-    return null;
+async function defaultVerifyGoogleCredentials({ credential, accessToken }) {
+  const expectedClientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
+  if (!expectedClientId) {
+    const err = new Error('Google OAuth chưa được cấu hình (thiếu GOOGLE_CLIENT_ID trên máy chủ).');
+    err.statusCode = 503;
+    throw err;
   }
+
+  if (credential && typeof credential === 'string') {
+    const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok || !payload.email) {
+      const err = new Error('Google ID Token không hợp lệ hoặc đã hết hạn.');
+      err.statusCode = 401;
+      throw err;
+    }
+    if (payload.aud !== expectedClientId) {
+      const err = new Error('Google ID Token không khớp với ứng dụng (Invalid audience).');
+      err.statusCode = 401;
+      throw err;
+    }
+    if (payload.email_verified !== true && payload.email_verified !== 'true') {
+      const err = new Error('Tài khoản Google chưa xác minh email.');
+      err.statusCode = 401;
+      throw err;
+    }
+    if (payload.exp && Number(payload.exp) * 1000 <= Date.now()) {
+      const err = new Error('Google ID Token đã hết hạn.');
+      err.statusCode = 401;
+      throw err;
+    }
+    if (payload.iss && payload.iss !== 'accounts.google.com' && payload.iss !== 'https://accounts.google.com') {
+      const err = new Error('Nguồn cấp Google ID Token không hợp lệ.');
+      err.statusCode = 401;
+      throw err;
+    }
+    return {
+      email: String(payload.email).trim().toLowerCase(),
+      emailVerified: true,
+      name: String(payload.name || payload.given_name || payload.email.split('@')[0]).trim(),
+      avatar: payload.picture || '',
+      googleId: String(payload.sub || '')
+    };
+  }
+
+  if (accessToken && typeof accessToken === 'string') {
+    // Verify token audience first to prevent confused-deputy replay across Google OAuth apps
+    const infoCheckRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`);
+    const tokenMeta = await infoCheckRes.json().catch(() => ({}));
+    const tokenAudience = tokenMeta.aud || tokenMeta.azp || '';
+    if (!infoCheckRes.ok || tokenAudience !== expectedClientId) {
+      const err = new Error('Google Access Token không hợp lệ hoặc không thuộc ứng dụng này.');
+      err.statusCode = 401;
+      throw err;
+    }
+
+    const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    const profile = await userRes.json().catch(() => ({}));
+    if (!userRes.ok || !profile.email || profile.email_verified !== true) {
+      const err = new Error('Không thể xác minh tài khoản từ Google UserInfo.');
+      err.statusCode = 401;
+      throw err;
+    }
+
+    return {
+      email: String(profile.email).trim().toLowerCase(),
+      emailVerified: true,
+      name: String(profile.name || profile.given_name || profile.email.split('@')[0]).trim(),
+      avatar: profile.picture || '',
+      googleId: String(profile.sub || '')
+    };
+  }
+
+  const err = new Error('Thiếu mã xác thực Google (credential hoặc accessToken).');
+  err.statusCode = 400;
+  throw err;
 }
 
 /**
- * Main API Handler for /api/auth/*, /api/sync/*, and /api/admin/*
+ * Factory creating an isolated Auth/Sync/Admin API handler + DB lifecycle.
  */
-export async function handleAuthAndSync(req, res, pathname) {
-  // CORS Preflight
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    });
-    res.end();
-    return;
+export function createAuthAndSyncHandler(options = {}) {
+  const dbPath = options.dbPath;
+  const secretDir = dbPath ? path.dirname(dbPath) : DEFAULT_DATA_DIR;
+  const jwtSecret = resolveSecretKey(options.jwtSecret, secretDir);
+  const verifyGoogleFn = options.verifyGoogleCredentials || defaultVerifyGoogleCredentials;
+  const authRateLimiter = createRateLimiter({ windowMs: 60_000, maxRequests: options.authRateLimitMax || 25 });
+  const dictRateLimiter = createRateLimiter({ windowMs: 60_000, maxRequests: options.dictRateLimitMax || 60 });
+  const dbPromise = createDbAdapter({ dbPath: options.dbPath, databaseUrl: options.databaseUrl });
+
+  function generateToken(userId, role = 'user', tokenVersion = 1) {
+    const timestamp = Date.now();
+    const payload = `${userId}.${role}.${tokenVersion}.${timestamp}`;
+    const signature = crypto.createHmac('sha256', jwtSecret).update(payload).digest('hex');
+    return `${payload}.${signature}`;
   }
 
-  // --- 0. GET /api/auth/config ---
-  if (pathname === '/api/auth/config' && req.method === 'GET') {
-    sendJson(res, 200, {
-      googleClientId: process.env.GOOGLE_CLIENT_ID || '',
-      appName: 'AURA Learning',
-      version: '2.0.0'
-    });
-    return;
+  function verifyToken(token) {
+    if (!token || typeof token !== 'string') return null;
+    const parts = token.split('.');
+    if (parts.length !== 5) return null;
+
+    const [userId, role, tokenVersionStr, timestampStr, signature] = parts;
+    const payload = `${userId}.${role}.${tokenVersionStr}.${timestampStr}`;
+    const expectedSig = crypto.createHmac('sha256', jwtSecret).update(payload).digest('hex');
+
+    if (signature.length !== expectedSig.length) return null;
+    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) return null;
+
+    const timestamp = parseInt(timestampStr, 10);
+    const tokenVersion = parseInt(tokenVersionStr, 10);
+    if (isNaN(timestamp) || isNaN(tokenVersion) || Date.now() - timestamp > TOKEN_TTL_MS) {
+      return null;
+    }
+
+    return { userId, role, tokenVersion };
   }
 
-  // --- 0.1 POST /api/auth/google (Google GIS & OAuth Login) ---
-  if (pathname === '/api/auth/google' && req.method === 'POST') {
-    try {
-      const body = await parseJsonBody(req);
-      let email = '';
-      let name = '';
-      let avatar = '';
-      let googleId = '';
+  async function handler(req, res, pathname) {
+    const db = await dbPromise;
 
-      if (body.credential) {
-        // Google Identity Services (GIS) ID Token
-        const decoded = decodeJwtPayload(body.credential);
-        if (!decoded || !decoded.email) {
-          sendJson(res, 400, { error: 'Google ID Token không hợp lệ hoặc đã hết hạn.' });
-          return;
-        }
-        email = (decoded.email || '').trim().toLowerCase();
-        name = (decoded.name || decoded.given_name || email.split('@')[0]).trim();
-        avatar = decoded.picture || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(email)}`;
-        googleId = decoded.sub || '';
-      } else {
-        // Direct OAuth / email authentication
-        email = (body.email || '').trim().toLowerCase();
-        name = (body.name || email.split('@')[0] || 'Google User').trim();
-        avatar = body.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(email)}`;
-        googleId = body.googleId || '';
+    // CORS Preflight
+    if (req.method === 'OPTIONS') {
+      const corsOrigin = resolveCorsOrigin(req);
+      const headers = {
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS'
+      };
+      if (corsOrigin) {
+        headers['Access-Control-Allow-Origin'] = corsOrigin;
+        headers['Vary'] = 'Origin';
       }
+      res.writeHead(204, headers);
+      res.end();
+      return;
+    }
 
-      if (!email || !email.includes('@') || !email.includes('.')) {
-        sendJson(res, 400, { error: 'Địa chỉ email Google không hợp lệ.' });
+    const clientIp = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown').toString().split(',')[0].trim();
+
+    // Rate limit authentication endpoints against brute force
+    if (pathname.startsWith('/api/auth/') && pathname !== '/api/auth/config' && pathname !== '/api/auth/me') {
+      const limit = authRateLimiter(clientIp);
+      if (!limit.allowed) {
+        sendJson(req, res, 429, { error: `Quá nhiều yêu cầu xác thực. Vui lòng thử lại sau ${limit.retryAfterSec} giây.` }, {
+          'Retry-After': String(limit.retryAfterSec)
+        });
         return;
       }
+    }
 
-      let user = db.findUserByEmail(email);
-      let role = 'user';
-      if (email === process.env.ADMIN_EMAIL || email.endsWith('@aura.ai')) {
-        role = 'admin';
+    // --- Public Dictionary & Translation Routes (with DB cache & rate limit) ---
+    if (pathname.startsWith('/api/dict/')) {
+      const limit = dictRateLimiter(clientIp);
+      if (!limit.allowed) {
+        sendJson(req, res, 429, { error: `Quá nhiều yêu cầu tra từ điển. Vui lòng thử lại sau ${limit.retryAfterSec} giây.` }, {
+          'Retry-After': String(limit.retryAfterSec)
+        });
+        return;
       }
+      const handled = await handlePublicDictRoutes({ req, res, pathname, db, parseJsonBody, sendJson, options });
+      if (handled) return;
+    }
 
-      if (user) {
-        if (email === process.env.ADMIN_EMAIL || email.endsWith('@aura.ai')) {
-          user.role = 'admin';
+    // --- 0. GET /api/auth/config ---
+    if (pathname === '/api/auth/config' && req.method === 'GET') {
+      sendJson(req, res, 200, {
+        googleClientId: process.env.GOOGLE_CLIENT_ID || '',
+        appName: 'AURA Learning',
+        version: '2.1.0'
+      });
+      return;
+    }
+
+    // --- 0.1 POST /api/auth/google (Verified Google GIS / OAuth Login) ---
+    if (pathname === '/api/auth/google' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        const verified = await verifyGoogleFn({
+          credential: body.credential,
+          accessToken: body.accessToken
+        });
+
+        const email = verified.email;
+        const name = verified.name || email.split('@')[0];
+        const avatar = verified.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(email)}`;
+        const adminEmail = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+
+        let user = await db.findUserByEmail(email);
+        if (user) {
+          if (user.status && user.status !== 'active') {
+            sendJson(req, res, 403, { error: 'Tài khoản này đã bị tạm khóa.' });
+            return;
+          }
+          if (adminEmail && email === adminEmail && verified.emailVerified) {
+            user.role = 'admin';
+          }
+          if (avatar && (!user.avatar || user.avatar.includes('dicebear'))) {
+            user.avatar = avatar;
+          }
+          user = await db.saveUser(user);
+        } else {
+          const userId = `usr_g_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+          const salt = crypto.randomBytes(32).toString('hex');
+          const hash = hashPassword(crypto.randomBytes(24).toString('hex'), salt);
+          const role = adminEmail && email === adminEmail && verified.emailVerified ? 'admin' : 'user';
+
+          user = await db.saveUser({
+            id: userId,
+            name,
+            email,
+            salt,
+            hash,
+            avatar,
+            role,
+            googleId: verified.googleId || '',
+            provider: 'google',
+            status: 'active',
+            tokenVersion: 1,
+            createdAt: Date.now()
+          });
+          console.info(`[Auth Audit] New Google user registered: ${email} (${userId}, Role: ${role})`);
         }
-        if (avatar && (!user.avatar || user.avatar.includes('dicebear'))) {
-          user.avatar = avatar;
+
+        if (Array.isArray(body.initialWords) && body.initialWords.length > 0) {
+          await db.saveUserWords(user.id, body.initialWords, []);
         }
-        db.saveUser(user);
-      } else {
-        const userId = `usr_g_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+
+        const token = generateToken(user.id, user.role || 'user', user.tokenVersion || 1);
+        console.info(`[Auth Audit] Google login verified: ${email} (${user.id}, Role: ${user.role || 'user'})`);
+        sendJson(req, res, 200, { user: sanitizeUser(user), token });
+      } catch (err) {
+        const status = err.statusCode || 500;
+        console.warn(`[Auth Security] Google login rejected (${status}):`, err.message);
+        sendJson(req, res, status, { error: err.message || 'Xác thực Google thất bại.' });
+      }
+      return;
+    }
+
+    // --- 1. POST /api/auth/register ---
+    if (pathname === '/api/auth/register' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        const name = (body.name || '').trim();
+        const email = (body.email || '').trim().toLowerCase();
+        const password = body.password || '';
+
+        if (!name || name.length < 2) {
+          sendJson(req, res, 400, { error: 'Họ và tên phải có ít nhất 2 ký tự.' });
+          return;
+        }
+        if (!email || !email.includes('@') || !email.includes('.')) {
+          sendJson(req, res, 400, { error: 'Địa chỉ email không hợp lệ.' });
+          return;
+        }
+        if (!password || password.length < 6) {
+          sendJson(req, res, 400, { error: 'Mật khẩu phải từ 6 ký tự trở lên.' });
+          return;
+        }
+        if (await db.findUserByEmail(email)) {
+          sendJson(req, res, 409, { error: 'Email này đã được đăng ký. Vui lòng đăng nhập.' });
+          return;
+        }
+
         const salt = crypto.randomBytes(32).toString('hex');
-        const hash = hashPassword(crypto.randomBytes(24).toString('hex'), salt);
+        const hash = hashPassword(password, salt);
+        const userId = `usr_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+        const avatar = `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(email)}`;
+        // Public registration ALWAYS starts as standard 'user' — never auto-escalate by email domain
+        const role = 'user';
 
-        user = {
+        const newUser = await db.saveUser({
           id: userId,
           name,
           email,
@@ -503,237 +448,291 @@ export async function handleAuthAndSync(req, res, pathname) {
           hash,
           avatar,
           role,
-          googleId,
-          provider: 'google',
           status: 'active',
+          tokenVersion: 1,
           createdAt: Date.now()
-        };
-        db.saveUser(user);
-        console.info(`[Auth Audit] New Google user registered: ${email} (${userId}, Role: ${role})`);
+        });
+
+        if (Array.isArray(body.initialWords) && body.initialWords.length > 0) {
+          await db.saveUserWords(userId, body.initialWords, []);
+        }
+
+        const token = generateToken(userId, role, 1);
+        console.info(`[Auth Audit] User registered: ${email} (${userId}, Role: ${role})`);
+        sendJson(req, res, 201, { user: sanitizeUser(newUser), token });
+      } catch (err) {
+        console.error('[Auth Error] Register failed:', err);
+        sendJson(req, res, 500, { error: err.message || 'Lỗi xử lý đăng ký tài khoản.' });
       }
-
-      // Migrate initial offline words if any
-      if (Array.isArray(body.initialWords) && body.initialWords.length > 0) {
-        db.saveUserWords(user.id, body.initialWords);
-        console.info(`[Auth] Migrated ${body.initialWords.length} initial offline words to user ${email}.`);
-      }
-
-      const token = generateToken(user.id, user.role || 'user');
-      console.info(`[Auth Audit] Google login successful: ${email} (${user.id}, Role: ${user.role || 'user'})`);
-      sendJson(res, 200, { user: sanitizeUser(user), token });
-    } catch (err) {
-      console.error('[Auth Error] Google login failed:', err);
-      sendJson(res, 500, { error: err.message || 'Lỗi xử lý xác thực Google.' });
-    }
-    return;
-  }
-
-  // --- 1. POST /api/auth/register ---
-  if (pathname === '/api/auth/register' && req.method === 'POST') {
-    try {
-      const body = await parseJsonBody(req);
-      const name = (body.name || '').trim();
-      const email = (body.email || '').trim().toLowerCase();
-      const password = body.password || '';
-
-      if (!name || name.length < 2) {
-        sendJson(res, 400, { error: 'Họ và tên phải có ít nhất 2 ký tự.' });
-        return;
-      }
-      if (!email || !email.includes('@') || !email.includes('.')) {
-        sendJson(res, 400, { error: 'Địa chỉ email không hợp lệ.' });
-        return;
-      }
-      if (!password || password.length < 6) {
-        sendJson(res, 400, { error: 'Mật khẩu phải từ 6 ký tự trở lên.' });
-        return;
-      }
-
-      if (db.findUserByEmail(email)) {
-        sendJson(res, 409, { error: 'Email này đã được đăng ký. Vui lòng đăng nhập.' });
-        return;
-      }
-
-      const salt = crypto.randomBytes(32).toString('hex');
-      const hash = hashPassword(password, salt);
-      const userId = `usr_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-      const avatar = `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(email)}`;
-      const role = email.endsWith('@aura.ai') ? 'admin' : 'user';
-
-      const newUser = {
-        id: userId,
-        name,
-        email,
-        salt,
-        hash,
-        avatar,
-        role,
-        status: 'active',
-        createdAt: Date.now()
-      };
-
-      db.saveUser(newUser);
-
-      // If initial words provided during registration (from offline anonymous session), save them!
-      if (Array.isArray(body.initialWords) && body.initialWords.length > 0) {
-        db.saveUserWords(userId, body.initialWords);
-        console.info(`[Auth] Migrated ${body.initialWords.length} initial offline words to user ${email}.`);
-      }
-
-      const token = generateToken(userId, role);
-      console.info(`[Auth Audit] User registered: ${email} (${userId}, Role: ${role})`);
-      sendJson(res, 201, { user: sanitizeUser(newUser), token });
-    } catch (err) {
-      console.error('[Auth Error] Register failed:', err);
-      sendJson(res, 500, { error: err.message || 'Lỗi xử lý đăng ký tài khoản.' });
-    }
-    return;
-  }
-
-  // --- 2. POST /api/auth/login ---
-  if (pathname === '/api/auth/login' && req.method === 'POST') {
-    try {
-      const body = await parseJsonBody(req);
-      const email = (body.email || '').trim().toLowerCase();
-      const password = body.password || '';
-
-      if (!email || !password) {
-        sendJson(res, 400, { error: 'Vui lòng nhập đầy đủ Email và Mật khẩu.' });
-        return;
-      }
-
-      const user = db.findUserByEmail(email);
-      if (!user) {
-        sendJson(res, 401, { error: 'Email hoặc mật khẩu không chính xác.' });
-        return;
-      }
-
-      const hash = hashPassword(password, user.salt);
-      if (hash !== user.hash) {
-        sendJson(res, 401, { error: 'Email hoặc mật khẩu không chính xác.' });
-        return;
-      }
-
-      const role = user.role || 'user';
-      const token = generateToken(user.id, role);
-      console.info(`[Auth Audit] User logged in: ${email} (${user.id}, Role: ${role})`);
-      sendJson(res, 200, { user: sanitizeUser(user), token });
-    } catch (err) {
-      console.error('[Auth Error] Login failed:', err);
-      sendJson(res, 500, { error: err.message || 'Lỗi đăng nhập hệ thống.' });
-    }
-    return;
-  }
-
-  // --- Authenticated Endpoints Guard ---
-  const token = extractBearerToken(req);
-  const tokenPayload = verifyToken(token);
-
-  if (!tokenPayload) {
-    sendJson(res, 401, { error: 'Phiên đăng nhập đã hết hạn hoặc không hợp lệ. Vui lòng đăng nhập lại.' });
-    return;
-  }
-
-  const { userId, role } = tokenPayload;
-  const currentUser = db.getUser(userId);
-
-  if (!currentUser) {
-    sendJson(res, 404, { error: 'Tài khoản người dùng không tồn tại.' });
-    return;
-  }
-
-  // --- 3. GET /api/auth/me ---
-  if (pathname === '/api/auth/me' && req.method === 'GET') {
-    sendJson(res, 200, { user: sanitizeUser(currentUser) });
-    return;
-  }
-
-  // --- 4. GET /api/sync/words ---
-  if (pathname === '/api/sync/words' && req.method === 'GET') {
-    try {
-      const words = db.getUserWords(userId);
-      sendJson(res, 200, { words, count: words.length, syncedAt: Date.now() });
-    } catch (err) {
-      sendJson(res, 500, { error: err.message });
-    }
-    return;
-  }
-
-  // --- 5. POST /api/sync/words ---
-  if (pathname === '/api/sync/words' && req.method === 'POST') {
-    try {
-      const body = await parseJsonBody(req);
-      const incoming = Array.isArray(body.words) ? body.words : [];
-      const merged = db.saveUserWords(userId, incoming);
-      console.info(`[Sync Audit] Synced ${incoming.length} words into relational tables for user ${userId}. Total: ${merged.length}`);
-      sendJson(res, 200, { words: merged, count: merged.length, syncedAt: Date.now() });
-    } catch (err) {
-      sendJson(res, 500, { error: err.message });
-    }
-    return;
-  }
-
-  // --- 6. GET /api/sync/lingq ---
-  if (pathname === '/api/sync/lingq' && req.method === 'GET') {
-    try {
-      const statuses = db.getUserLingq(userId);
-      sendJson(res, 200, { statuses, syncedAt: Date.now() });
-    } catch (err) {
-      sendJson(res, 500, { error: err.message });
-    }
-    return;
-  }
-
-  // --- 7. POST /api/sync/lingq ---
-  if (pathname === '/api/sync/lingq' && req.method === 'POST') {
-    try {
-      const body = await parseJsonBody(req);
-      const incoming = (body.statuses && typeof body.statuses === 'object') ? body.statuses : {};
-      const merged = db.saveUserLingq(userId, incoming);
-      sendJson(res, 200, { statuses: merged, syncedAt: Date.now() });
-    } catch (err) {
-      sendJson(res, 500, { error: err.message });
-    }
-    return;
-  }
-
-  // --- 8. RBAC ADMIN ENDPOINTS (Role: 'admin' required) ---
-  if (pathname.startsWith('/api/admin/')) {
-    if (currentUser.role !== 'admin') {
-      sendJson(res, 403, { error: 'Truy cập bị từ chối: Yêu cầu quyền Quản trị viên (Admin).' });
       return;
     }
 
-    if (pathname === '/api/admin/users' && req.method === 'GET') {
-      const users = db.getAllUsers();
-      sendJson(res, 200, { users, count: users.length });
-      return;
-    }
-
-    if (pathname === '/api/admin/metrics' && req.method === 'GET') {
-      const metrics = db.getMetrics();
-      sendJson(res, 200, { metrics });
-      return;
-    }
-
-    if (pathname === '/api/admin/users/role' && req.method === 'POST') {
+    // --- 2. POST /api/auth/login ---
+    if (pathname === '/api/auth/login' && req.method === 'POST') {
       try {
         const body = await parseJsonBody(req);
-        const { targetUserId, newRole } = body;
-        const updated = db.updateUserRole(targetUserId, newRole);
-        if (!updated) {
-          sendJson(res, 404, { error: 'Không tìm thấy người dùng cần đổi vai trò.' });
+        const email = (body.email || '').trim().toLowerCase();
+        const password = body.password || '';
+
+        if (!email || !password) {
+          sendJson(req, res, 400, { error: 'Vui lòng nhập đầy đủ Email và Mật khẩu.' });
           return;
         }
-        console.info(`[Admin RBAC Audit] Admin ${currentUser.email} updated user ${targetUserId} role to ${newRole}`);
-        sendJson(res, 200, { user: sanitizeUser(updated) });
+
+        const user = await db.findUserByEmail(email);
+        if (!user) {
+          sendJson(req, res, 401, { error: 'Email hoặc mật khẩu không chính xác.' });
+          return;
+        }
+        if (user.status && user.status !== 'active') {
+          sendJson(req, res, 403, { error: 'Tài khoản này đã bị tạm khóa.' });
+          return;
+        }
+
+        const hash = hashPassword(password, user.salt);
+        if (hash !== user.hash) {
+          sendJson(req, res, 401, { error: 'Email hoặc mật khẩu không chính xác.' });
+          return;
+        }
+
+        const role = user.role || 'user';
+        const token = generateToken(user.id, role, user.tokenVersion || 1);
+        console.info(`[Auth Audit] User logged in: ${email} (${user.id}, Role: ${role})`);
+        sendJson(req, res, 200, { user: sanitizeUser(user), token });
       } catch (err) {
-        sendJson(res, 400, { error: err.message });
+        console.error('[Auth Error] Login failed:', err);
+        sendJson(req, res, 500, { error: err.message || 'Lỗi đăng nhập hệ thống.' });
       }
       return;
     }
+
+    // --- Authenticated Endpoints Guard ---
+    const token = extractBearerToken(req);
+    const tokenPayload = verifyToken(token);
+
+    if (!tokenPayload) {
+      sendJson(req, res, 401, { error: 'Phiên đăng nhập đã hết hạn hoặc không hợp lệ. Vui lòng đăng nhập lại.' });
+      return;
+    }
+
+    const { userId } = tokenPayload;
+    const currentUser = await db.getUser(userId);
+
+    if (!currentUser) {
+      sendJson(req, res, 401, { error: 'Tài khoản người dùng không tồn tại.' });
+      return;
+    }
+    if ((currentUser.tokenVersion || 1) !== tokenPayload.tokenVersion) {
+      sendJson(req, res, 401, { error: 'Phiên đăng nhập đã bị thu hồi. Vui lòng đăng nhập lại.' });
+      return;
+    }
+    if (currentUser.status && currentUser.status !== 'active') {
+      sendJson(req, res, 403, { error: 'Tài khoản của bạn đã bị tạm khóa.' });
+      return;
+    }
+
+    // --- 2.5 POST /api/auth/logout (Server-side Token Revocation) ---
+    if (pathname === '/api/auth/logout' && req.method === 'POST') {
+      await db.incrementTokenVersion(userId);
+      sendJson(req, res, 200, { ok: true });
+      return;
+    }
+
+    // --- 3. GET /api/auth/me ---
+    if (pathname === '/api/auth/me' && req.method === 'GET') {
+      sendJson(req, res, 200, { user: sanitizeUser(currentUser) });
+      return;
+    }
+
+    // --- 4. GET /api/sync/words ---
+    if (pathname === '/api/sync/words' && req.method === 'GET') {
+      try {
+        const words = await db.getUserWords(userId);
+        sendJson(req, res, 200, { words, count: words.length, syncedAt: Date.now() });
+      } catch (err) {
+        sendJson(req, res, 500, { error: err.message });
+      }
+      return;
+    }
+
+    // --- 5. POST /api/sync/words (Supports additions, updates AND deletions) ---
+    if (pathname === '/api/sync/words' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        const incoming = Array.isArray(body.words) ? body.words : [];
+        const deletedList = [
+          ...(Array.isArray(body.deletedWords) ? body.deletedWords : []),
+          ...(Array.isArray(body.deletedWordIds) ? body.deletedWordIds : [])
+        ];
+        const merged = await db.saveUserWords(userId, incoming, deletedList);
+        sendJson(req, res, 200, { words: merged, count: merged.length, syncedAt: Date.now() });
+      } catch (err) {
+        sendJson(req, res, 500, { error: err.message });
+      }
+      return;
+    }
+
+    // --- 5.1 POST /api/sync/reviews (SRS Audit Logs) ---
+    if (pathname === '/api/sync/reviews' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        const logs = Array.isArray(body.logs) ? body.logs : (body.review ? [body.review] : []);
+        const recorded = await db.recordReviewLogs(userId, logs);
+        sendJson(req, res, 200, { recorded, syncedAt: Date.now() });
+      } catch (err) {
+        sendJson(req, res, 500, { error: err.message });
+      }
+      return;
+    }
+
+    // --- 5.2 GET/POST /api/sync/lessons (Custom Video Lessons) ---
+    if (pathname === '/api/sync/lessons' && req.method === 'GET') {
+      try {
+        const lessons = await db.getUserLessons(userId);
+        sendJson(req, res, 200, { lessons, count: lessons.length });
+      } catch (err) {
+        sendJson(req, res, 500, { error: err.message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/sync/lessons' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        const lessons = Array.isArray(body.lessons) ? body.lessons : [];
+        const deletedLessonIds = Array.isArray(body.deletedLessonIds) ? body.deletedLessonIds : [];
+        const isUnlimited = currentUser.role === 'pro' || currentUser.role === 'admin';
+
+        if (!isUnlimited && lessons.length > 0) {
+          const existing = await db.getUserLessons(userId);
+          const delSet = new Set(deletedLessonIds.map(String));
+          const existingIds = new Set(existing.filter(l => !delSet.has(l.id)).map(l => l.id));
+          const hasNewOverLimit = lessons.some(l => l?.id && !existingIds.has(l.id)) &&
+            (existingIds.size + lessons.filter(l => l?.id && !existingIds.has(l.id)).length > MAX_USER_CUSTOM_LESSONS);
+
+          if (hasNewOverLimit) {
+            sendJson(req, res, 403, {
+              error: `Tài khoản User tiêu chuẩn tối đa ${MAX_USER_CUSTOM_LESSONS} bài học tự nhập. Nâng cấp Pro để import không giới hạn.`
+            });
+            return;
+          }
+        }
+
+        const merged = await db.syncUserLessons(userId, lessons, deletedLessonIds);
+        sendJson(req, res, 200, { lessons: merged, count: merged.length, syncedAt: Date.now() });
+      } catch (err) {
+        sendJson(req, res, 500, { error: err.message });
+      }
+      return;
+    }
+
+    // --- 5.3 GET/POST /api/sync/state (Scenarios, Streak, Profiles, Shorts) ---
+    if (pathname === '/api/sync/state' && req.method === 'GET') {
+      try {
+        const state = await db.getUserLearningState(userId);
+        sendJson(req, res, 200, { state, syncedAt: Date.now() });
+      } catch (err) {
+        sendJson(req, res, 500, { error: err.message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/sync/state' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        const patch = (body.state && typeof body.state === 'object') ? body.state : {};
+        const state = await db.saveUserLearningState(userId, patch);
+        sendJson(req, res, 200, { state, syncedAt: Date.now() });
+      } catch (err) {
+        sendJson(req, res, 500, { error: err.message });
+      }
+      return;
+    }
+
+    // --- 5.4 Authenticated AI Roleplay Routes ---
+    if (pathname.startsWith('/api/ai/')) {
+      const handled = await handleAuthenticatedAiRoutes({ req, res, pathname, db, currentUser, parseJsonBody, sendJson, options });
+      if (handled) return;
+    }
+
+    // --- 6. GET /api/sync/lingq ---
+    if (pathname === '/api/sync/lingq' && req.method === 'GET') {
+      try {
+        const statuses = await db.getUserLingq(userId);
+        sendJson(req, res, 200, { statuses, syncedAt: Date.now() });
+      } catch (err) {
+        sendJson(req, res, 500, { error: err.message });
+      }
+      return;
+    }
+
+    // --- 7. POST /api/sync/lingq ---
+    if (pathname === '/api/sync/lingq' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        const incoming = (body.statuses && typeof body.statuses === 'object') ? body.statuses : {};
+        const merged = await db.saveUserLingq(userId, incoming);
+        sendJson(req, res, 200, { statuses: merged, syncedAt: Date.now() });
+      } catch (err) {
+        sendJson(req, res, 500, { error: err.message });
+      }
+      return;
+    }
+
+    // --- 8. RBAC ADMIN ENDPOINTS (Role: 'admin' required) ---
+    if (pathname.startsWith('/api/admin/')) {
+      if (currentUser.role !== 'admin') {
+        sendJson(req, res, 403, { error: 'Truy cập bị từ chối: Yêu cầu quyền Quản trị viên (Admin).' });
+        return;
+      }
+
+      if (pathname === '/api/admin/users' && req.method === 'GET') {
+        const users = await db.getAllUsers();
+        sendJson(req, res, 200, { users, count: users.length });
+        return;
+      }
+
+      if (pathname === '/api/admin/metrics' && req.method === 'GET') {
+        const metrics = await db.getMetrics();
+        sendJson(req, res, 200, { metrics });
+        return;
+      }
+
+      if (pathname === '/api/admin/users/role' && req.method === 'POST') {
+        try {
+          const body = await parseJsonBody(req);
+          const { targetUserId, newRole } = body;
+          const updated = await db.updateUserRole(targetUserId, newRole);
+          if (!updated) {
+            sendJson(req, res, 404, { error: 'Không tìm thấy người dùng cần đổi vai trò.' });
+            return;
+          }
+          console.info(`[Admin RBAC Audit] Admin ${currentUser.email} updated user ${targetUserId} role to ${newRole}`);
+          sendJson(req, res, 200, { user: sanitizeUser(updated) });
+        } catch (err) {
+          sendJson(req, res, 400, { error: err.message });
+        }
+        return;
+      }
+    }
+
+    sendJson(req, res, 404, { error: 'API Endpoint Not Found' });
   }
 
-  // Route not found in auth/sync router
-  sendJson(res, 404, { error: 'API Endpoint Not Found' });
+  return {
+    handler,
+    close: async () => {
+      const db = await dbPromise;
+      await db.close();
+    },
+    getDb: () => dbPromise
+  };
+}
+
+let defaultInstance = null;
+export async function handleAuthAndSync(req, res, pathname) {
+  if (!defaultInstance) {
+    defaultInstance = createAuthAndSyncHandler();
+  }
+  return defaultInstance.handler(req, res, pathname);
 }

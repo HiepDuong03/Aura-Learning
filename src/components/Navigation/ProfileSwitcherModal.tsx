@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AnkiUserProfile } from '../../types';
+import { useNotify } from '../Common/ToastProvider';
 import { 
   Users, 
   Plus, 
@@ -34,6 +35,7 @@ export const ProfileSwitcherModal: React.FC<ProfileSwitcherModalProps> = ({
   onDeleteProfile,
   onUpdateAccountEmail
 }) => {
+  const { confirmDialog, toast } = useNotify();
   const [isCreating, setIsCreating] = useState(false);
   const [newProfileName, setNewProfileName] = useState('');
   const [editingEmailProfileId, setEditingEmailProfileId] = useState<string | null>(null);
@@ -158,9 +160,16 @@ export const ProfileSwitcherModal: React.FC<ProfileSwitcherModalProps> = ({
                   {profiles.length > 1 && (
                     <button
                       type="button"
-                      onClick={() => {
-                        if (window.confirm(`Bạn có chắc chắn muốn xoá hồ sơ "${profile.name}"?`)) {
+                      onClick={async () => {
+                        const ok = await confirmDialog({
+                          title: 'Xóa hồ sơ học tập',
+                          message: `Bạn có chắc chắn muốn xoá hồ sơ "${profile.name}"?`,
+                          confirmLabel: 'Xóa hồ sơ',
+                          destructive: true
+                        });
+                        if (ok) {
                           onDeleteProfile(profile.id);
+                          toast.success(`Đã xóa hồ sơ "${profile.name}".`);
                         }
                       }}
                       className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"

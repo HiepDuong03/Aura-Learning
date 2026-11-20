@@ -102,6 +102,14 @@ export class ProductionErrorBoundary extends Component<Props, State> {
       localStorage.removeItem('4you_custom_lessons_v1');
       localStorage.removeItem('4you_saved_words_v2');
       localStorage.removeItem('4you_scenarios_v2');
+      try {
+        const rawSession = localStorage.getItem('4you_auth_session_v2');
+        const userId = rawSession ? JSON.parse(rawSession)?.id : null;
+        const prefix = userId ? `4you_u_${userId}_` : '4you_guest_';
+        Object.keys(localStorage).forEach((k) => {
+          if (k.startsWith(prefix)) localStorage.removeItem(k);
+        });
+      } catch {}
       if ('caches' in window) {
         const keys = await caches.keys();
         await Promise.all(keys.map((k) => caches.delete(k)));

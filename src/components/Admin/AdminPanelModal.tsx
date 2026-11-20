@@ -27,14 +27,15 @@ interface AdminUserItem {
   role: UserRole;
   avatar: string;
   createdAt: number;
-  wordCount?: number;
+  cardCount?: number;
 }
 
 interface AdminMetrics {
   totalUsers: number;
   totalWordsMaster: number;
-  totalNotes: number;
+  totalVocabularyNotes: number;
   totalSRSCards: number;
+  totalReviewLogs?: number;
 }
 
 export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ isOpen, onClose }) => {
@@ -199,7 +200,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ isOpen, onClos
               <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1.5">
                 <BarChart3 className="w-3.5 h-3.5 text-purple-600" /> Ghi Chú Cá Nhân
               </span>
-              <p className="text-xl font-black text-slate-800 mt-1">{metrics.totalNotes}</p>
+              <p className="text-xl font-black text-slate-800 mt-1">{metrics.totalVocabularyNotes}</p>
             </div>
             <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
               <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1.5">
@@ -229,6 +230,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ isOpen, onClos
               <tr>
                 <th className="p-3.5">Học Viên</th>
                 <th className="p-3.5">Email</th>
+                <th className="p-3.5">Số Thẻ SRS</th>
                 <th className="p-3.5">Vai Trò Hiện Tại</th>
                 <th className="p-3.5 text-right">Hành Động Đổi Quyền</th>
               </tr>
@@ -245,6 +247,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ isOpen, onClos
                     <span>{u.name}</span>
                   </td>
                   <td className="p-3.5 text-slate-600 font-medium">{u.email}</td>
+                  <td className="p-3.5 text-slate-700 font-bold">{u.cardCount ?? 0}</td>
                   <td className="p-3.5">
                     <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black ${
                       u.role === 'admin' 
@@ -272,7 +275,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ isOpen, onClos
               ))}
               {filteredUsers.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="p-8 text-center text-slate-400 font-medium">
+                  <td colSpan={5} className="p-8 text-center text-slate-400 font-medium">
                     Không tìm thấy người dùng nào phù hợp.
                   </td>
                 </tr>

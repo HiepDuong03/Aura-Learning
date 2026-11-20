@@ -40,3 +40,14 @@ graphify-out/
 
 # Runtime Server Data & Secrets
 data/
+
+# Local raw demo & media scratch artifacts
+02_Competitor_Vault.csv
+02_Verified_Winners.csv
+02_Verified_Winners_v2.csv
+03_AI_Visual_Vault.csv
+Story_Scripts_Extracted.txt
+Thumbnails/
+Transcript_Winner_01.txt
+subs/
+subtitle_urls.txt

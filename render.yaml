@@ -18,5 +18,9 @@ services:
         generateValue: true
       - key: ADMIN_EMAIL
         value: "admin@aura-learning.com"
+      - key: DATABASE_URL
+        sync: false
       - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GEMINI_API_KEY
         sync: false

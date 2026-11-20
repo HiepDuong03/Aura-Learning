@@ -27,6 +27,7 @@ export interface ChatMessage {
   text: string;
   translation?: string;
   nativeRephrase?: string;
+  grammarTip?: string;
   latencyMs?: number;
 }
 
@@ -43,6 +44,10 @@ interface RoleplayChatRoomProps {
   onToggleRecording: () => void;
   onRestartChat: () => void;
   onSpeakText: (text: string) => void;
+  aiEngineLabel?: string;
+  quotaBadge?: string;
+  isLockedForGuest?: boolean;
+  onRequestLogin?: () => void;
 }
 
 export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
@@ -57,7 +62,11 @@ export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
   isRecording,
   onToggleRecording,
   onRestartChat,
-  onSpeakText
+  onSpeakText,
+  aiEngineLabel,
+  quotaBadge,
+  isLockedForGuest = false,
+  onRequestLogin
 }) => {
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -115,9 +124,25 @@ export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
               className="size-10 rounded-xl object-cover ring-1 ring-slate-200 shrink-0"
             />
             <div>
-              <h3 className="text-sm font-black text-slate-900">
-                Đối thoại với {selectedPersona.name} ({selectedPersona.role})
-              </h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-sm font-black text-slate-900">
+                  Đối thoại với {selectedPersona.name} ({selectedPersona.role})
+                </h3>
+                {aiEngineLabel && (
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                    aiEngineLabel.includes('Live AI')
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}>
+                    {aiEngineLabel}
+                  </span>
+                )}
+                {quotaBadge && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800">
+                    {quotaBadge}
+                  </span>
+                )}
+              </div>
               <p className="text-[11px] text-teal-700 font-semibold truncate max-w-sm sm:max-w-md">
                 🎯 Nhiệm vụ: {selectedPersona.mission}
               </p>
@@ -175,14 +200,23 @@ export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
                     )}
                   </div>
 
-                  {/* Native Rephrase Tip */}
-                  {isUser && msg.nativeRephrase && (
-                    <div className="p-2.5 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-1.5 animate-fade-in">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                      <div>
-                        <span className="font-bold">Gợi ý cách nói tự nhiên hơn: </span>
-                        <span>"{msg.nativeRephrase}"</span>
-                      </div>
+                  {/* Native Rephrase & Grammar Tip */}
+                  {isUser && (msg.nativeRephrase || msg.grammarTip) && (
+                    <div className="p-2.5 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-1 animate-fade-in">
+                      {msg.nativeRephrase && (
+                        <div className="flex items-start gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-bold">Gợi ý cách nói tự nhiên hơn: </span>
+                            <span>"{msg.nativeRephrase}"</span>
+                          </div>
+                        </div>
+                      )}
+                      {msg.grammarTip && (
+                        <p className="text-[11px] text-amber-800/90 pl-5 font-medium">
+                          💡 {msg.grammarTip}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -202,7 +236,23 @@ export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
           <div ref={chatEndRef} />
         </div>
 
-        {/* Input Controls */}
+        {/* Input Controls or Auth Gate */}
+        {isLockedForGuest ? (
+          <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50 p-3.5 rounded-2xl">
+            <p className="text-xs font-bold text-slate-700">
+              Đăng nhập tài khoản miễn phí để mở khóa 10 lượt AI Roleplay mỗi ngày (hoặc không giới hạn với Pro).
+            </p>
+            {onRequestLogin && (
+              <button
+                type="button"
+                onClick={onRequestLogin}
+                className="px-4 py-2 rounded-xl btn-3d btn-3d-teal text-xs font-black shrink-0"
+              >
+                Đăng nhập ngay
+              </button>
+            )}
+          </div>
+        ) : (
         <div className="pt-3 border-t border-slate-100 flex items-center gap-2">
           <button
             type="button"
@@ -241,6 +291,7 @@ export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
             <Send className="w-5 h-5" />
           </button>
         </div>
+        )}
       </div>
     </div>
   );

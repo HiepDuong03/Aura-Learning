@@ -160,25 +160,20 @@ export class AnkiDatabase {
     if (profiles.length === 0) {
       await this.saveProfiles([DEFAULT_PROFILE]);
       this.activeProfileId = DEFAULT_PROFILE.id;
-      localStorage.setItem('4you_active_profile_id', DEFAULT_PROFILE.id);
+      ScopedStorage.setActiveProfileId(this.currentUserId, DEFAULT_PROFILE.id);
     } else {
-      const savedActive = localStorage.getItem('4you_active_profile_id');
+      const savedActive = ScopedStorage.getActiveProfileId(this.currentUserId);
       const found = profiles.find(p => p.id === savedActive);
       this.activeProfileId = found ? found.id : (profiles[0]?.id || DEFAULT_PROFILE.id);
     }
   }
 
   /**
-   * Retrieves all profiles on this device
+   * Retrieves all profiles for current user partition
    */
   public async getProfiles(): Promise<AnkiUserProfile[]> {
     if (!this.db) {
-      try {
-        const raw = localStorage.getItem('4you_profiles_v1');
-        return raw ? JSON.parse(raw) : [DEFAULT_PROFILE];
-      } catch {
-        return [DEFAULT_PROFILE];
-      }
+      return ScopedStorage.getProfiles(this.currentUserId) || [DEFAULT_PROFILE];
     }
 
     return new Promise((resolve) => {
@@ -202,14 +197,10 @@ export class AnkiDatabase {
   }
 
   /**
-   * Saves profiles array
+   * Saves profiles array to IndexedDB and user-scoped storage
    */
   private async saveProfiles(profiles: AnkiUserProfile[]): Promise<void> {
-    try {
-      localStorage.setItem('4you_profiles_v1', JSON.stringify(profiles));
-    } catch {
-      // Safe ignore
-    }
+    ScopedStorage.setProfiles(this.currentUserId, profiles);
 
     if (!this.db) return;
 
@@ -245,7 +236,7 @@ export class AnkiDatabase {
     }
 
     this.activeProfileId = target.id;
-    localStorage.setItem('4you_active_profile_id', target.id);
+    ScopedStorage.setActiveProfileId(this.currentUserId, target.id);
     return target;
   }
 
@@ -301,10 +292,12 @@ export class AnkiDatabase {
   }
 
   /**
-   * Migrate existing localStorage saved words to IndexedDB on first boot
+   * One-time legacy migration ONLY for guest sessions to avoid leaking old global keys
+   * into freshly logged-in/registered user accounts.
    */
   private async migrateFromLocalStorage(): Promise<void> {
-    if (!this.db) return;
+    if (!this.db || this.currentUserId) return;
+    if (localStorage.getItem('4you_legacy_migrated_v1') === '1') return;
 
     try {
       const existingWords = await this.getAllWords();
@@ -318,12 +311,10 @@ export class AnkiDatabase {
               profileId: w.profileId || this.activeProfileId,
             }));
             await this.saveWords(taggedWords);
-            console.log(`[AnkiDB] Successfully migrated ${words.length} words from localStorage into IndexedDB.`);
           }
         }
       }
 
-      // Recover and migrate any user-imported custom lessons from localStorage
       const existingCustomLessons = await this.getCustomLessons();
       if (existingCustomLessons.length === 0) {
         const savedLessonsRaw = localStorage.getItem('4you_custom_lessons_v1') || localStorage.getItem('4you_lessons_v2');
@@ -341,15 +332,13 @@ export class AnkiDatabase {
                   createdAt: cl.createdAt || Date.now(),
                 });
               }
-              if (customOnly.length > 0) {
-                console.log(`[AnkiDB] Successfully migrated ${customOnly.length} custom lessons into IndexedDB.`);
-              }
             }
           } catch (e) {
             console.warn('[AnkiDB] Custom lessons parse error during migration:', e);
           }
         }
       }
+      localStorage.setItem('4you_legacy_migrated_v1', '1');
     } catch (e) {
       console.warn('[AnkiDB] Could not migrate from localStorage:', e);
     }
@@ -560,16 +549,51 @@ export class AnkiDatabase {
     });
   }
 
+  private async getPendingDeletedWords(): Promise<Array<{ id: string; word?: string; graveId: string }>> {
+    if (!this.db) return [];
+    return new Promise((resolve) => {
+      try {
+        const transaction = this.db!.transaction(STORES.GRAVES, 'readonly');
+        const store = transaction.objectStore(STORES.GRAVES);
+        const req = store.getAll();
+        req.onsuccess = () => {
+          const rows = (req.result || []).filter((g: any) => g && g.type === 'word');
+          resolve(rows.map((g: any) => ({ id: g.originalId, word: g.word, graveId: g.id })));
+        };
+        req.onerror = () => resolve([]);
+      } catch {
+        resolve([]);
+      }
+    });
+  }
+
+  private async clearGraves(graveIds: string[]): Promise<void> {
+    if (!this.db || graveIds.length === 0) return;
+    return new Promise((resolve) => {
+      try {
+        const transaction = this.db!.transaction(STORES.GRAVES, 'readwrite');
+        const store = transaction.objectStore(STORES.GRAVES);
+        for (const gid of graveIds) {
+          store.delete(gid);
+        }
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+  }
+
   /**
    * Bi-directional Cloud Synchronization (BR-13, BR-15)
-   * Connects to /api/sync/words with Bearer token.
-   * Sends local words, receives authoritative merged list, updates local IndexedDB.
+   * Sends local words AND deletion tombstones (graves), receives authoritative list.
    */
   public async syncWithCloud(token: string, profileId?: string): Promise<SavedWord[]> {
     if (!token) return this.getAllWords(profileId);
 
     const targetProfile = profileId || this.activeProfileId || this.currentUserId || 'prof_default';
     const localWords = await this.getAllWords(targetProfile);
+    const pendingDeleted = await this.getPendingDeletedWords();
 
     try {
       const response = await fetch('/api/sync/words', {
@@ -578,7 +602,10 @@ export class AnkiDatabase {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ words: localWords })
+        body: JSON.stringify({
+          words: localWords,
+          deletedWords: pendingDeleted.map(d => ({ id: d.id, word: d.word }))
+        })
       });
 
       if (!response.ok) {
@@ -593,7 +620,8 @@ export class AnkiDatabase {
           try {
             const transaction = this.db!.transaction(STORES.WORDS, 'readwrite');
             const store = transaction.objectStore(STORES.WORDS);
-
+            // Replace local store with authoritative merged list from server so deleted words stay deleted
+            store.clear();
             for (const sw of serverWords) {
               store.put({
                 ...sw,
@@ -610,7 +638,10 @@ export class AnkiDatabase {
         });
       }
 
-      // Update mirror in ScopedStorage
+      if (pendingDeleted.length > 0) {
+        await this.clearGraves(pendingDeleted.map(d => d.graveId));
+      }
+
       try {
         ScopedStorage.setSavedWords(this.currentUserId, serverWords);
       } catch {}
@@ -624,9 +655,9 @@ export class AnkiDatabase {
   }
 
   /**
-   * Deletes a word and records its tombstone in `graves` (Anki REA)
+   * Deletes a word and records its tombstone (including lemma) in `graves`
    */
-  public async deleteWord(wordId: string): Promise<void> {
+  public async deleteWord(wordId: string, wordText?: string): Promise<void> {
     if (this.db) {
       await new Promise<void>((resolve, reject) => {
         try {
@@ -638,6 +669,7 @@ export class AnkiDatabase {
           graveStore.put({
             id: `grave-${Date.now()}-${wordId}`,
             originalId: wordId,
+            word: wordText ? wordText.toLowerCase().trim() : undefined,
             type: 'word',
             deletedAt: Date.now(),
             usn: ++this.currentUsn,
@@ -651,7 +683,6 @@ export class AnkiDatabase {
       });
     }
 
-    // Mirror update to ScopedStorage
     try {
       const all = await this.getAllWords();
       ScopedStorage.setSavedWords(this.currentUserId, all);

@@ -34,10 +34,18 @@ const MIME_TYPES = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), geolocation=()',
+};
+
 function sendFile(res, filePath, contentType) {
   try {
     const stat = fs.statSync(filePath);
     const headers = {
+      ...SECURITY_HEADERS,
       'Content-Type': contentType,
       'Content-Length': stat.size,
     };
@@ -54,7 +62,7 @@ function sendFile(res, filePath, contentType) {
 
     res.writeHead(200, headers);
     fs.createReadStream(filePath).pipe(res);
-  } catch (err) {
+  } catch {
     res.writeHead(500, { 'Content-Type': 'text/plain' });
     res.end('Internal Server Error');
   }
@@ -78,8 +86,14 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 2. Production Cloud Authentication, Multi-Device Sync, and Admin RBAC API
-  if (pathname.startsWith('/api/auth') || pathname.startsWith('/api/sync') || pathname.startsWith('/api/admin')) {
+  // 2. Production Cloud Authentication, Multi-Device Sync, AI Roleplay, Dictionary Cache, and Admin RBAC API
+  if (
+    pathname.startsWith('/api/auth') ||
+    pathname.startsWith('/api/sync') ||
+    pathname.startsWith('/api/admin') ||
+    pathname.startsWith('/api/ai') ||
+    pathname.startsWith('/api/dict')
+  ) {
     try {
       await handleAuthAndSync(req, res, pathname);
     } catch (err) {

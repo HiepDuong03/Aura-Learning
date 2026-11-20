@@ -13,6 +13,7 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { AnkiUserProfile, AuthUser } from '../../types';
+import { useNotify } from '../Common/ToastProvider';
 
 interface HeaderProps {
   searchQuery: string;
@@ -39,6 +40,7 @@ export const Header: React.FC<HeaderProps> = ({
   onLogout,
   onOpenAdmin,
 }) => {
+  const { toast } = useNotify();
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -74,7 +76,7 @@ export const Header: React.FC<HeaderProps> = ({
                   (window as unknown as { webkitSpeechRecognition?: any }).webkitSpeechRecognition;
 
                 if (!SpeechRecognition) {
-                  alert('Trình duyệt chưa hỗ trợ Web Speech API. Vui lòng dùng Chrome hoặc Edge.');
+                  toast.info('Trình duyệt chưa hỗ trợ Web Speech API. Vui lòng dùng Chrome hoặc Edge.');
                   return;
                 }
                 try {
