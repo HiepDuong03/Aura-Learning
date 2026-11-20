@@ -50,14 +50,19 @@ const authModule = createAuthAndSyncHandler({
   dictRateLimitMax: 200,
   fetchDictionaryEntry: async (word) => {
     upstreamDictHits += 1;
+    const isPhrase = word.includes(' ');
     return {
       word,
-      phonetic: `/${word}/`,
-      partOfSpeech: 'tính từ (adj)',
-      translation: 'phổ biến khắp nơi',
-      definitionEn: 'present, appearing, or found everywhere',
-      exampleEn: 'Smartphones have become ubiquitous.',
-      synonyms: ['omnipresent', 'pervasive']
+      phonetic: isPhrase ? '' : `/${word}/`,
+      partOfSpeech: isPhrase ? 'cụm từ (phrase)' : 'tính từ (adj)',
+      translation: isPhrase ? 'coi điều gì là hiển nhiên' : 'phổ biến khắp nơi',
+      definitionEn: isPhrase
+        ? 'to fail to properly appreciate someone or something'
+        : 'present, appearing, or found everywhere',
+      exampleEn: isPhrase
+        ? 'Never take it for granted when someone helps you.'
+        : 'Smartphones have become ubiquitous.',
+      synonyms: isPhrase ? [] : ['omnipresent', 'pervasive']
     };
   },
   fetchBatchTranslation: async (texts) => texts.map(t => `[VI] ${t}`),
@@ -65,6 +70,41 @@ const authModule = createAuthAndSyncHandler({
     reply: `[MockGemini:${personaId}] Thanks for saying: ${userMessage}`,
     nativeRephrase: `Could you clarify "${userMessage}"?`,
     grammarTip: 'Dùng cấu trúc lịch sự sẽ tự nhiên hơn.'
+  }),
+  aiExplainResponder: async ({ phrase, sentence }) => ({
+    meaningVi: `Nghĩa ngữ cảnh của "${phrase}"`,
+    nuance: `Diễn đạt tự nhiên trong câu: ${sentence}`,
+    grammarNote: 'Cụm từ cố định (idiom/collocation).',
+    examples: [
+      { en: `Don't ${phrase}.`, vi: 'Đừng coi điều đó là hiển nhiên.' }
+    ]
+  }),
+  aiQuizResponder: async ({ subtitles }) =>
+    Array.from({ length: 5 }, (_, idx) => ({
+      id: `mock-quiz-${idx + 1}`,
+      question: `Question ${idx + 1} based on: ${subtitles[idx % subtitles.length].text}`,
+      options: ['Option A', 'Option B', 'Option C', 'Option D'],
+      correctAnswer: idx % 4,
+      explanation: `Giải thích câu ${idx + 1}`
+    })),
+  aiScenarioResponder: async ({ topic, level, category }) => ({
+    id: `mock-sc-${Date.now()}`,
+    level,
+    title: topic,
+    category,
+    description: `Mock scenario for ${topic}`,
+    icon: '🎯',
+    targetGoal: `Discuss ${topic} fluently at ${level}`,
+    turns: Array.from({ length: 6 }, (_, idx) => ({
+      id: `mt-${idx + 1}`,
+      speaker: idx % 2 === 0 ? 'AI' : 'User',
+      speakerName: idx % 2 === 0 ? 'Alex' : 'Bạn',
+      avatar: 'https://example.com/avatar.png',
+      text: `Turn ${idx + 1} about ${topic}`,
+      translation: `Lượt ${idx + 1} về ${topic}`,
+      hintPrompt: idx % 2 === 1 ? `Trả lời lượt ${idx + 1}` : undefined,
+      expectedKeywords: ['turn', 'topic']
+    }))
   })
 });
 
@@ -230,10 +270,10 @@ async function run() {
   assert.equal(proOkA.data.count, 7);
   console.log('✅ TEST 11 PASSED: RBAC custom lesson quota enforced (User 5 max -> 403, Pro unlimited -> 200)');
 
-  // 12. AI Roleplay Endpoint & Daily Quota (Guest 401, User 10 turns -> 11th 429, Pro unlimited)
+  // 12. AI Roleplay Endpoint & Shared Daily Quota (Guest 401, User 20 turns -> 21st 429, Pro unlimited)
   const guestAi = await api('/api/ai/roleplay', 'POST', { personaId: 'cafe-barista', userMessage: 'Hi' });
   assert.equal(guestAi.status, 401);
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 20; i++) {
     const turnRes = await api('/api/ai/roleplay', 'POST', {
       personaId: 'cafe-barista',
       userMessage: `Turn ${i + 1}`
@@ -241,19 +281,20 @@ async function run() {
     assert.equal(turnRes.status, 200);
     assert.equal(turnRes.data.source, 'gemini');
     assert.equal(turnRes.data.quota.used, i + 1);
+    assert.equal(turnRes.data.quota.limit, 20);
   }
-  const eleventhUserTurn = await api('/api/ai/roleplay', 'POST', {
+  const twentyFirstUserTurn = await api('/api/ai/roleplay', 'POST', {
     personaId: 'cafe-barista',
-    userMessage: 'Turn 11'
+    userMessage: 'Turn 21'
   }, tokenB);
-  assert.equal(eleventhUserTurn.status, 429, 'Standard user must hit daily limit at turn 11');
+  assert.equal(twentyFirstUserTurn.status, 429, 'Standard user must hit shared daily AI limit at turn 21');
   const proAiTurn = await api('/api/ai/roleplay', 'POST', {
     personaId: 'tech-interviewer',
     userMessage: 'Walk me through system design'
   }, tokenProA);
   assert.equal(proAiTurn.status, 200);
   assert.equal(proAiTurn.data.quota.unlimited, true);
-  console.log('✅ TEST 12 PASSED: AI Roleplay auth, live responder & daily quota verified');
+  console.log('✅ TEST 12 PASSED: AI Roleplay auth, live responder & 20/day shared quota verified');
 
   // 13. Master Dictionary Cache (`words_master`) & Batch Translation
   const dict1 = await api('/api/dict/lookup?w=Ubiquitous');
@@ -288,7 +329,103 @@ async function run() {
   assert.deepEqual(getStateB.data.state, {});
   console.log('✅ TEST 14 PASSED: Full learning state sync verified and isolated between users');
 
-  console.log('\n🎯 ALL 14 SECURITY, RBAC, AI, CACHE & SYNC TESTS PASSED!');
+  // 15. Multi-word Phrase Lookup & words_master Caching
+  const hitsBeforePhrase = upstreamDictHits;
+  const phrase1 = await api('/api/dict/lookup?w=Take%20It%20For%20Granted');
+  assert.equal(phrase1.status, 200);
+  assert.equal(phrase1.data.word, 'take it for granted');
+  assert.equal(phrase1.data.source, 'upstream');
+  assert.equal(upstreamDictHits, hitsBeforePhrase + 1);
+
+  const phrase2 = await api('/api/dict/lookup?w=take%20it%20for%20granted');
+  assert.equal(phrase2.status, 200);
+  assert.equal(phrase2.data.source, 'db_cache');
+  assert.equal(upstreamDictHits, hitsBeforePhrase + 1, 'Second phrase lookup must hit words_master cache');
+  console.log('✅ TEST 15 PASSED: Multi-word phrase lookup & DB cache verified');
+
+  // 16. AI Contextual Explanation Endpoint (Guest 401, Quota-exhausted User 429, Pro 200)
+  const guestExplain = await api('/api/ai/explain', 'POST', {
+    phrase: 'take it for granted',
+    sentence: 'Never take it for granted when someone helps you.'
+  });
+  assert.equal(guestExplain.status, 401);
+
+  const exhaustedUserExplain = await api('/api/ai/explain', 'POST', {
+    phrase: 'take it for granted',
+    sentence: 'Never take it for granted.'
+  }, tokenB);
+  assert.equal(exhaustedUserExplain.status, 429, 'Shared 20/day AI quota must apply across /api/ai/explain too');
+
+  const proExplain = await api('/api/ai/explain', 'POST', {
+    phrase: 'take it for granted',
+    sentence: 'Never take it for granted when someone helps you.',
+    videoTitle: 'Life Lessons'
+  }, tokenProA);
+  assert.equal(proExplain.status, 200);
+  assert.equal(proExplain.data.source, 'gemini');
+  assert.ok(proExplain.data.meaningVi.includes('take it for granted'));
+  assert.ok(Array.isArray(proExplain.data.examples) && proExplain.data.examples.length >= 1);
+  console.log('✅ TEST 16 PASSED: AI Contextual Explanation auth, shared quota & payload verified');
+
+  // 17. AI Auto-Quiz Generator & AI Speaking Scenario Generator
+  const quizRes = await api('/api/ai/generate-quiz', 'POST', {
+    title: 'Steve Jobs Stanford Speech',
+    subtitles: [
+      { text: 'I am honored to be with you today at your commencement.', translation: 'Tôi vinh dự có mặt.' },
+      { text: 'You cannot connect the dots looking forward.', translation: 'Không thể nối các điểm về phía trước.' },
+      { text: 'Stay hungry, stay foolish in everything you pursue.', translation: 'Hãy luôn khát khao, hãy luôn dại khờ.' }
+    ]
+  }, tokenProA);
+  assert.equal(quizRes.status, 200);
+  assert.equal(quizRes.data.quizzes.length, 5);
+  assert.equal(quizRes.data.quizzes[0].options.length, 4);
+
+  const scenarioRes = await api('/api/ai/generate-scenario', 'POST', {
+    topic: 'Salary Negotiation',
+    level: 'B2',
+    category: 'Công sở'
+  }, tokenProA);
+  assert.equal(scenarioRes.status, 200);
+  assert.equal(scenarioRes.data.scenario.level, 'B2');
+  assert.equal(scenarioRes.data.scenario.turns.length, 6);
+  console.log('✅ TEST 17 PASSED: AI Auto-Quiz (5 questions) & AI Speaking Scenario (6 turns) verified');
+
+  // 18. Source Video Metadata & Timestamp Round-Trip Persistence on Saved Words
+  const syncWordWithTimestamp = await api('/api/sync/words', 'POST', {
+    words: [
+      {
+        id: 'word-ts-1',
+        word: 'take it for granted',
+        translation: 'coi là hiển nhiên',
+        contextSentence: 'Never take it for granted.',
+        videoTitle: 'Stanford Commencement',
+        sourceLessonId: 'lesson-steve-jobs',
+        sourceYoutubeId: 'UF8uR6Z6KLc',
+        sourceTimestampSec: 142.5,
+        easeFactor: 2.5,
+        interval: 1,
+        repetitions: 1,
+        lapses: 0,
+        state: 'learning',
+        dueAt: Date.now() + 86400000,
+        usn: 2
+      }
+    ],
+    deletedWords: []
+  }, tokenProA);
+  assert.equal(syncWordWithTimestamp.status, 200);
+
+  const fetchWordsA = await api('/api/sync/words', 'GET', null, tokenProA);
+  assert.equal(fetchWordsA.status, 200);
+  const tsWord = fetchWordsA.data.words.find((w) => w.word === 'take it for granted');
+  assert.ok(tsWord, 'Saved multi-word phrase must be returned from sync');
+  assert.equal(tsWord.sourceLessonId, 'lesson-steve-jobs');
+  assert.equal(tsWord.sourceYoutubeId, 'UF8uR6Z6KLc');
+  assert.equal(tsWord.sourceTimestampSec, 142.5);
+  assert.equal(tsWord.videoTitle, 'Stanford Commencement');
+  console.log('✅ TEST 18 PASSED: SavedWord sourceLessonId, sourceYoutubeId & sourceTimestampSec persisted');
+
+  console.log('\n🎯 ALL 18 SECURITY, RBAC, AI, CACHE, PHRASE & SYNC TESTS PASSED!');
 }
 
 try {

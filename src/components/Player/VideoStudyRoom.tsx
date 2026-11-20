@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { VideoLesson, SubtitleLine } from '../../types';
+import { AuthUser, VideoLesson, SubtitleLine } from '../../types';
 import { 
   ArrowLeft, 
   Volume2, 
@@ -32,12 +32,22 @@ import { ShadowingTab } from './ShadowingTab';
 import { QuizTab } from './QuizTab';
 import { useNotify } from '../Common/ToastProvider';
 
+interface SelectedWordMeta {
+  lessonId?: string;
+  youtubeId?: string;
+  timestampSec?: number;
+}
+
 interface VideoStudyRoomProps {
   lesson: VideoLesson;
   onBack: () => void;
-  onSelectWord: (word: string, contextSentence: string) => void;
+  onSelectWord: (word: string, contextSentence: string, meta?: SelectedWordMeta) => void;
   onUpdateLesson?: (updated: VideoLesson) => void;
   initialMode?: StudyMode;
+  isWordModalOpen?: boolean;
+  initialTimestampSec?: number;
+  currentUser?: AuthUser | null;
+  onOpenAuth?: () => void;
 }
 
 type StudyMode = 'subtitles' | 'dictation' | 'shadowing' | 'quiz';
@@ -47,7 +57,11 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
   onBack,
   onSelectWord,
   onUpdateLesson,
-  initialMode = 'subtitles'
+  initialMode = 'subtitles',
+  isWordModalOpen = false,
+  initialTimestampSec,
+  currentUser = null,
+  onOpenAuth
 }) => {
   const { toast } = useNotify();
   const [activeMode, setActiveMode] = useState<StudyMode>(initialMode);
@@ -57,6 +71,12 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
   const [isLooping, setIsLooping] = useState<boolean>(false);
   const [isSyncingCaptions, setIsSyncingCaptions] = useState<boolean>(false);
   const [vocabVersion, setVocabVersion] = useState<number>(0);
+  const [phraseSelectMode, setPhraseSelectMode] = useState<boolean>(false);
+  const [phraseAnchor, setPhraseAnchor] = useState<{ subIndex: number; tokenIndex: number } | null>(null);
+  const wasPlayingBeforeModalRef = useRef<boolean>(false);
+  const pendingInitialSeekRef = useRef<number | null>(
+    typeof initialTimestampSec === 'number' && initialTimestampSec > 0 ? initialTimestampSec : null
+  );
 
   // Subscribe to LingQ vocabulary status changes
   useEffect(() => {
@@ -493,7 +513,7 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
   };
 
   // Play / Pause toggle
-  const handleTogglePlay = () => {
+  const handleTogglePlay = useCallback(() => {
     const player = getPlayer();
     if (player) {
       if (isPlaying) {
@@ -502,14 +522,73 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
         player.playVideo();
       }
     }
-  };
+  }, [getPlayer, isPlaying]);
 
-  // Global Keyboard Shortcuts (Space: Play/Pause, A: Prev Sub, D: Next Sub, R: Replay)
+  // Auto-Pause when WordPopupModal opens & Auto-Resume when it closes (if playing before)
+  useEffect(() => {
+    const player = getPlayer();
+    if (isWordModalOpen) {
+      if (!wasPlayingBeforeModalRef.current && player) {
+        const ytState = typeof player.getPlayerState === 'function' ? player.getPlayerState() : -1;
+        if (isPlaying || ytState === 1) {
+          wasPlayingBeforeModalRef.current = true;
+          if (typeof player.pauseVideo === 'function') {
+            player.pauseVideo();
+          }
+        }
+      }
+    } else if (wasPlayingBeforeModalRef.current) {
+      wasPlayingBeforeModalRef.current = false;
+      if (player && typeof player.playVideo === 'function') {
+        player.playVideo();
+      }
+    }
+  }, [isWordModalOpen, getPlayer, isPlaying]);
+
+  // Initial Timestamp Seek (e.g., jumping back from Word Vault or Cloze Flashcard)
+  useEffect(() => {
+    if (typeof initialTimestampSec === 'number' && initialTimestampSec > 0) {
+      pendingInitialSeekRef.current = initialTimestampSec;
+    }
+  }, [initialTimestampSec, lesson.id]);
+
+  useEffect(() => {
+    const targetSec = pendingInitialSeekRef.current;
+    if (targetSec === null) return;
+    if (playerStatus !== 'ready' && playerStatus !== 'playing' && playerStatus !== 'paused') return;
+
+    const player = getPlayer();
+    if (!player || typeof player.seekTo !== 'function') return;
+
+    pendingInitialSeekRef.current = null;
+    const seekSec = Math.max(0, targetSec - 0.35);
+    player.seekTo(seekSec, true);
+    setCurrentTime(seekSec);
+
+    if (subtitles.length > 0) {
+      const matchedIdx = subtitles.findIndex(
+        (s) => targetSec >= s.start - 0.5 && targetSec <= s.end + 0.5
+      );
+      if (matchedIdx >= 0) {
+        setActiveSubtitleIndex(matchedIdx);
+      }
+    }
+  }, [playerStatus, getPlayer, subtitles]);
+
+  // Global Immersion Keyboard Shortcuts (Space: Play/Pause, A: Prev, S/R: Replay, D: Next, L: Loop, [ / ]: Offset)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger hotkeys if user is actively typing in a textarea or input
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+      if (isWordModalOpen) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        !target ||
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable
+      ) {
+        return;
+      }
 
       if (e.code === 'Space') {
         e.preventDefault();
@@ -526,9 +605,12 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
           const next = activeSubtitleIndex + 1;
           jumpToSubtitle(subtitles[next], next);
         }
-      } else if (e.code === 'KeyR') {
+      } else if (e.code === 'KeyS' || e.code === 'KeyR') {
         e.preventDefault();
-        jumpToSubtitle(currentSub, activeSubtitleIndex);
+        jumpToSubtitle(currentSub, Math.max(0, activeSubtitleIndex));
+      } else if (e.code === 'KeyL') {
+        e.preventDefault();
+        setIsLooping((prev) => !prev);
       } else if (e.code === 'BracketLeft') {
         e.preventDefault();
         handleSetSubOffset((prev: number) => Number((prev - 0.1).toFixed(2)));
@@ -540,7 +622,7 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPlaying, activeSubtitleIndex, subtitles, currentSub, jumpToSubtitle, handleSetSubOffset]);
+  }, [isWordModalOpen, handleTogglePlay, activeSubtitleIndex, subtitles, currentSub, jumpToSubtitle, handleSetSubOffset]);
 
   // Speech Recognition for Shadowing
   useEffect(() => {
@@ -608,28 +690,88 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
     }
   };
 
+  const openLookupForPhraseOrWord = useCallback(
+    (phrase: string, sentenceText: string, sub: SubtitleLine | undefined, index: number) => {
+      const player = getPlayer();
+      if (player) {
+        const ytState = typeof player.getPlayerState === 'function' ? player.getPlayerState() : -1;
+        if (isPlaying || ytState === 1) {
+          wasPlayingBeforeModalRef.current = true;
+        }
+        if (typeof player.pauseVideo === 'function') {
+          player.pauseVideo();
+        }
+      }
+      if (sub) {
+        setActiveSubtitleIndex(index);
+        setCurrentTime(sub.start);
+        if (player && typeof player.seekTo === 'function') {
+          player.seekTo(sub.start, true);
+        }
+      }
+      onSelectWord(phrase, sentenceText, {
+        lessonId: lesson.id,
+        youtubeId: lesson.youtubeId,
+        timestampSec: sub?.start ?? currentTime
+      });
+    },
+    [getPlayer, isPlaying, lesson.id, lesson.youtubeId, currentTime, onSelectWord]
+  );
+
   const handleWordClick = (
     word: string,
     sentenceText: string,
     sub: SubtitleLine | undefined,
     index: number,
+    tokenIndex: number,
+    tokens: ReturnType<typeof tokenizeText>,
     e: React.MouseEvent
   ) => {
     e.stopPropagation();
-    // Pause video to allow quiet vocabulary inspection
-    const player = getPlayer();
-    if (player && typeof player.pauseVideo === 'function') {
-      player.pauseVideo();
-    }
-    if (sub) {
-      setActiveSubtitleIndex(index);
-      setCurrentTime(sub.start);
-      if (player && typeof player.seekTo === 'function') {
-        player.seekTo(sub.start, true);
+
+    // Multi-word tap-start -> tap-end selection mode (Mobile & Desktop friendly)
+    if (phraseSelectMode) {
+      if (!phraseAnchor || phraseAnchor.subIndex !== index) {
+        setPhraseAnchor({ subIndex: index, tokenIndex });
+        return;
       }
+      if (phraseAnchor.tokenIndex === tokenIndex) {
+        setPhraseAnchor(null);
+        return;
+      }
+
+      const startIdx = Math.min(phraseAnchor.tokenIndex, tokenIndex);
+      const endIdx = Math.max(phraseAnchor.tokenIndex, tokenIndex);
+      const selectedWords = tokens
+        .slice(startIdx, endIdx + 1)
+        .filter((t) => t.isWord)
+        .map((t) => t.text.trim())
+        .filter(Boolean);
+
+      setPhraseAnchor(null);
+
+      if (selectedWords.length < 2) {
+        openLookupForPhraseOrWord(word, sentenceText, sub, index);
+        return;
+      }
+      if (selectedWords.length > 6) {
+        toast.info('Vui lòng chọn cụm từ từ 2 đến 6 từ liên tiếp.');
+        return;
+      }
+      openLookupForPhraseOrWord(selectedWords.join(' '), sentenceText, sub, index);
+      return;
     }
-    onSelectWord(word, sentenceText);
+
+    openLookupForPhraseOrWord(word, sentenceText, sub, index);
   };
+
+  const handleSelectPhraseFromDrag = useCallback(
+    (phrase: string, sub: SubtitleLine, index: number) => {
+      setPhraseAnchor(null);
+      openLookupForPhraseOrWord(phrase, sub.text, sub, index);
+    },
+    [openLookupForPhraseOrWord]
+  );
 
   const vocabStats = React.useMemo(() => {
     return lingqWordService.getLessonVocabularyStats(subtitles);
@@ -647,13 +789,25 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
         const status = lingqWordService.getWordStatus(wordKey);
         const badgeClass = lingqWordService.getBadgeStyle(status);
         const statusMeta = lingqWordService.getStatusLabel(status);
+        const isAnchor =
+          phraseSelectMode &&
+          phraseAnchor?.subIndex === targetIndex &&
+          phraseAnchor?.tokenIndex === i;
 
         return (
           <span
             key={i}
-            onClick={(e) => handleWordClick(wordKey, text, targetSub, targetIndex, e)}
-            className={`clickable-word ${badgeClass} active:scale-95 cursor-pointer inline-block`}
-            title={`Nhấn để tra từ • ${statusMeta.label}`}
+            onClick={(e) => handleWordClick(wordKey, text, targetSub, targetIndex, i, tokens, e)}
+            className={`clickable-word ${badgeClass} active:scale-95 cursor-pointer inline-block ${
+              isAnchor ? 'ring-2 ring-indigo-500 bg-indigo-100 text-indigo-950 rounded px-1' : ''
+            }`}
+            title={
+              phraseSelectMode
+                ? phraseAnchor?.subIndex === targetIndex
+                  ? 'Nhấn để chọn từ kết thúc cụm từ'
+                  : 'Nhấn để chọn từ bắt đầu cụm từ'
+                : `Nhấn để tra từ • ${statusMeta.label}`
+            }
           >
             {token.text}
           </span>
@@ -1004,6 +1158,13 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
               onSetSubOffset={handleSetSubOffset}
               onSyncFullYouTube={() => handleSyncFromYouTube(true)}
               isSyncing={isSyncingCaptions}
+              phraseSelectMode={phraseSelectMode}
+              onTogglePhraseSelectMode={() => {
+                setPhraseSelectMode((prev) => !prev);
+                setPhraseAnchor(null);
+              }}
+              hasPhraseAnchor={Boolean(phraseAnchor)}
+              onSelectPhrase={handleSelectPhraseFromDrag}
             />
           )}
 
@@ -1048,7 +1209,21 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
 
           {/* TAB 4: Quiz Mode */}
           {activeMode === 'quiz' && (
-            <QuizTab quizzes={lesson.quizzes || []} />
+            <QuizTab
+              quizzes={lesson.quizzes || []}
+              lessonTitle={lesson.title}
+              subtitles={subtitles}
+              currentUser={currentUser}
+              onOpenAuth={onOpenAuth}
+              onUpdateQuizzes={(generatedQuizzes) => {
+                if (onUpdateLesson) {
+                  onUpdateLesson({
+                    ...lesson,
+                    quizzes: generatedQuizzes
+                  });
+                }
+              }}
+            />
           )}
         </div>
       </main>

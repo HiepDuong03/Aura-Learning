@@ -51,6 +51,21 @@ export interface WordDefinition {
   synonyms?: string[];
 }
 
+export interface ContextExplanation {
+  phrase: string;
+  meaningVi: string;
+  nuance: string;
+  grammarNote: string;
+  examples: Array<{ en: string; vi: string }>;
+  source?: string;
+  isFallback?: boolean;
+  quota?: {
+    used: number;
+    limit: number | null;
+    unlimited: boolean;
+  };
+}
+
 export type AnkiRating = 1 | 2 | 3 | 4; // 1: Again, 2: Hard, 3: Good, 4: Easy
 export type CardState = 'new' | 'learning' | 'review' | 'relearning';
 
@@ -71,6 +86,9 @@ export interface SavedWord {
   exampleEn?: string;
   contextSentence?: string;
   videoTitle?: string;
+  sourceLessonId?: string;
+  sourceYoutubeId?: string;
+  sourceTimestampSec?: number;
   savedAt: number;
   
   // Thuật toán Anki SM-2 Core Parameters

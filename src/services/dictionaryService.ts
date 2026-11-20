@@ -1,4 +1,4 @@
-import { WordDefinition } from '../types';
+import { ContextExplanation, WordDefinition } from '../types';
 
 // Built-in offline quick dictionary for instant zero-latency responses
 const BUILTIN_DICT: Record<string, WordDefinition> = {
@@ -114,22 +114,34 @@ const BUILTIN_DICT: Record<string, WordDefinition> = {
 
 const clientWordCache = new Map<string, WordDefinition>();
 
+export function normalizePhraseInput(rawWord: string): string {
+  const collapsed = String(rawWord || '')
+    .trim()
+    .replace(/\s+/g, ' ');
+  const trimmedPunct = collapsed.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '');
+  const words = trimmedPunct.split(' ').filter(Boolean);
+  if (words.length === 1) {
+    return trimmedPunct.replace(/['’]s$/i, '').trim().toLowerCase();
+  }
+  return words.slice(0, 8).join(' ').slice(0, 80).toLowerCase();
+}
+
 export async function lookupWord(rawWord: string): Promise<WordDefinition> {
-  // Keep internal apostrophes for contractions (e.g. "don't", "I'm", "Steve's")
-  const normalized = rawWord.trim().replace(/^[^a-zA-Z]+|[^a-zA-Z]+$/g, '');
-  const lookupTerm = normalized.replace(/['’]s$/i, '').trim();
-  const cleanWord = lookupTerm.toLowerCase();
-  
+  // Preserve internal spaces for multi-word phrases & apostrophes for contractions
+  const cleanWord = normalizePhraseInput(rawWord);
+
   if (!cleanWord) {
     throw new Error('Từ không hợp lệ');
   }
 
+  const isMultiWord = cleanWord.includes(' ');
+
   // 1. Check local dictionary & in-memory cache first
-  const simpleKey = cleanWord.replace(/[^a-zA-Z]/g, '');
+  const simpleKey = isMultiWord ? cleanWord : cleanWord.replace(/[^a-zA-Z]/g, '');
   if (BUILTIN_DICT[cleanWord]) {
     return BUILTIN_DICT[cleanWord];
   }
-  if (BUILTIN_DICT[simpleKey]) {
+  if (!isMultiWord && BUILTIN_DICT[simpleKey]) {
     return BUILTIN_DICT[simpleKey];
   }
   if (clientWordCache.has(cleanWord)) {
@@ -139,7 +151,7 @@ export async function lookupWord(rawWord: string): Promise<WordDefinition> {
   // 2. Query server-side cached master dictionary (/api/dict/lookup -> words_master DB cache)
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4500);
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
 
     const res = await fetch(`/api/dict/lookup?w=${encodeURIComponent(cleanWord)}`, {
       signal: controller.signal
@@ -151,8 +163,8 @@ export async function lookupWord(rawWord: string): Promise<WordDefinition> {
       if (data && data.word) {
         const entry: WordDefinition = {
           word: data.word,
-          phonetic: data.phonetic || `/${cleanWord}/`,
-          partOfSpeech: data.partOfSpeech || 'vocabulary',
+          phonetic: data.phonetic || (isMultiWord ? '' : `/${cleanWord}/`),
+          partOfSpeech: data.partOfSpeech || (isMultiWord ? 'phrase' : 'vocabulary'),
           translation: data.translation || cleanWord,
           definitionEn: data.definitionEn || `Meaning of "${cleanWord}"`,
           exampleEn: data.exampleEn || '',
@@ -169,12 +181,48 @@ export async function lookupWord(rawWord: string): Promise<WordDefinition> {
   // Fallback if network offline
   return {
     word: cleanWord,
-    phonetic: `/${cleanWord}/`,
-    partOfSpeech: 'từ vựng (vocabulary)',
+    phonetic: isMultiWord ? '' : `/${cleanWord}/`,
+    partOfSpeech: isMultiWord ? 'phrase' : 'từ vựng (vocabulary)',
     translation: cleanWord,
-    definitionEn: `Từ vựng tiếng Anh: "${cleanWord}"`,
+    definitionEn: isMultiWord
+      ? `Cụm từ tiếng Anh: "${cleanWord}"`
+      : `Từ vựng tiếng Anh: "${cleanWord}"`,
     exampleEn: `Tra từ điển trực tiếp trong bài học.`
   };
+}
+
+export async function explainInContext(params: {
+  phrase: string;
+  sentence: string;
+  videoTitle?: string;
+  token?: string | null;
+}): Promise<ContextExplanation> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  };
+  if (params.token) {
+    headers.Authorization = `Bearer ${params.token}`;
+  }
+
+  const res = await fetch('/api/ai/explain', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      phrase: params.phrase,
+      sentence: params.sentence,
+      videoTitle: params.videoTitle || ''
+    })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const errMsg = typeof data?.error === 'string' && data.error
+      ? data.error
+      : `Không thể giải thích bằng AI (HTTP ${res.status})`;
+    throw new Error(errMsg);
+  }
+
+  return data as ContextExplanation;
 }
 
 /**

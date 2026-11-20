@@ -8,6 +8,16 @@
 import { SavedWord, VideoLesson, AnkiUserProfile } from '../types';
 import { SpeakingScenario } from '../data/speakingScenarios';
 
+export interface PersistedRoleplayMessage {
+  id: string;
+  sender: 'AI' | 'User';
+  text: string;
+  translation?: string;
+  nativeRephrase?: string;
+  grammarTip?: string;
+  latencyMs?: number;
+}
+
 export class ScopedStorage {
   private static getPrefix(userId?: string | null): string {
     const cleanId = (userId || '').trim();
@@ -199,6 +209,35 @@ export class ScopedStorage {
       const key = `${this.getPrefix(userId)}_shorts_offsets`;
       localStorage.setItem(key, JSON.stringify(offsets));
     } catch {}
+  }
+
+  // --- Roleplay Chat History (Scoped per User, keyed by personaId) ---
+  public static getRoleplayHistory(userId?: string | null): Record<string, PersistedRoleplayMessage[]> {
+    try {
+      const key = `${this.getPrefix(userId)}_roleplay_history`;
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Record<string, PersistedRoleplayMessage[]>;
+        }
+      }
+    } catch {
+      return {};
+    }
+    return {};
+  }
+
+  public static setRoleplayHistory(
+    userId: string | null | undefined,
+    history: Record<string, PersistedRoleplayMessage[]>
+  ): void {
+    try {
+      const key = `${this.getPrefix(userId)}_roleplay_history`;
+      localStorage.setItem(key, JSON.stringify(history));
+    } catch (e) {
+      console.warn('[ScopedStorage] Error writing roleplay history:', e);
+    }
   }
 
   // --- Clean User Session Partition Caches ---

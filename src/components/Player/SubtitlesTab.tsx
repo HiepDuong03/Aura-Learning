@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { SubtitleLine } from '../../types';
-import { Play, Sparkles } from 'lucide-react';
+import { Play, Sparkles, Highlighter, X } from 'lucide-react';
 
 interface SubtitlesTabProps {
   subtitles: SubtitleLine[];
@@ -13,6 +13,10 @@ interface SubtitlesTabProps {
   onSetSubOffset?: (offsetOrUpdater: number | ((prev: number) => number)) => void;
   onSyncFullYouTube?: () => void;
   isSyncing?: boolean;
+  phraseSelectMode?: boolean;
+  onTogglePhraseSelectMode?: () => void;
+  hasPhraseAnchor?: boolean;
+  onSelectPhrase?: (phrase: string, sub: SubtitleLine, index: number) => void;
 }
 
 export const SubtitlesTab: React.FC<SubtitlesTabProps> = ({
@@ -25,12 +29,41 @@ export const SubtitlesTab: React.FC<SubtitlesTabProps> = ({
   subOffset = 0,
   onSetSubOffset,
   onSyncFullYouTube,
-  isSyncing = false
+  isSyncing = false,
+  phraseSelectMode = false,
+  onTogglePhraseSelectMode,
+  hasPhraseAnchor = false,
+  onSelectPhrase
 }) => {
+  const [dragSelection, setDragSelection] = useState<{
+    phrase: string;
+    sub: SubtitleLine;
+    index: number;
+  } | null>(null);
+
+  const handleSubtitleMouseUp = (sub: SubtitleLine, idx: number) => {
+    if (!onSelectPhrase || typeof window === 'undefined') return;
+    const rawSelection = window.getSelection()?.toString() || '';
+    const cleaned = rawSelection
+      .trim()
+      .replace(/\s+/g, ' ')
+      .replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '');
+    const words = cleaned.split(' ').filter(Boolean);
+    if (words.length >= 2 && words.length <= 6) {
+      setDragSelection({
+        phrase: cleaned,
+        sub,
+        index: idx
+      });
+    } else if (dragSelection && !cleaned) {
+      setDragSelection(null);
+    }
+  };
+
   return (
     <div className="rounded-3xl bg-white p-4 border border-slate-100 shadow-sm flex flex-col h-[520px]">
       <div className="flex items-center justify-between pb-3 border-b border-slate-100 flex-wrap gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs font-bold text-slate-500">
             {subtitles.length} câu phụ đề song ngữ
           </span>
@@ -44,6 +77,24 @@ export const SubtitlesTab: React.FC<SubtitlesTabProps> = ({
             >
               <Sparkles className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
               {isSyncing ? 'Đang tải...' : subtitles.length < 20 ? '⚡ Tải full phụ đề' : 'Làm mới phụ đề'}
+            </button>
+          )}
+          {onTogglePhraseSelectMode && (
+            <button
+              type="button"
+              onClick={() => {
+                setDragSelection(null);
+                onTogglePhraseSelectMode();
+              }}
+              className={`text-[11px] font-bold px-2.5 py-0.5 rounded-lg border transition-all flex items-center gap-1 active:scale-95 ${
+                phraseSelectMode
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                  : 'bg-indigo-50 text-indigo-700 border-indigo-200/80 hover:bg-indigo-100'
+              }`}
+              title="Bật chế độ chạm 2 từ để chọn cụm từ (idiom / phrasal verb) — hoặc bôi đen chuột trực tiếp"
+            >
+              <Highlighter className="w-3 h-3" />
+              {phraseSelectMode ? 'Đang chọn cụm từ' : 'Chọn cụm từ'}
             </button>
           )}
         </div>
@@ -101,6 +152,51 @@ export const SubtitlesTab: React.FC<SubtitlesTabProps> = ({
         )}
       </div>
 
+      {/* Immersion Keyboard Shortcut Legend & Phrase Selection Banner */}
+      <div className="pt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
+        <span>Phím tắt: <strong className="text-slate-600">A</strong> câu trước • <strong className="text-slate-600">S</strong> phát lại • <strong className="text-slate-600">D</strong> câu sau • <strong className="text-slate-600">L</strong> lặp câu • <strong className="text-slate-600">Space</strong> phát/dừng</span>
+      </div>
+
+      {phraseSelectMode && (
+        <div className="mt-2 px-3 py-2 rounded-xl bg-indigo-50 border border-indigo-200 text-xs font-semibold text-indigo-800 flex items-center justify-between">
+          <span>
+            {hasPhraseAnchor
+              ? '✨ Đã chọn từ đầu — hãy chạm từ kết thúc trong cùng câu (2–6 từ).'
+              : '✨ Chế độ chọn cụm từ: chạm từ bắt đầu, sau đó chạm từ kết thúc trong cùng câu.'}
+          </span>
+        </div>
+      )}
+
+      {/* Desktop Mouse Drag Phrase Action Bar */}
+      {dragSelection && onSelectPhrase && (
+        <div className="mt-2 px-3 py-2 rounded-xl bg-gradient-to-r from-teal-600 to-indigo-600 text-white text-xs font-bold flex items-center justify-between shadow-md">
+          <button
+            type="button"
+            onClick={() => {
+              const sel = dragSelection;
+              setDragSelection(null);
+              window.getSelection()?.removeAllRanges();
+              onSelectPhrase(sel.phrase, sel.sub, sel.index);
+            }}
+            className="flex items-center gap-1.5 hover:underline text-left"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+            <span>Tra & giải thích cụm từ: “{dragSelection.phrase}”</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDragSelection(null);
+              window.getSelection()?.removeAllRanges();
+            }}
+            className="p-1 rounded-lg hover:bg-white/20 transition-colors"
+            aria-label="Đóng thanh chọn cụm từ"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto pt-3 space-y-2.5 pr-1">
         {/* Intro notice if video is currently before the first sentence */}
         {activeSubtitleIndex === -1 && subtitles.length > 0 && (
@@ -130,7 +226,12 @@ export const SubtitlesTab: React.FC<SubtitlesTabProps> = ({
             <div
               key={sub.id}
               ref={isActive ? activeSubRef : null}
-              onClick={() => onJumpToSubtitle(sub, idx)}
+              onClick={() => {
+                // Avoid jumping when user just finished dragging a multi-word selection
+                const currentSel = typeof window !== 'undefined' ? window.getSelection()?.toString().trim() : '';
+                if (currentSel && currentSel.includes(' ')) return;
+                onJumpToSubtitle(sub, idx);
+              }}
               className={`group p-3 rounded-2xl transition-all cursor-pointer border flex items-start gap-3 relative ${
                 isActive
                   ? 'bg-teal-50/90 border-teal-500 shadow-md translate-x-1 ring-2 ring-teal-400/30'
@@ -167,7 +268,10 @@ export const SubtitlesTab: React.FC<SubtitlesTabProps> = ({
                     </span>
                   )}
                 </div>
-                <p className={`text-sm leading-relaxed ${isActive ? 'text-teal-950 font-extrabold' : 'text-slate-800 font-semibold'}`}>
+                <p
+                  onMouseUp={() => handleSubtitleMouseUp(sub, idx)}
+                  className={`text-sm leading-relaxed select-text ${isActive ? 'text-teal-950 font-extrabold' : 'text-slate-800 font-semibold'}`}
+                >
                   {renderClickableWords(sub.text, sub, idx)}
                 </p>
                 {showVietnamese && (

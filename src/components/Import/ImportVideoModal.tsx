@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { VideoLesson, SubtitleLine, AuthUser } from '../../types';
+import React, { useState, useEffect, useRef } from 'react';
+import { VideoLesson, SubtitleLine, AuthUser, QuizQuestion } from '../../types';
 import { PermissionGate } from '../Auth/PermissionGate';
 import { 
   X, 
@@ -7,7 +7,6 @@ import {
   Sparkles, 
   AlertCircle, 
   CheckCircle2, 
-  FileText, 
   Upload, 
   BookOpen, 
   Zap, 
@@ -22,6 +21,65 @@ import {
   sanitizeAndAlignCues
 } from '../../utils/subtitleParser';
 import { batchTranslateSubtitles } from '../../services/dictionaryService';
+import { authService } from '../../services/authService';
+
+const QUIZ_STOP_WORDS = new Set([
+  'about', 'after', 'again', 'because', 'could', 'every', 'first', 'going',
+  'great', 'hello', 'never', 'other', 'really', 'right', 'should', 'still',
+  'their', 'there', 'these', 'thing', 'think', 'those', 'through', 'today',
+  'under', 'using', 'very', 'water', 'where', 'which', 'while', 'would', 'youre'
+]);
+
+function buildDeterministicClozeQuizzes(subtitles: SubtitleLine[]): QuizQuestion[] {
+  const candidates = subtitles.filter((s) => s.text.split(/\s+/).length >= 5);
+  if (candidates.length === 0) return [];
+
+  const allWords = Array.from(
+    new Set(
+      candidates.flatMap((c) =>
+        c.text
+          .split(/[^a-zA-Z']+/)
+          .map((w) => w.trim())
+          .filter((w) => w.length >= 5 && !QUIZ_STOP_WORDS.has(w.toLowerCase()))
+      )
+    )
+  );
+
+  const distractorPool = ['perspective', 'challenge', 'experience', 'decision', 'moment', 'progress', 'habit', 'meaning'];
+  const step = Math.max(1, Math.floor(candidates.length / 5));
+  const quizzes: QuizQuestion[] = [];
+
+  for (let i = 0; i < candidates.length && quizzes.length < 5; i += step) {
+    const line = candidates[i];
+    const lineWords = line.text
+      .split(/[^a-zA-Z']+/)
+      .map((w) => w.trim())
+      .filter((w) => w.length >= 5 && !QUIZ_STOP_WORDS.has(w.toLowerCase()));
+    const targetWord = lineWords[0];
+    if (!targetWord) continue;
+
+    const escaped = targetWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const masked = line.text.replace(new RegExp(`\\b${escaped}\\b`, 'i'), '______');
+    if (masked === line.text) continue;
+
+    const distractors = [...allWords, ...distractorPool]
+      .filter((w) => w.toLowerCase() !== targetWord.toLowerCase())
+      .slice(0, 3);
+    const options = [targetWord, ...distractors];
+    const correctIndex = quizzes.length % options.length;
+    [options[0], options[correctIndex]] = [options[correctIndex], options[0]];
+
+    quizzes.push({
+      id: `quiz-cloze-${Date.now()}-${quizzes.length + 1}`,
+      question: `Điền từ còn thiếu trong câu thoại: "${masked}"`,
+      options,
+      correctAnswer: correctIndex,
+      explanation: `Câu gốc: "${line.text}"${line.translation && line.translation !== line.text ? ` — ${line.translation}` : ''}`
+    });
+  }
+
+  return quizzes;
+}
 
 type ImportTab = 'youtube' | 'file' | 'text';
 
@@ -228,7 +286,7 @@ export const ImportVideoModal: React.FC<ImportVideoModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -292,10 +350,50 @@ export const ImportVideoModal: React.FC<ImportVideoModalProps> = ({
 
     setIsProcessing(true);
 
-    const durationSec = finalSubtitles.length > 0 ? Math.ceil(finalSubtitles[finalSubtitles.length - 1].end) : 300;
+    const alignedSubtitles = sanitizeAndAlignCues(finalSubtitles);
+    const durationSec = alignedSubtitles.length > 0 ? Math.ceil(alignedSubtitles[alignedSubtitles.length - 1].end) : 300;
     const minutes = Math.floor(durationSec / 60);
     const seconds = durationSec % 60;
     const durationFormatted = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+
+    let generatedQuizzes: QuizQuestion[] = [];
+    if (alignedSubtitles.length >= 3) {
+      const token = authService.getToken();
+      if (currentUser && token) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 6000);
+          const quizRes = await fetch('/api/ai/generate-quiz', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              title: finalTitle,
+              subtitles: alignedSubtitles.slice(0, 60).map((s) => ({
+                text: s.text,
+                translation: s.translation
+              }))
+            }),
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          if (quizRes.ok) {
+            const quizData = await quizRes.json().catch(() => ({}));
+            if (Array.isArray(quizData.quizzes) && quizData.quizzes.length > 0) {
+              generatedQuizzes = quizData.quizzes;
+            }
+          }
+        } catch {
+          // Fall back to deterministic Cloze quizzes derived directly from the real transcript
+        }
+      }
+
+      if (generatedQuizzes.length === 0) {
+        generatedQuizzes = buildDeterministicClozeQuizzes(alignedSubtitles);
+      }
+    }
 
     const newLesson: VideoLesson = {
       id: `lesson-custom-${Date.now()}`,
@@ -311,31 +409,16 @@ export const ImportVideoModal: React.FC<ImportVideoModalProps> = ({
       duration: durationFormatted,
       durationSec,
       views: '1',
-      description: `Bài học tùy chỉnh được tạo bởi LingQ-Grade Importer với ${finalSubtitles.length} câu phụ đề song ngữ.`,
-      subtitles: sanitizeAndAlignCues(finalSubtitles),
+      description: `Bài học tùy chỉnh được tạo bởi LingQ-Grade Importer với ${alignedSubtitles.length} câu phụ đề song ngữ.`,
+      subtitles: alignedSubtitles,
       subtitleOffset: 0,
-      quizzes: [
-        {
-          id: `quiz-imp-1`,
-          question: `What is the main purpose of this study session?`,
-          options: [
-            'To practice English listening, vocabulary, and shadowing',
-            'To memorize grammar rules only',
-            'To play background music',
-            'Nothing at all'
-          ],
-          correctAnswer: 0,
-          explanation: 'Interactive subtitles allow you to click any word for instant definitions and LingQ spaced repetition review.'
-        }
-      ]
+      quizzes: generatedQuizzes
     };
 
-    setTimeout(() => {
-      setIsProcessing(false);
-      onImportLesson(newLesson);
-      confetti({ particleCount: 70, spread: 60 });
-      onClose();
-    }, 400);
+    setIsProcessing(false);
+    onImportLesson(newLesson);
+    confetti({ particleCount: 70, spread: 60 });
+    onClose();
   };
 
   return (

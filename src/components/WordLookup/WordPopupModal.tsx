@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { WordDefinition, LingQWordStatus } from '../../types';
-import { Volume2, Bookmark, BookmarkCheck, X, Sparkles } from 'lucide-react';
-import { speakWord } from '../../services/dictionaryService';
+import { AuthUser, ContextExplanation, WordDefinition, LingQWordStatus } from '../../types';
+import { Volume2, Bookmark, BookmarkCheck, X, Sparkles, Loader2, Lock } from 'lucide-react';
+import { explainInContext, speakWord } from '../../services/dictionaryService';
 import { lingqWordService } from '../../services/lingqWordService';
+import { authService } from '../../services/authService';
 
 interface WordPopupModalProps {
   definition: WordDefinition | null;
@@ -11,6 +12,9 @@ interface WordPopupModalProps {
   onSaveWord: (def: WordDefinition) => void;
   isSaved: boolean;
   contextSentence?: string;
+  videoTitle?: string;
+  currentUser?: AuthUser | null;
+  onOpenAuth?: () => void;
 }
 
 export const WordPopupModal: React.FC<WordPopupModalProps> = ({
@@ -19,15 +23,24 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
   onClose,
   onSaveWord,
   isSaved,
-  contextSentence
+  contextSentence,
+  videoTitle,
+  currentUser = null,
+  onOpenAuth
 }) => {
   const [currentStatus, setCurrentStatus] = useState<LingQWordStatus>(0);
+  const [aiExplanation, setAiExplanation] = useState<ContextExplanation | null>(null);
+  const [isExplaining, setIsExplaining] = useState<boolean>(false);
+  const [explainError, setExplainError] = useState<string>('');
 
   useEffect(() => {
     if (definition?.word) {
       setCurrentStatus(lingqWordService.getWordStatus(definition.word));
+      setAiExplanation(null);
+      setExplainError('');
+      setIsExplaining(false);
     }
-  }, [definition?.word]);
+  }, [definition?.word, contextSentence]);
 
   const handleSetStatus = (status: LingQWordStatus) => {
     if (!definition?.word) return;
@@ -35,10 +48,39 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
     lingqWordService.setWordStatus(definition.word, status);
   };
 
-  // Keyboard shortcuts 1, 2, 3, 4, K
+  const handleRequestAiExplain = async () => {
+    if (!definition?.word) return;
+    if (!currentUser) {
+      if (onOpenAuth) onOpenAuth();
+      return;
+    }
+
+    setIsExplaining(true);
+    setExplainError('');
+    try {
+      const result = await explainInContext({
+        phrase: definition.word,
+        sentence: contextSentence || definition.exampleEn || '',
+        videoTitle: videoTitle || '',
+        token: authService.getToken()
+      });
+      setAiExplanation(result);
+    } catch (err) {
+      setExplainError(err instanceof Error ? err.message : 'Không thể gọi AI giải thích lúc này.');
+    } finally {
+      setIsExplaining(false);
+    }
+  };
+
+  // Keyboard shortcuts 1, 2, 3, 4, K, Escape
   useEffect(() => {
     if (!isOpen || !definition) return;
     const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+        return;
+      }
       if (['1', '2', '3', '4'].includes(e.key)) {
         e.preventDefault();
         handleSetStatus(Number(e.key) as LingQWordStatus);
@@ -49,17 +91,19 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [isOpen, definition]);
+  }, [isOpen, definition, onClose]);
 
   if (!isOpen || !definition) return null;
 
+  const isMultiWordPhrase = definition.word.trim().includes(' ');
+
   return (
-    <div 
+    <div
       onClick={onClose}
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in cursor-pointer"
     >
-      <div 
-        className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl border border-slate-100 transition-all transform scale-100 animate-in fade-in zoom-in-95 duration-200 cursor-default"
+      <div
+        className="relative w-full max-w-md max-h-[90vh] overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl border border-slate-100 transition-all transform scale-100 animate-in fade-in zoom-in-95 duration-200 cursor-default"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close Button */}
@@ -71,16 +115,21 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
           <X className="w-5 h-5" />
         </button>
 
-        {/* Header: Word & Audio */}
-        <div className="flex items-start justify-between pr-8">
+        {/* Header: Word / Phrase & Audio */}
+        <div className="flex items-start justify-between pr-8 gap-2">
           <div>
+            {isMultiWordPhrase && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 mb-1.5">
+                <Sparkles className="w-3 h-3" /> Cụm từ / Idiom
+              </span>
+            )}
             <div className="flex items-center gap-3">
-              <h2 className="text-2xl font-black text-slate-900 tracking-tight capitalize">
+              <h2 className="text-2xl font-black text-slate-900 tracking-tight capitalize leading-tight">
                 {definition.word}
               </h2>
               <button
                 onClick={() => speakWord(definition.word)}
-                className="p-2 rounded-full bg-teal-50 text-teal-600 hover:bg-teal-100 hover:scale-105 active:scale-95 transition-all"
+                className="p-2 rounded-full bg-teal-50 text-teal-600 hover:bg-teal-100 hover:scale-105 active:scale-95 transition-all shrink-0"
                 title="Phát âm tiếng Anh"
               >
                 <Volume2 className="w-5 h-5" />
@@ -92,8 +141,8 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
               </p>
             )}
           </div>
-          
-          <span className="text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">
+
+          <span className="text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 shrink-0">
             {definition.partOfSpeech}
           </span>
         </div>
@@ -102,7 +151,7 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
         <div className="mt-4 p-3.5 rounded-2xl bg-teal-50/80 border border-teal-100/80">
           <p className="text-xs font-bold uppercase tracking-wider text-teal-700">Ý nghĩa tiếng Việt</p>
           <p className="text-lg font-bold text-teal-950 mt-0.5">
-            {definition.translation}
+            {aiExplanation?.meaningVi || definition.translation}
           </p>
         </div>
 
@@ -126,6 +175,71 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
               </p>
             </div>
           )}
+
+          {/* AI Contextual Explanation Panel */}
+          <div className="pt-2">
+            {!aiExplanation ? (
+              <button
+                type="button"
+                onClick={handleRequestAiExplain}
+                disabled={isExplaining}
+                className="w-full py-2.5 px-3.5 rounded-xl bg-gradient-to-r from-indigo-50 to-purple-50 hover:from-indigo-100 hover:to-purple-100 border border-indigo-200/80 text-indigo-800 text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-60"
+              >
+                {isExplaining ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+                    <span>AI đang phân tích sắc thái ngữ cảnh...</span>
+                  </>
+                ) : currentUser ? (
+                  <>
+                    <Sparkles className="w-4 h-4 text-indigo-600" />
+                    <span>✨ Giải thích bằng AI theo ngữ cảnh câu</span>
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>Đăng nhập để dùng AI giải thích theo ngữ cảnh</span>
+                  </>
+                )}
+              </button>
+            ) : (
+              <div className="p-3.5 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-black text-indigo-900 flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" /> Phân tích AI theo ngữ cảnh
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white text-indigo-700 border border-indigo-200">
+                    {aiExplanation.isFallback ? 'Offline Guide' : 'Live Gemini'}
+                  </span>
+                </div>
+                {aiExplanation.nuance && (
+                  <p className="text-slate-700 leading-relaxed">
+                    <strong className="text-indigo-900">Sắc thái:</strong> {aiExplanation.nuance}
+                  </p>
+                )}
+                {aiExplanation.grammarNote && (
+                  <p className="text-slate-700 leading-relaxed">
+                    <strong className="text-indigo-900">Ngữ pháp:</strong> {aiExplanation.grammarNote}
+                  </p>
+                )}
+                {Array.isArray(aiExplanation.examples) && aiExplanation.examples.length > 0 && (
+                  <div className="pt-1 space-y-1.5 border-t border-indigo-200/60">
+                    <p className="font-bold text-indigo-800">Ví dụ ứng dụng:</p>
+                    {aiExplanation.examples.slice(0, 2).map((ex, idx) => (
+                      <div key={idx} className="bg-white/80 rounded-lg p-2 border border-indigo-100">
+                        <p className="font-semibold text-slate-800">“{ex.en}”</p>
+                        {ex.vi && <p className="text-slate-500 italic mt-0.5">{ex.vi}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {explainError && (
+              <p className="mt-1.5 text-[11px] font-semibold text-rose-600">{explainError}</p>
+            )}
+          </div>
 
           {/* Synonyms */}
           {definition.synonyms && definition.synonyms.length > 0 && (
@@ -165,8 +279,8 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
                 type="button"
                 onClick={() => handleSetStatus(item.status as LingQWordStatus)}
                 className={`py-1.5 px-1 rounded-lg text-center transition-all ${
-                  currentStatus === item.status 
-                    ? item.active 
+                  currentStatus === item.status
+                    ? item.active
                     : 'bg-white text-slate-600 hover:bg-slate-200/80 active:scale-95'
                 }`}
                 title={`Đặt trạng thái (Phím tắt: ${item.status})`}
@@ -182,7 +296,10 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
         <div className="mt-5 pt-1">
           <button
             onClick={() => {
-              onSaveWord(definition);
+              const enrichedDef: WordDefinition = aiExplanation?.meaningVi
+                ? { ...definition, translation: aiExplanation.meaningVi }
+                : definition;
+              onSaveWord(enrichedDef);
               if (currentStatus === 0) {
                 handleSetStatus(1);
               }
@@ -196,7 +313,7 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
             {isSaved ? (
               <>
                 <BookmarkCheck className="w-5 h-5" />
-                Đã lưu vào Vườn từ vựng (SRS)
+                Đã lưu vào Kho từ vựng (SRS)
               </>
             ) : (
               <>

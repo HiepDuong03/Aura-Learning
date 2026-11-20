@@ -193,7 +193,10 @@ class LocalFileDbAdapter {
         translation: note?.customTranslation || master?.defaultTranslationVi || '',
         definitionEn: master?.definitionEn || '',
         contextSentence: note?.contextSentence || '',
-        videoTitle: note?.sourceLessonId || 'Lesson',
+        videoTitle: note?.sourceVideoTitle || note?.sourceLessonId || 'Lesson',
+        sourceLessonId: note?.sourceLessonKey || undefined,
+        sourceYoutubeId: note?.sourceYoutubeId || undefined,
+        sourceTimestampSec: typeof note?.sourceTimestampSec === 'number' ? note.sourceTimestampSec : undefined,
         savedAt: card.createdAt,
         easeFactor: card.easeFactor,
         interval: card.intervalDays,
@@ -268,7 +271,11 @@ class LocalFileDbAdapter {
         wordId,
         customTranslation: inc.translation || existingNote?.customTranslation || '',
         contextSentence: inc.contextSentence || existingNote?.contextSentence || '',
+        sourceVideoTitle: inc.videoTitle || existingNote?.sourceVideoTitle || existingNote?.sourceLessonId || 'YouTube Lesson',
         sourceLessonId: inc.videoTitle || existingNote?.sourceLessonId || 'YouTube Lesson',
+        sourceLessonKey: inc.sourceLessonId || existingNote?.sourceLessonKey || undefined,
+        sourceYoutubeId: inc.sourceYoutubeId || existingNote?.sourceYoutubeId || undefined,
+        sourceTimestampSec: typeof inc.sourceTimestampSec === 'number' ? inc.sourceTimestampSec : existingNote?.sourceTimestampSec,
         createdAt: existingNote?.createdAt || inc.savedAt || now,
         updatedAt: now
       };
@@ -551,6 +558,9 @@ class PostgresDbAdapter {
 
         ALTER TABLE words_master ADD COLUMN IF NOT EXISTS example_en TEXT;
         ALTER TABLE words_master ADD COLUMN IF NOT EXISTS synonyms_json TEXT;
+        ALTER TABLE user_vocabulary_notes ADD COLUMN IF NOT EXISTS source_video_title VARCHAR(255);
+        ALTER TABLE user_vocabulary_notes ADD COLUMN IF NOT EXISTS source_youtube_id VARCHAR(64);
+        ALTER TABLE user_vocabulary_notes ADD COLUMN IF NOT EXISTS source_timestamp_sec FLOAT;
 
         CREATE TABLE IF NOT EXISTS user_learning_state (
           user_id VARCHAR(128) PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -697,7 +707,7 @@ class PostgresDbAdapter {
       SELECT
         c.id, c.state, c.ease_factor, c.interval_days, c.repetitions, c.lapses,
         c.due_at, c.last_reviewed_at, c.usn, c.created_at, c.profile_id,
-        n.custom_translation, n.context_sentence, n.source_lesson_id,
+        n.custom_translation, n.context_sentence, n.source_lesson_id, n.source_video_title, n.source_youtube_id, n.source_timestamp_sec,
         w.lemma, w.phonetic, w.part_of_speech, w.default_translation_vi, w.definition_en
       FROM srs_cards c
       JOIN user_vocabulary_notes n ON n.id = c.note_id
@@ -714,7 +724,10 @@ class PostgresDbAdapter {
       translation: r.custom_translation || r.default_translation_vi || '',
       definitionEn: r.definition_en || '',
       contextSentence: r.context_sentence || '',
-      videoTitle: r.source_lesson_id || 'Lesson',
+      videoTitle: r.source_video_title || r.source_lesson_id || 'Lesson',
+      sourceLessonId: r.source_lesson_id || undefined,
+      sourceYoutubeId: r.source_youtube_id || undefined,
+      sourceTimestampSec: r.source_timestamp_sec !== null && r.source_timestamp_sec !== undefined ? Number(r.source_timestamp_sec) : undefined,
       savedAt: Number(r.created_at),
       easeFactor: Number(r.ease_factor),
       interval: Number(r.interval_days),
@@ -774,12 +787,15 @@ class PostgresDbAdapter {
 
         const noteId = `note_${userId}_${wordId}`;
         await client.query(`
-          INSERT INTO user_vocabulary_notes (id, user_id, profile_id, word_id, custom_translation, context_sentence, source_lesson_id, created_at, updated_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          INSERT INTO user_vocabulary_notes (id, user_id, profile_id, word_id, custom_translation, context_sentence, source_lesson_id, source_video_title, source_youtube_id, source_timestamp_sec, created_at, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
           ON CONFLICT (id) DO UPDATE SET
             custom_translation = COALESCE(NULLIF(EXCLUDED.custom_translation, ''), user_vocabulary_notes.custom_translation),
             context_sentence = COALESCE(NULLIF(EXCLUDED.context_sentence, ''), user_vocabulary_notes.context_sentence),
             source_lesson_id = COALESCE(NULLIF(EXCLUDED.source_lesson_id, ''), user_vocabulary_notes.source_lesson_id),
+            source_video_title = COALESCE(NULLIF(EXCLUDED.source_video_title, ''), user_vocabulary_notes.source_video_title),
+            source_youtube_id = COALESCE(NULLIF(EXCLUDED.source_youtube_id, ''), user_vocabulary_notes.source_youtube_id),
+            source_timestamp_sec = COALESCE(EXCLUDED.source_timestamp_sec, user_vocabulary_notes.source_timestamp_sec),
             updated_at = EXCLUDED.updated_at
         `, [
           noteId,
@@ -788,7 +804,10 @@ class PostgresDbAdapter {
           wordId,
           inc.translation || '',
           inc.contextSentence || '',
+          inc.sourceLessonId || inc.videoTitle || 'YouTube Lesson',
           inc.videoTitle || 'YouTube Lesson',
+          inc.sourceYoutubeId || null,
+          typeof inc.sourceTimestampSec === 'number' ? inc.sourceTimestampSec : null,
           inc.savedAt || now,
           now
         ]);

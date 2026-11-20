@@ -12,11 +12,13 @@ import {
   Zap,
   Mic,
   Activity,
-  Layers
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { speakWord } from '../../services/dictionaryService';
 import { authService } from '../../services/authService';
+import { ScopedStorage, PersistedRoleplayMessage } from '../../services/scopedStorage';
 import { AuthUser } from '../../types';
 import { useNotify } from '../Common/ToastProvider';
 import { GuidedSpeakingCard, ReflexScaffoldingStep } from './GuidedSpeakingCard';
@@ -31,6 +33,7 @@ interface RapidSpeakingRoomProps {
   onAddCustomScenario: (scenario: SpeakingScenario) => void;
   currentUser?: AuthUser | null;
   onOpenAuth?: () => void;
+  onRoleplayHistoryChange?: (history: Record<string, PersistedRoleplayMessage[]>) => void;
 }
 
 const AI_PERSONAS: RoleplayPersona[] = [
@@ -83,7 +86,8 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
   onBack,
   onAddCustomScenario,
   currentUser,
-  onOpenAuth
+  onOpenAuth,
+  onRoleplayHistoryChange
 }) => {
   const { toast } = useNotify();
   const [activeTab, setActiveTab] = useState<'guided' | 'roleplay'>('guided');
@@ -119,6 +123,8 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
   const [turnStartTime, setTurnStartTime] = useState<number>(Date.now());
   const [isCustomModalOpen, setIsCustomModalOpen] = useState<boolean>(false);
   const [customTopic, setCustomTopic] = useState<string>('');
+  const [customLevel, setCustomLevel] = useState<CEFRLevel>('B1');
+  const [isGeneratingScenario, setIsGeneratingScenario] = useState<boolean>(false);
   const [isScenarioComplete, setIsScenarioComplete] = useState<boolean>(false);
 
   // SuperChinese & ELSA REA Upgraded States
@@ -153,21 +159,40 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
 
   const currentTurn = selectedScenario.turns[currentTurnIndex] || selectedScenario.turns[0];
 
-  // Initialize Roleplay with initial message
+  // Helper to persist Roleplay conversation per personaId in ScopedStorage & notify App sync
+  const persistRoleplayForPersona = (personaId: string, messages: ChatMessage[]) => {
+    const trimmed = messages.slice(-40);
+    const allHistory = ScopedStorage.getRoleplayHistory(currentUser?.id);
+    const updatedHistory: Record<string, PersistedRoleplayMessage[]> = {
+      ...allHistory,
+      [personaId]: trimmed
+    };
+    ScopedStorage.setRoleplayHistory(currentUser?.id, updatedHistory);
+    onRoleplayHistoryChange?.(updatedHistory);
+  };
+
+  // Load persisted Roleplay history per persona (or seed with initial greeting)
   useEffect(() => {
     if (activeTab === 'roleplay') {
-      setRoleplayMessages([
-        {
-          id: 'init-1',
-          sender: 'AI',
-          text: selectedPersona.initialMessage,
-          translation: selectedPersona.initialTranslation
-        }
-      ]);
+      const savedMap = ScopedStorage.getRoleplayHistory(currentUser?.id);
+      const savedForPersona = savedMap[selectedPersona.id];
+      if (Array.isArray(savedForPersona) && savedForPersona.length > 0) {
+        setRoleplayMessages(savedForPersona);
+      } else {
+        const seed: ChatMessage[] = [
+          {
+            id: 'init-1',
+            sender: 'AI',
+            text: selectedPersona.initialMessage,
+            translation: selectedPersona.initialTranslation
+          }
+        ];
+        setRoleplayMessages(seed);
+        speakWord(selectedPersona.initialMessage, 'en', 0.95);
+      }
       setRoleplayStartTime(Date.now());
-      speakWord(selectedPersona.initialMessage, 'en', 0.95);
     }
-  }, [activeTab, selectedPersona]);
+  }, [activeTab, selectedPersona, currentUser?.id]);
 
   // Update selectedScenario if level or category changes and current selection is invalid
   useEffect(() => {
@@ -407,6 +432,7 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
 
     const nextHistory = [...roleplayMessages, userMsg];
     setRoleplayMessages(nextHistory);
+    persistRoleplayForPersona(selectedPersona.id, nextHistory);
     setRoleplayInput('');
     setIsAiThinking(true);
 
@@ -449,18 +475,22 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
         );
       }
 
-      setRoleplayMessages(prev => [
-        ...prev.map(m =>
-          m.id === userMsgId
-            ? { ...m, nativeRephrase: data.nativeRephrase, grammarTip: data.grammarTip }
-            : m
-        ),
-        {
-          id: `ai-${Date.now()}`,
-          sender: 'AI',
-          text: data.reply || 'Could you elaborate on that?'
-        }
-      ]);
+      setRoleplayMessages(prev => {
+        const updated: ChatMessage[] = [
+          ...prev.map(m =>
+            m.id === userMsgId
+              ? { ...m, nativeRephrase: data.nativeRephrase, grammarTip: data.grammarTip }
+              : m
+          ),
+          {
+            id: `ai-${Date.now()}`,
+            sender: 'AI',
+            text: data.reply || 'Could you elaborate on that?'
+          }
+        ];
+        persistRoleplayForPersona(selectedPersona.id, updated);
+        return updated;
+      });
 
       setRoleplayStartTime(Date.now());
       if (data.reply) {
@@ -624,10 +654,13 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
               <span>{levelScenarios.length} tình huống thực chiến:</span>
               <button
                 type="button"
-                onClick={() => setIsCustomModalOpen(true)}
+                onClick={() => {
+                  setCustomLevel(selectedLevel);
+                  setIsCustomModalOpen(true);
+                }}
                 className="text-orange-600 hover:text-orange-700 flex items-center gap-1 font-bold"
               >
-                <Plus className="w-3.5 h-3.5" /> Tạo tình huống mới
+                <Plus className="w-3.5 h-3.5" /> Tạo tình huống mới (AI)
               </button>
             </div>
 
@@ -726,14 +759,16 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
           isRecording={isRecording}
           onToggleRecording={toggleRecording}
           onRestartChat={() => {
-            setRoleplayMessages([
+            const resetSeed: ChatMessage[] = [
               {
                 id: `init-${Date.now()}`,
                 sender: 'AI',
                 text: selectedPersona.initialMessage,
                 translation: selectedPersona.initialTranslation
               }
-            ]);
+            ];
+            setRoleplayMessages(resetSeed);
+            persistRoleplayForPersona(selectedPersona.id, resetSeed);
             speakWord(selectedPersona.initialMessage, 'en', 0.95);
           }}
           onSpeakText={(t) => speakWord(t, 'en', 0.95)}
@@ -772,54 +807,147 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
                   type="text"
                   value={customTopic}
                   onChange={(e) => setCustomTopic(e.target.value)}
-                  placeholder="Ví dụ: Đổi trả hàng tại siêu thị, Hỏi đường đi ga tàu..."
+                  placeholder="Ví dụ: Đổi trả hàng tại siêu thị, Đàm phán tăng lương..."
                   className="w-full p-3 rounded-2xl border border-slate-200 text-sm focus:border-teal-500 outline-none"
                 />
               </div>
 
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">Trình độ CEFR mục tiêu:</label>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {(['A1', 'A2', 'B1', 'B2', 'C1'] as CEFRLevel[]).map((lvl) => (
+                    <button
+                      key={lvl}
+                      type="button"
+                      onClick={() => setCustomLevel(lvl)}
+                      className={`py-2 rounded-xl text-xs font-black border transition-all ${
+                        customLevel === lvl
+                          ? 'bg-teal-600 text-white border-teal-600 shadow-xs'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {lvl}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <button
                 type="button"
-                disabled={!customTopic.trim()}
-                onClick={() => {
-                  const newSc: SpeakingScenario = {
-                    id: `custom-${Date.now()}`,
-                    level: selectedLevel,
-                    title: customTopic.trim(),
-                    category: 'Xã giao',
-                    description: `Tình huống luyện tập tự tạo: ${customTopic}`,
-                    icon: '🎯',
-                    targetGoal: `Hoàn thành cuộc trò chuyện về ${customTopic}`,
-                    turns: [
-                      {
-                        id: 'c-1',
-                        speaker: 'AI',
-                        speakerName: 'Alex',
-                        avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop',
-                        text: `Hello! I see you want to discuss about ${customTopic}. How can I assist you with that?`,
-                        translation: `Xin chào! Tôi thấy bạn muốn trao đổi về ${customTopic}. Tôi có thể giúp gì cho bạn?`,
-                        expectedKeywords: ['assist', 'help', 'discuss']
-                      },
-                      {
-                        id: 'c-2',
-                        speaker: 'User',
-                        speakerName: 'Bạn',
-                        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop',
-                        text: `I would like to explain my situation regarding ${customTopic}.`,
-                        translation: `Tôi muốn trình bày tình huống của mình về ${customTopic}.`,
-                        hintPrompt: `Nói rằng bạn muốn trình bày về ${customTopic}`,
-                        expectedKeywords: ['would', 'like', 'explain']
+                disabled={!customTopic.trim() || isGeneratingScenario}
+                onClick={async () => {
+                  const topicClean = customTopic.trim();
+                  if (!topicClean) return;
+
+                  setIsGeneratingScenario(true);
+                  let generatedScenario: SpeakingScenario | null = null;
+                  const token = authService.getToken();
+
+                  if (currentUser && token) {
+                    try {
+                      const res = await fetch('/api/ai/generate-scenario', {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          Authorization: `Bearer ${token}`
+                        },
+                        body: JSON.stringify({
+                          topic: topicClean,
+                          level: customLevel,
+                          category: 'Xã giao'
+                        })
+                      });
+                      const data = await res.json().catch(() => ({}));
+                      if (res.ok && data?.scenario && Array.isArray(data.scenario.turns) && data.scenario.turns.length >= 2) {
+                        generatedScenario = data.scenario as SpeakingScenario;
+                        toast.success(
+                          data.isFallback
+                            ? `Đã khởi tạo kịch bản 6 lượt (${customLevel}) cho "${topicClean}".`
+                            : `AI đã thiết kế kịch bản ${generatedScenario.turns.length} lượt (${customLevel})!`
+                        );
+                      } else if (!res.ok) {
+                        toast.info(data?.error || 'Đang dùng mẫu hội thoại 6 lượt cục bộ.');
                       }
-                    ]
-                  };
-                  onAddCustomScenario(newSc);
-                  setSelectedScenario(newSc);
+                    } catch {
+                      toast.info('Mạng AI tạm gián đoạn — đang tạo kịch bản cục bộ.');
+                    }
+                  }
+
+                  if (!generatedScenario) {
+                    generatedScenario = {
+                      id: `custom-${Date.now()}`,
+                      level: customLevel,
+                      title: topicClean,
+                      category: 'Xã giao',
+                      description: `Tình huống phản xạ (${customLevel}): ${topicClean}`,
+                      icon: '🎯',
+                      targetGoal: `Hoàn thành hội thoại tự tin về "${topicClean}" ở mức ${customLevel}`,
+                      turns: [
+                        {
+                          id: 'c-1',
+                          speaker: 'AI',
+                          speakerName: 'Alex',
+                          avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop',
+                          text: `Hi there! Let's talk about ${topicClean}. What brings you here today?`,
+                          translation: `Chào bạn! Hãy cùng trao đổi về ${topicClean}. Hôm nay bạn cần gì?`,
+                          expectedKeywords: ['talk', 'today']
+                        },
+                        {
+                          id: 'c-2',
+                          speaker: 'User',
+                          speakerName: 'Bạn',
+                          avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop',
+                          text: `Thanks for asking. I'd like to discuss ${topicClean} and explain my situation.`,
+                          translation: `Cảm ơn bạn đã hỏi. Tôi muốn trao đổi về ${topicClean} và trình bày tình huống của mình.`,
+                          hintPrompt: `Giới thiệu mục đích trao đổi về ${topicClean}`,
+                          expectedKeywords: ['discuss', 'explain', 'situation']
+                        },
+                        {
+                          id: 'c-3',
+                          speaker: 'AI',
+                          speakerName: 'Alex',
+                          avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop',
+                          text: 'Sure, I understand. What specific details or preferences should I know about?',
+                          translation: 'Chắc chắn rồi, tôi hiểu. Có chi tiết hoặc yêu cầu cụ thể nào tôi nên biết không?',
+                          expectedKeywords: ['specific', 'details']
+                        },
+                        {
+                          id: 'c-4',
+                          speaker: 'User',
+                          speakerName: 'Bạn',
+                          avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop',
+                          text: 'My main priority is getting a quick and practical solution today.',
+                          translation: 'Ưu tiên chính của tôi là có một giải pháp nhanh và thiết thực hôm nay.',
+                          hintPrompt: 'Nêu ưu tiên chính của bạn một cách rõ ràng',
+                          expectedKeywords: ['priority', 'practical', 'solution']
+                        }
+                      ]
+                    };
+                  }
+
+                  setIsGeneratingScenario(false);
+                  setSelectedLevel(generatedScenario.level);
+                  setSelectedCategory('Tất cả');
+                  onAddCustomScenario(generatedScenario);
+                  setSelectedScenario(generatedScenario);
                   setCurrentTurnIndex(0);
+                  setIsScenarioComplete(false);
                   setIsCustomModalOpen(false);
                   setCustomTopic('');
                 }}
-                className="w-full py-3.5 rounded-2xl btn-3d btn-3d-teal font-black text-sm disabled:opacity-50"
+                className="w-full py-3.5 rounded-2xl btn-3d btn-3d-teal font-black text-sm disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                Tạo và bắt đầu luyện ngay
+                {isGeneratingScenario ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>AI đang viết kịch bản {customLevel}...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    <span>{currentUser ? `✨ Tạo kịch bản 6 lượt bằng AI (${customLevel})` : 'Tạo và bắt đầu luyện ngay'}</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

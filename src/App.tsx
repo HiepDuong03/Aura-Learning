@@ -13,16 +13,16 @@ import { SPEAKING_SCENARIOS, SpeakingScenario } from './data/speakingScenarios';
 import { lookupWord } from './services/dictionaryService';
 import { ankiDb, DEFAULT_PROFILE } from './services/ankiDatabase';
 import { authService } from './services/authService';
-import { ScopedStorage } from './services/scopedStorage';
+import { ScopedStorage, PersistedRoleplayMessage } from './services/scopedStorage';
 import { loadYouTubeIframeAPI } from './services/youtubeLoader';
 import { ProductionErrorBoundary } from './components/Common/ProductionErrorBoundary';
 import { LoadingFallback } from './components/Common/LoadingFallback';
 import { useNotify } from './components/Common/ToastProvider';
-import { BookOpen } from 'lucide-react';
 
 import { VideoStudyRoom } from './components/Player/VideoStudyRoom';
 import { ShortsView } from './components/Shorts/ShortsView';
 import { VocabularyReview } from './components/Review/VocabularyReview';
+import { WordVaultScreen } from './components/Vocabulary/WordVaultScreen';
 import { WordGarden } from './components/Garden/WordGarden';
 import { RapidSpeakingRoom } from './components/Speaking/RapidSpeakingRoom';
 import { ProfileScreen } from './components/Profile/ProfileScreen';
@@ -43,15 +43,22 @@ export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
   const [currentLesson, setCurrentLesson] = useState<VideoLesson | null>(null);
   const [currentLessonMode, setCurrentLessonMode] = useState<'subtitles' | 'dictation' | 'shadowing' | 'quiz'>('subtitles');
+  const [initialVideoTimestampSec, setInitialVideoTimestampSec] = useState<number | undefined>(undefined);
 
   const handleSelectLesson = (
     lesson: VideoLesson, 
-    mode: 'subtitles' | 'dictation' | 'shadowing' | 'quiz' = 'subtitles'
+    mode: 'subtitles' | 'dictation' | 'shadowing' | 'quiz' = 'subtitles',
+    startTimestampSec?: number
   ) => {
     const mock = MOCK_LESSONS.find((m) => m.id === lesson.id);
     const freshLesson = mock && (!lesson.subtitles || lesson.subtitles.length < mock.subtitles.length)
       ? { ...lesson, subtitles: mock.subtitles, quizzes: mock.quizzes, duration: mock.duration, durationSec: mock.durationSec }
       : lesson;
+    setInitialVideoTimestampSec(
+      typeof startTimestampSec === 'number' && Number.isFinite(startTimestampSec) && startTimestampSec >= 0
+        ? startTimestampSec
+        : undefined
+    );
     setCurrentLesson(freshLesson);
     setCurrentLessonMode(mode);
   };
@@ -113,6 +120,15 @@ export const App: React.FC = () => {
     }
   });
 
+  const [roleplayHistory, setRoleplayHistory] = useState<Record<string, PersistedRoleplayMessage[]>>(() => {
+    try {
+      const user = authService.getCurrentUser();
+      return ScopedStorage.getRoleplayHistory(user?.id);
+    } catch {
+      return {};
+    }
+  });
+
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isImportOpen, setIsImportOpen] = useState<boolean>(false);
 
@@ -162,6 +178,10 @@ export const App: React.FC = () => {
       if (cloudState.shortsOffsets && typeof cloudState.shortsOffsets === 'object') {
         ScopedStorage.setShortsOffsets(user.id, cloudState.shortsOffsets);
       }
+      if (cloudState.roleplayHistory && typeof cloudState.roleplayHistory === 'object') {
+        setRoleplayHistory(cloudState.roleplayHistory);
+        ScopedStorage.setRoleplayHistory(user.id, cloudState.roleplayHistory);
+      }
     }
   };
 
@@ -197,6 +217,7 @@ export const App: React.FC = () => {
     setLessons(MOCK_LESSONS);
     setScenarios(SPEAKING_SCENARIOS);
     setStreakDays(ScopedStorage.getStreakDays(null));
+    setRoleplayHistory(ScopedStorage.getRoleplayHistory(null));
   };
 
   // Sequential Boot Hydration: prevents race conditions between session verification, IndexedDB init, and cloud sync
@@ -397,13 +418,14 @@ export const App: React.FC = () => {
             scenarios,
             streakDays,
             customShorts: ScopedStorage.getCustomShorts(currentUser.id),
-            shortsOffsets: ScopedStorage.getShortsOffsets(currentUser.id)
+            shortsOffsets: ScopedStorage.getShortsOffsets(currentUser.id),
+            roleplayHistory
           }
         })
       }).catch(console.warn);
     }, 1500);
     return () => clearTimeout(timer);
-  }, [scenarios, streakDays, currentUser, isBootHydrated]);
+  }, [scenarios, streakDays, roleplayHistory, currentUser, isBootHydrated]);
 
   // Real-world daily streak tracking based on calendar date
   useEffect(() => {
@@ -437,29 +459,43 @@ export const App: React.FC = () => {
     isOpen: boolean;
     definition: WordDefinition | null;
     contextSentence: string;
+    sourceLessonId?: string;
+    sourceYoutubeId?: string;
+    sourceTimestampSec?: number;
   }>({
     isOpen: false,
     definition: null,
     contextSentence: ''
   });
 
-  // Handle clicking any word in subtitle or garden
-  const handleSelectWord = async (word: string, contextSentence: string = '') => {
+  // Handle clicking any word or phrase in subtitle, shorts, or garden
+  const handleSelectWord = async (
+    word: string,
+    contextSentence: string = '',
+    meta?: { lessonId?: string; youtubeId?: string; timestampSec?: number }
+  ) => {
     const trimmed = word.trim();
     if (!trimmed) return;
+
+    const resolvedLessonId = meta?.lessonId ?? currentLesson?.id;
+    const resolvedYoutubeId = meta?.youtubeId ?? currentLesson?.youtubeId;
+    const resolvedTimestampSec = meta?.timestampSec;
 
     // 1. Immediately open modal with responsive state (< 0ms UI latency)
     setWordModal({
       isOpen: true,
       definition: {
         word: trimmed,
-        phonetic: `/${trimmed.toLowerCase()}/`,
+        phonetic: trimmed.includes(' ') ? '' : `/${trimmed.toLowerCase()}/`,
         partOfSpeech: 'đang tra...',
         translation: 'Đang tải bản dịch...',
         definitionEn: `Đang tra cứu từ điển cho "${trimmed}"...`,
         exampleEn: contextSentence
       },
-      contextSentence
+      contextSentence,
+      sourceLessonId: resolvedLessonId,
+      sourceYoutubeId: resolvedYoutubeId,
+      sourceTimestampSec: resolvedTimestampSec
     });
 
     try {
@@ -476,8 +512,8 @@ export const App: React.FC = () => {
         isOpen: true,
         definition: {
           word: trimmed,
-          phonetic: `/${trimmed.toLowerCase()}/`,
-          partOfSpeech: 'từ vựng (vocab)',
+          phonetic: trimmed.includes(' ') ? '' : `/${trimmed.toLowerCase()}/`,
+          partOfSpeech: trimmed.includes(' ') ? 'phrase' : 'từ vựng (vocab)',
           translation: trimmed,
           definitionEn: `Từ vựng trong bài học: "${trimmed}"`,
           exampleEn: contextSentence
@@ -498,13 +534,16 @@ export const App: React.FC = () => {
       const newWord: SavedWord = {
         id: `word-${Date.now()}`,
         word: def.word,
-        phonetic: def.phonetic || `/${def.word}/`,
+        phonetic: def.phonetic || (def.word.includes(' ') ? '' : `/${def.word}/`),
         partOfSpeech: def.partOfSpeech,
         translation: def.translation,
         definitionEn: def.definitionEn,
         exampleEn: def.exampleEn,
         contextSentence: wordModal.contextSentence,
         videoTitle: currentLesson?.title || 'YouTube Lesson',
+        sourceLessonId: wordModal.sourceLessonId ?? currentLesson?.id,
+        sourceYoutubeId: wordModal.sourceYoutubeId ?? currentLesson?.youtubeId,
+        sourceTimestampSec: wordModal.sourceTimestampSec,
         savedAt: Date.now(),
         easeFactor: 2.5,
         interval: 0,
@@ -524,6 +563,79 @@ export const App: React.FC = () => {
         ScopedStorage.addGuestTransientWord(newWord);
       }
     }
+  };
+
+  // Update translation / context sentence inline from Word Vault
+  const handleUpdateWord = (wordId: string, patch: { translation: string; contextSentence: string }) => {
+    setSavedWords((prev) =>
+      prev.map((w) => {
+        if (w.id !== wordId) return w;
+        const updated: SavedWord = {
+          ...w,
+          translation: patch.translation,
+          contextSentence: patch.contextSentence,
+          usn: (w.usn ?? 0) + 1,
+          isDirty: true
+        };
+        ankiDb.saveWord(updated).catch(console.warn);
+        return updated;
+      })
+    );
+  };
+
+  // Bulk delete words with two-way tombstone recording
+  const handleBulkDeleteWords = (targets: Array<{ id: string; word: string }>) => {
+    if (targets.length === 0) return;
+    const idSet = new Set(targets.map((t) => t.id));
+    setSavedWords((prev) => prev.filter((w) => !idSet.has(w.id)));
+    targets.forEach((t) => {
+      ankiDb.deleteWord(t.id, t.word).catch(console.warn);
+    });
+  };
+
+  // Jump straight back to the source video at the exact saved timestamp
+  const handleOpenWordInVideo = (word: SavedWord) => {
+    const matchedLesson =
+      lessons.find((l) => word.sourceLessonId && l.id === word.sourceLessonId) ||
+      lessons.find((l) => word.sourceYoutubeId && l.youtubeId === word.sourceYoutubeId) ||
+      shorts.find((s) => word.sourceLessonId && s.id === word.sourceLessonId) ||
+      shorts.find((s) => word.sourceYoutubeId && s.youtubeId === word.sourceYoutubeId);
+
+    if (matchedLesson) {
+      handleSelectLesson(matchedLesson, 'subtitles', word.sourceTimestampSec);
+      return;
+    }
+
+    if (word.sourceYoutubeId) {
+      const startSec = typeof word.sourceTimestampSec === 'number' ? Math.max(0, word.sourceTimestampSec) : 0;
+      const fallbackLesson: VideoLesson = {
+        id: word.sourceLessonId || `replay-${word.sourceYoutubeId}`,
+        youtubeId: word.sourceYoutubeId,
+        title: word.videoTitle || 'Video nguồn từ vựng',
+        channel: 'YouTube Replay',
+        thumbnail: `https://img.youtube.com/vi/${word.sourceYoutubeId}/hqdefault.jpg`,
+        level: 'B1',
+        topic: 'Vocabulary Context',
+        duration: '05:00',
+        durationSec: 300,
+        views: '1',
+        description: 'Mở lại trực tiếp ngữ cảnh video của thẻ từ vựng.',
+        subtitles: [
+          {
+            id: 'ctx-1',
+            start: startSec,
+            end: startSec + 6,
+            text: word.contextSentence || word.word,
+            translation: word.translation
+          }
+        ],
+        quizzes: []
+      };
+      handleSelectLesson(fallbackLesson, 'subtitles', startSec);
+      return;
+    }
+
+    toast.info('Từ vựng này chưa có thông tin video gốc để tua lại.');
   };
 
   // Anki SM-2 Review execution & revlog audit recording (BR-13)
@@ -642,7 +754,10 @@ export const App: React.FC = () => {
         <div className="min-h-screen bg-slate-50 font-['Plus_Jakarta_Sans',sans-serif]">
           <VideoStudyRoom
             lesson={currentLesson}
-            onBack={() => setCurrentLesson(null)}
+            onBack={() => {
+              setCurrentLesson(null);
+              setInitialVideoTimestampSec(undefined);
+            }}
             onSelectWord={handleSelectWord}
             onUpdateLesson={(updated) => {
               setCurrentLesson(updated);
@@ -652,18 +767,32 @@ export const App: React.FC = () => {
               }
             }}
             initialMode={currentLessonMode}
+            isWordModalOpen={wordModal.isOpen}
+            initialTimestampSec={initialVideoTimestampSec}
+            currentUser={currentUser}
+            onOpenAuth={() => setIsAuthModalOpen(true)}
           />
 
           <WordPopupModal
             isOpen={wordModal.isOpen}
             definition={wordModal.definition}
             contextSentence={wordModal.contextSentence}
+            videoTitle={currentLesson.title}
+            currentUser={currentUser}
+            onOpenAuth={() => setIsAuthModalOpen(true)}
             isSaved={Boolean(
               wordModal.definition?.word &&
               savedWords.some((w) => w?.word && w.word.toLowerCase().trim() === wordModal.definition?.word?.toLowerCase().trim())
             )}
             onClose={() => setWordModal((prev) => ({ ...prev, isOpen: false }))}
             onSaveWord={handleSaveWord}
+          />
+
+          <AuthModal
+            isOpen={isAuthModalOpen}
+            onClose={() => setIsAuthModalOpen(false)}
+            onSuccess={handleAuthSuccess}
+            guestWordsToMigrate={currentUser ? [] : ScopedStorage.getGuestTransientWords()}
           />
         </div>
       </ProductionErrorBoundary>
@@ -731,24 +860,14 @@ export const App: React.FC = () => {
             )}
 
             {activeTab === 'words' && (
-              <ProductionErrorBoundary componentName="Sổ tay từ vựng" onGoHome={() => setActiveTab('home')}>
-                <div className="space-y-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-                        <BookOpen className="w-6 h-6 text-amber-500" /> Sổ Tay Từ Vựng ({savedWords.length} từ)
-                      </h1>
-                      <p className="text-xs font-semibold text-slate-500 mt-1">
-                        Toàn bộ từ vựng bạn đã tra và lưu trong các bài học video
-                      </p>
-                    </div>
-                  </div>
-
-                  <VocabularyReview
-                    savedWords={savedWords}
-                    onReviewWord={handleReviewWord}
-                  />
-                </div>
+              <ProductionErrorBoundary componentName="Kho từ vựng" onGoHome={() => setActiveTab('home')}>
+                <WordVaultScreen
+                  savedWords={savedWords}
+                  onUpdateWord={handleUpdateWord}
+                  onBulkDeleteWords={handleBulkDeleteWords}
+                  onOpenWordInVideo={handleOpenWordInVideo}
+                  onNavigateToReview={() => setActiveTab('review')}
+                />
               </ProductionErrorBoundary>
             )}
 
@@ -774,6 +893,7 @@ export const App: React.FC = () => {
                   onAddCustomScenario={(sc) => setScenarios((prev) => [sc, ...prev])}
                   currentUser={currentUser}
                   onOpenAuth={() => setIsAuthModalOpen(true)}
+                  onRoleplayHistoryChange={(history) => setRoleplayHistory(history)}
                 />
               </ProductionErrorBoundary>
             )}
@@ -783,6 +903,7 @@ export const App: React.FC = () => {
                 <VocabularyReview
                   savedWords={savedWords}
                   onReviewWord={handleReviewWord}
+                  onOpenWordInVideo={handleOpenWordInVideo}
                 />
               </ProductionErrorBoundary>
             )}
@@ -839,6 +960,8 @@ export const App: React.FC = () => {
         isOpen={wordModal.isOpen}
         definition={wordModal.definition}
         contextSentence={wordModal.contextSentence}
+        currentUser={currentUser}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
         isSaved={Boolean(
           wordModal.definition?.word &&
           savedWords.some((w) => w?.word && w.word.toLowerCase().trim() === wordModal.definition?.word?.toLowerCase().trim())

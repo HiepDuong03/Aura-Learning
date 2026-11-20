@@ -1,40 +1,41 @@
 import React, { useState, useEffect } from 'react';
 import { SavedWord, AnkiRating } from '../../types';
 import { 
-  Layers, 
   Volume2, 
   RotateCw, 
   Sparkles, 
   Award, 
-  Clock, 
   BrainCircuit, 
   BookMarked,
-  Flame,
-  CheckCircle2,
-  AlertTriangle,
-  Info
+  Film,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { speakWord } from '../../services/dictionaryService';
 import { 
-  calculateAnkiSchedule, 
   getAnkiIntervalPreviews, 
   calculateRetrievability 
 } from '../../services/ankiScheduler';
+import { buildClozeSentence } from '../../utils/clozeHelper';
 
 interface VocabularyReviewProps {
   savedWords: SavedWord[];
   onReviewWord: (wordId: string, rating: AnkiRating) => void;
+  onOpenWordInVideo?: (word: SavedWord) => void;
 }
 
 export const VocabularyReview: React.FC<VocabularyReviewProps> = ({
   savedWords,
-  onReviewWord
+  onReviewWord,
+  onOpenWordInVideo
 }) => {
   const [isStudyMode, setIsStudyMode] = useState<boolean>(false);
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [isFlipped, setIsFlipped] = useState<boolean>(false);
   const [filterMode, setFilterMode] = useState<'due' | 'all' | 'mastered'>('due');
+  const [clozeMode, setClozeMode] = useState<boolean>(true);
+  const [peekWord, setPeekWord] = useState<boolean>(false);
 
   const now = Date.now();
 
@@ -53,6 +54,10 @@ export const VocabularyReview: React.FC<VocabularyReviewProps> = ({
   // Dynamic preview for the 4 Anki buttons
   const previews = currentWord ? getAnkiIntervalPreviews(currentWord) : null;
   const currentRetrievability = currentWord ? calculateRetrievability(currentWord) : 100;
+  const clozeData = currentWord?.contextSentence
+    ? buildClozeSentence(currentWord.contextSentence, currentWord.word)
+    : null;
+  const useClozeFront = Boolean(clozeMode && clozeData?.hasMatch);
 
   // Keyboard shortcut listener (Space = flip, Escape = exit, 1/2/3/4 = rate)
   useEffect(() => {
@@ -84,6 +89,7 @@ export const VocabularyReview: React.FC<VocabularyReviewProps> = ({
 
     onReviewWord(currentWord.id, rating);
     setIsFlipped(false);
+    setPeekWord(false);
 
     if (currentIndex < displayWords.length - 1) {
       setCurrentIndex((prev) => prev + 1);
@@ -233,16 +239,33 @@ export const VocabularyReview: React.FC<VocabularyReviewProps> = ({
         <div className="max-w-lg mx-auto space-y-4">
           {/* Top Progress & Anki Telemetry Bar */}
           <div className="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-sm space-y-2">
-            <div className="flex items-center justify-between text-xs font-bold text-slate-500">
+            <div className="flex items-center justify-between text-xs font-bold text-slate-500 gap-2">
               <span className="text-teal-700 font-black">
                 Thẻ {currentIndex + 1} / {displayWords.length}
               </span>
-              <button
-                onClick={() => setIsStudyMode(false)}
-                className="text-slate-400 hover:text-slate-700 text-xs font-semibold"
-              >
-                Thoát ôn tập [Esc]
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setClozeMode((prev) => !prev);
+                    setPeekWord(false);
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                    clozeMode
+                      ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                      : 'bg-slate-100 border-slate-200 text-slate-500'
+                  }`}
+                  title="Bật chế độ điền khuyết theo ngữ cảnh câu (Cloze Deletion)"
+                >
+                  {clozeMode ? '✨ Cloze Mode: Bật' : 'Cloze Mode: Tắt'}
+                </button>
+                <button
+                  onClick={() => setIsStudyMode(false)}
+                  className="text-slate-400 hover:text-slate-700 text-xs font-semibold"
+                >
+                  Thoát [Esc]
+                </button>
+              </div>
             </div>
 
             {/* Anki Diagnostic Stats */}
@@ -279,57 +302,145 @@ export const VocabularyReview: React.FC<VocabularyReviewProps> = ({
           {/* Interactive 3D Card */}
           <div
             onClick={() => setIsFlipped(!isFlipped)}
-            className="relative h-88 w-full rounded-3xl bg-white border-2 border-slate-200/90 shadow-xl p-6 sm:p-8 flex flex-col justify-between cursor-pointer transition-all duration-300 hover:border-teal-400 select-none"
+            className="relative min-h-[340px] w-full rounded-3xl bg-white border-2 border-slate-200/90 shadow-xl p-6 sm:p-8 flex flex-col justify-between cursor-pointer transition-all duration-300 hover:border-teal-400 select-none"
           >
             {/* Top row */}
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full bg-purple-50 text-purple-700">
-                {currentWord.partOfSpeech}
-              </span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  speakWord(currentWord.word);
-                }}
-                className="p-2.5 rounded-full bg-teal-50 text-teal-600 hover:bg-teal-100 hover:scale-105 active:scale-95 transition-all"
-                title="Nghe phát âm chuẩn"
-              >
-                <Volume2 className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full bg-purple-50 text-purple-700">
+                  {currentWord.partOfSpeech}
+                </span>
+                {useClozeFront && !isFlipped && (
+                  <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                    Cloze Ngữ Cảnh
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                {useClozeFront && !isFlipped && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPeekWord((prev) => !prev);
+                    }}
+                    className="px-2.5 py-1.5 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 text-[11px] font-bold flex items-center gap-1 transition-all"
+                    title="Gợi ý chữ cái đầu hoặc xem từ"
+                  >
+                    {peekWord ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    <span>{peekWord ? 'Ẩn gợi ý' : 'Gợi ý từ'}</span>
+                  </button>
+                )}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    speakWord(currentWord.word);
+                  }}
+                  className="p-2.5 rounded-full bg-teal-50 text-teal-600 hover:bg-teal-100 hover:scale-105 active:scale-95 transition-all"
+                  title="Nghe phát âm chuẩn"
+                >
+                  <Volume2 className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Center: Front or Back */}
-            <div className="text-center space-y-3">
+            <div className="text-center space-y-3 my-4">
               {!isFlipped ? (
-                <>
-                  <h2 className="text-4xl font-black text-slate-900 tracking-tight capitalize">
-                    {currentWord.word}
-                  </h2>
-                  <p className="text-base font-bold text-teal-600 tracking-wide">{currentWord.phonetic}</p>
-                  {currentWord.contextSentence && (
-                    <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100 mt-4 text-left">
-                      <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                        Câu trong video:
-                      </p>
-                      <p className="text-xs italic text-slate-700 font-medium">
-                        "{currentWord.contextSentence}"
+                useClozeFront && clozeData ? (
+                  <>
+                    <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">
+                      Nhớ lại từ bị ẩn trong ngữ cảnh câu:
+                    </p>
+                    <div className="p-4 rounded-2xl bg-indigo-50/60 border border-indigo-100 text-left">
+                      <p className="text-base sm:text-lg font-bold text-slate-900 leading-relaxed">
+                        “
+                        {clozeData.parts.map((part, idx) =>
+                          part.isTarget ? (
+                            <span
+                              key={idx}
+                              className="inline-block mx-1 px-3 py-0.5 rounded-lg bg-indigo-600 text-white font-mono text-sm tracking-widest align-baseline"
+                            >
+                              {peekWord ? `${currentWord.word.slice(0, 2)}...` : '______'}
+                            </span>
+                          ) : (
+                            <span key={idx}>{part.text}</span>
+                          )
+                        )}
+                        ”
                       </p>
                     </div>
-                  )}
-                  <p className="text-xs font-bold text-slate-400 pt-2 flex items-center justify-center gap-1">
-                    <RotateCw className="w-3.5 h-3.5" /> Bấm vào thẻ (hoặc phím Space) để xem nghĩa
-                  </p>
-                </>
+                    {currentWord.phonetic && (
+                      <p className="text-xs font-bold text-teal-600 tracking-wide">
+                        Phiên âm gợi ý: {currentWord.phonetic}
+                      </p>
+                    )}
+                    <p className="text-xs font-bold text-slate-400 pt-1 flex items-center justify-center gap-1">
+                      <RotateCw className="w-3.5 h-3.5" /> Bấm vào thẻ (hoặc phím Space) để lật đáp án
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <h2 className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight capitalize">
+                      {currentWord.word}
+                    </h2>
+                    <p className="text-base font-bold text-teal-600 tracking-wide">{currentWord.phonetic}</p>
+                    {currentWord.contextSentence && (
+                      <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100 mt-4 text-left">
+                        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                          Câu trong video:
+                        </p>
+                        <p className="text-xs italic text-slate-700 font-medium">
+                          "{currentWord.contextSentence}"
+                        </p>
+                      </div>
+                    )}
+                    <p className="text-xs font-bold text-slate-400 pt-2 flex items-center justify-center gap-1">
+                      <RotateCw className="w-3.5 h-3.5" /> Bấm vào thẻ (hoặc phím Space) để xem nghĩa
+                    </p>
+                  </>
+                )
               ) : (
                 <div className="space-y-3 animate-fade-in text-left">
+                  <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                    <h3 className="text-2xl font-black text-slate-900 capitalize">{currentWord.word}</h3>
+                    {currentWord.phonetic && (
+                      <span className="text-xs font-bold text-teal-600">{currentWord.phonetic}</span>
+                    )}
+                  </div>
+
                   <div className="p-3.5 rounded-2xl bg-teal-50/80 border border-teal-100">
                     <p className="text-[11px] font-black uppercase tracking-wider text-teal-700">
                       Nghĩa tiếng Việt
                     </p>
-                    <h3 className="text-2xl font-black text-slate-900 mt-0.5">
+                    <h4 className="text-xl font-black text-slate-900 mt-0.5">
                       {currentWord.translation}
-                    </h3>
+                    </h4>
                   </div>
+
+                  {clozeData && clozeData.parts.length > 0 && (
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                        Câu đầy đủ trong video:
+                      </p>
+                      <p className="text-xs text-slate-700 leading-relaxed">
+                        “
+                        {clozeData.parts.map((part, idx) =>
+                          part.isTarget ? (
+                            <mark
+                              key={idx}
+                              className="px-1.5 py-0.5 rounded bg-teal-200/80 text-teal-950 font-black"
+                            >
+                              {part.text}
+                            </mark>
+                          ) : (
+                            <span key={idx}>{part.text}</span>
+                          )
+                        )}
+                        ”
+                      </p>
+                    </div>
+                  )}
 
                   <div>
                     <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
@@ -339,6 +450,27 @@ export const VocabularyReview: React.FC<VocabularyReviewProps> = ({
                       {currentWord.definitionEn}
                     </p>
                   </div>
+
+                  {onOpenWordInVideo && (currentWord.sourceLessonId || currentWord.sourceYoutubeId) && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenWordInVideo(currentWord);
+                      }}
+                      className="w-full py-2.5 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs flex items-center justify-center gap-1.5 transition-all"
+                    >
+                      <Film className="w-4 h-4" />
+                      <span>
+                        🎬 Xem lại đoạn video gốc
+                        {typeof currentWord.sourceTimestampSec === 'number'
+                          ? ` (${Math.floor(currentWord.sourceTimestampSec / 60)}:${String(
+                              Math.floor(currentWord.sourceTimestampSec % 60)
+                            ).padStart(2, '0')})`
+                          : ''}
+                      </span>
+                    </button>
+                  )}
                 </div>
               )}
             </div>
