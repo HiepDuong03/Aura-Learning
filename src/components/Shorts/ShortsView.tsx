@@ -43,6 +43,13 @@ import confetti from 'canvas-confetti';
 import { speakWord } from '../../services/dictionaryService';
 import { tokenizeText } from '../../utils/textTokenizer';
 import { loadYouTubeIframeAPI, parseYouTubePlayerError, YouTubePlayerError } from '../../services/youtubeLoader';
+import {
+  computePoolAssignments,
+  getPoolSlotForIndex,
+  planSlotAction,
+  PoolSlotId,
+  PoolSlotRuntime
+} from '../../utils/shortsPlayerPool';
 import { shortsFeedService } from '../../services/shortsFeedService';
 import { youglishEngine, AccentZone, ContextRegister, YouGlishOccurrence } from '../../services/youglishEngine';
 import { speechScoringService, SpeechScoreResult } from '../../services/speechScoringService';
@@ -150,9 +157,35 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   };
 
   const playerRef = useRef<any>(null);
-  const playerContainerRef = useRef<HTMLDivElement>(null);
+  const poolPlayersRef = useRef<Record<PoolSlotId, any>>({ 0: null, 1: null, 2: null });
+  const poolContainersRef = useRef<Record<PoolSlotId, HTMLDivElement | null>>({ 0: null, 1: null, 2: null });
+  const poolRuntimesRef = useRef<Record<PoolSlotId, PoolSlotRuntime>>({
+    0: { clipId: null, youtubeId: null, startSeconds: 0, isReady: false, isPrewarmed: false },
+    1: { clipId: null, youtubeId: null, startSeconds: 0, isReady: false, isPrewarmed: false },
+    2: { clipId: null, youtubeId: null, startSeconds: 0, isReady: false, isPrewarmed: false }
+  });
+  const isMountedRef = useRef<boolean>(true);
+  const activeSlotRef = useRef<PoolSlotId>(0);
+  const activeClipStartRef = useRef<number>(0);
+  const isActiveRef = useRef<boolean>(isActive);
+  const isGlobalMutedRef = useRef<boolean>(isGlobalMuted);
+  const playbackRateRef = useRef<number>(playbackRate);
+  const loadingDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prewarmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSeekingRef = useRef<boolean>(false);
   const touchStartY = useRef<number | null>(null);
+
+  useEffect(() => {
+    isActiveRef.current = isActive;
+  }, [isActive]);
+
+  useEffect(() => {
+    isGlobalMutedRef.current = isGlobalMuted;
+  }, [isGlobalMuted]);
+
+  useEffect(() => {
+    playbackRateRef.current = playbackRate;
+  }, [playbackRate]);
 
   // --- 1. Compute YouGlish Mined Occurrences with SRS Smart Sorter ---
   const youglishOccurrences: YouGlishOccurrence[] = useMemo(() => {
@@ -308,86 +341,93 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     setShadowResult(null);
   }, [currentSubIndex, currentIndex]);
 
-  // --- 3. Ultra-Fast Resilient YouTube Player Engine ---
+  const activeSlotId: PoolSlotId = getPoolSlotForIndex(currentIndex);
+
+  const clearLoadingOverlay = useCallback(() => {
+    if (loadingDelayTimerRef.current) {
+      clearTimeout(loadingDelayTimerRef.current);
+      loadingDelayTimerRef.current = null;
+    }
+    if (loadingTimeoutRef.current) {
+      clearTimeout(loadingTimeoutRef.current);
+      loadingTimeoutRef.current = null;
+    }
+    if (isMountedRef.current) {
+      setIsVideoLoading(false);
+    }
+  }, []);
+
+  const showLoadingWithDelay = useCallback(() => {
+    if (loadingDelayTimerRef.current) clearTimeout(loadingDelayTimerRef.current);
+    if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
+
+    // Avoid spinner flash for fast transitions (< 320ms)
+    loadingDelayTimerRef.current = setTimeout(() => {
+      if (isMountedRef.current) {
+        setIsVideoLoading(true);
+      }
+    }, 320);
+
+    // Safety watchdog so loading overlay never stalls
+    loadingTimeoutRef.current = setTimeout(() => {
+      if (isMountedRef.current) {
+        setIsVideoLoading(false);
+      }
+    }, 2200);
+  }, []);
+
+  // --- 3. TikTok-Style 3-Slot YouTube Player Pool ([N-1, N, N+1]) + Silent Pre-buffering ---
   useEffect(() => {
     if (useDirectIframe) {
-      setIsVideoLoading(false);
+      clearLoadingOverlay();
       setPlayerError(null);
       return;
     }
 
-    let isMounted = true;
-    const clipStart = currentShort.startSeconds || 0;
+    const effectiveFeed = activeFeed.length > 0 ? activeFeed : [currentShort];
+    const safeIndex = Math.min(currentIndex, effectiveFeed.length - 1);
+    const assignments = computePoolAssignments(safeIndex, effectiveFeed);
+    const targetActiveSlot = getPoolSlotForIndex(safeIndex);
+    const activeAssignment = assignments[targetActiveSlot];
+    const activeClip = activeAssignment.clip;
+    if (!activeClip) return;
 
-    // Fast-path: Reuse existing player instance without DOM recreation (150ms switch vs 3s recreate)
-    if (playerRef.current && typeof playerRef.current.loadVideoById === 'function') {
-      try {
-        setIsVideoLoading(true);
-        setPlayerError(null);
+    activeSlotRef.current = targetActiveSlot;
+    activeClipStartRef.current = activeClip.startSeconds;
 
-        // 1.8s watchdog timer to guarantee loading spinner never gets stuck
-        if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
-        loadingTimeoutRef.current = setTimeout(() => {
-          if (isMounted) setIsVideoLoading(false);
-        }, 1800);
-
-        playerRef.current.loadVideoById({
-          videoId: currentShort.youtubeId,
-          startSeconds: clipStart
-        });
-
-        if (isGlobalMuted) {
-          playerRef.current.mute();
-        } else {
-          playerRef.current.unMute();
-        }
-
-        if (typeof playerRef.current.setPlaybackRate === 'function') {
-          playerRef.current.setPlaybackRate(playbackRate);
-        }
-
-        if (isActive) {
-          playerRef.current.playVideo();
-          setIsPlaying(true);
-        } else {
-          playerRef.current.pauseVideo();
-          setIsPlaying(false);
-        }
-        setCurrentSubIndex(0);
-        drillRepeatCountRef.current = 1;
-        setDrillRepeatCount(1);
-        return;
-      } catch (e) {
-        console.warn('[ShortsView] loadVideoById error, rebuilding player container:', e);
-      }
+    if (prewarmTimerRef.current) {
+      clearTimeout(prewarmTimerRef.current);
+      prewarmTimerRef.current = null;
     }
 
-    // Cold-path: Create fresh player element inside container
-    const initPlayer = () => {
-      if (!isMounted) return;
-      if (!window.YT || !window.YT.Player) return;
-      if (!playerContainerRef.current) return;
+    const instantiateSlotPlayer = (
+      slotId: PoolSlotId,
+      clip: { clipId: string; youtubeId: string; startSeconds: number },
+      isPrimarySlot: boolean
+    ) => {
+      if (!isMountedRef.current || !window.YT?.Player) return;
+      const container = poolContainersRef.current[slotId];
+      if (!container) return;
 
-      // Recreate pristine inner mount div to avoid YouTube .destroy() node removal issues
-      playerContainerRef.current.innerHTML = '<div id="yt-shorts-mount-node" class="w-full h-full pointer-events-none scale-[1.35] origin-center"></div>';
+      const mountNodeId = `yt-shorts-pool-slot-${slotId}`;
+      container.innerHTML = `<div id="${mountNodeId}" class="w-full h-full pointer-events-none scale-[1.35] origin-center"></div>`;
 
-      setIsVideoLoading(true);
-      setPlayerError(null);
-
-      // Watchdog timeout for cold initialization
-      if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
-      loadingTimeoutRef.current = setTimeout(() => {
-        if (isMounted) setIsVideoLoading(false);
-      }, 2000);
+      poolRuntimesRef.current[slotId] = {
+        clipId: clip.clipId,
+        youtubeId: clip.youtubeId,
+        startSeconds: clip.startSeconds,
+        isReady: false,
+        isPrewarmed: false
+      };
 
       try {
-        playerRef.current = new window.YT.Player('yt-shorts-mount-node', {
-          videoId: currentShort.youtubeId,
+        const ytPlayer = new window.YT.Player(mountNodeId, {
+          videoId: clip.youtubeId,
           playerVars: {
-            autoplay: isActive ? 1 : 0,
+            autoplay: 1,
             controls: 0,
-            mute: (!isActive || isGlobalMuted) ? 1 : 0,
-            start: Math.floor(clipStart),
+            mute: isPrimarySlot && isActiveRef.current && !isGlobalMutedRef.current ? 0 : 1,
+            start: Math.floor(clip.startSeconds),
             enablejsapi: 1,
             rel: 0,
             modestbranding: 1,
@@ -397,87 +437,239 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
           },
           events: {
             onReady: (event: any) => {
-              if (!isMounted) return;
-              playerRef.current = event.target;
-              if (isGlobalMuted || !isActive) {
-                event.target.mute();
+              if (!isMountedRef.current) return;
+              const p = event.target;
+              poolPlayersRef.current[slotId] = p;
+              const rt = poolRuntimesRef.current[slotId];
+              rt.isReady = true;
+
+              const isCurrentlyActive = activeSlotRef.current === slotId;
+              if (isCurrentlyActive) {
+                playerRef.current = p;
+                if (isGlobalMutedRef.current || !isActiveRef.current) {
+                  p.mute?.();
+                } else {
+                  p.unMute?.();
+                }
+                p.setPlaybackRate?.(playbackRateRef.current);
+                if (rt.startSeconds > 0) {
+                  p.seekTo?.(rt.startSeconds, true);
+                }
+                if (isActiveRef.current) {
+                  p.playVideo?.();
+                  setIsPlaying(true);
+                } else {
+                  p.pauseVideo?.();
+                  setIsPlaying(false);
+                }
+                setPlayerError(null);
+                clearLoadingOverlay();
               } else {
-                event.target.unMute();
+                // Silent first-frame pre-buffer for background slot (N+1)
+                p.mute?.();
+                if (rt.startSeconds > 0) {
+                  p.seekTo?.(rt.startSeconds, true);
+                }
+                p.playVideo?.();
               }
-              if (typeof event.target.setPlaybackRate === 'function') {
-                event.target.setPlaybackRate(playbackRate);
-              }
-              if (clipStart > 0 && typeof event.target.seekTo === 'function') {
-                event.target.seekTo(clipStart, true);
-              }
-              if (isActive) {
-                event.target.playVideo();
-                setIsPlaying(true);
-              } else {
-                event.target.pauseVideo();
-                setIsPlaying(false);
-              }
-              setIsVideoLoading(false);
-              setPlayerError(null);
-              if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
             },
             onStateChange: (event: any) => {
-              if (!isMounted) return;
-              // Clear loading state on ANY active player state (Playing = 1, Paused = 2, Buffering = 3, Cued = 5)
+              if (!isMountedRef.current) return;
+              const p = event.target;
+              const rt = poolRuntimesRef.current[slotId];
+              const isCurrentlyActive = activeSlotRef.current === slotId;
+
+              // Background slot (N+1 / N-1): freeze immediately after buffering first frame!
+              if (!isCurrentlyActive) {
+                if (event.data === 1) {
+                  p.mute?.();
+                  p.pauseVideo?.();
+                  if (rt.startSeconds > 0) {
+                    p.seekTo?.(rt.startSeconds, true);
+                  }
+                  rt.isPrewarmed = true;
+                }
+                return;
+              }
+
+              // Active slot: always clear loading overlay immediately on active playback/cue
               if (event.data === 1 || event.data === 2 || event.data === 5) {
-                setIsVideoLoading(false);
+                clearLoadingOverlay();
                 setPlayerError(null);
-                if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
               }
 
               if (event.data === 1) {
+                rt.isPrewarmed = true;
                 setIsPlaying(true);
               } else if (event.data === 2) {
                 setIsPlaying(false);
               } else if (event.data === 0) {
-                // Loop restart to clip start
                 setCurrentSubIndex(0);
                 drillRepeatCountRef.current = 1;
                 setDrillRepeatCount(1);
-                if (playerRef.current && typeof playerRef.current.seekTo === 'function') {
-                  playerRef.current.seekTo(clipStart, true);
-                  playerRef.current.playVideo();
-                }
+                p.seekTo?.(activeClipStartRef.current, true);
+                p.playVideo?.();
               }
             },
             onError: (event: any) => {
-              if (!isMounted) return;
+              if (!isMountedRef.current) return;
+              if (activeSlotRef.current !== slotId) return;
               console.warn('[ShortsView] YouTube player error:', event.data);
               const parsed = parseYouTubePlayerError(event.data);
               setPlayerError(parsed);
-              setIsVideoLoading(false);
-              if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
+              clearLoadingOverlay();
             }
           }
         });
+        poolPlayersRef.current[slotId] = ytPlayer;
+        if (isPrimarySlot) {
+          playerRef.current = ytPlayer;
+        }
       } catch (err) {
-        console.warn('[ShortsView] Failed to instantiate YT.Player:', err);
-        setIsVideoLoading(false);
+        console.warn(`[ShortsView] Failed to instantiate YT.Player for slot ${slotId}:`, err);
+        if (isPrimarySlot) clearLoadingOverlay();
+      }
+    };
+
+    const syncPool = () => {
+      if (!isMountedRef.current || !window.YT?.Player) return;
+
+      // 1. Instantly mute & pause all non-active slots so only the active video has sound
+      ([0, 1, 2] as PoolSlotId[]).forEach((sid) => {
+        if (sid === targetActiveSlot) return;
+        const p = poolPlayersRef.current[sid];
+        if (p) {
+          try {
+            p.mute?.();
+            p.pauseVideo?.();
+          } catch {
+            // ignore
+          }
+        }
+      });
+
+      // 2. Activate target slot (0ms if prewarmed, ~50ms if same-video seek, cold load otherwise)
+      const activePlayer = poolPlayersRef.current[targetActiveSlot];
+      const activeRuntime = poolRuntimesRef.current[targetActiveSlot];
+      setPlayerError(null);
+
+      if (activePlayer && activeRuntime.isReady && typeof activePlayer.playVideo === 'function') {
+        playerRef.current = activePlayer;
+        const action = planSlotAction(activeRuntime, activeClip);
+
+        if (isGlobalMutedRef.current || !isActiveRef.current) {
+          activePlayer.mute?.();
+        } else {
+          activePlayer.unMute?.();
+        }
+        activePlayer.setPlaybackRate?.(playbackRateRef.current);
+
+        if (action === 'noop-ready') {
+          clearLoadingOverlay();
+          if (isActiveRef.current) {
+            activePlayer.playVideo?.();
+            setIsPlaying(true);
+          } else {
+            activePlayer.pauseVideo?.();
+            setIsPlaying(false);
+          }
+        } else if (action === 'reuse-seek') {
+          clearLoadingOverlay();
+          activeRuntime.clipId = activeClip.clipId;
+          activeRuntime.startSeconds = activeClip.startSeconds;
+          activePlayer.seekTo?.(activeClip.startSeconds, true);
+          if (isActiveRef.current) {
+            activePlayer.playVideo?.();
+            setIsPlaying(true);
+          } else {
+            activePlayer.pauseVideo?.();
+            setIsPlaying(false);
+          }
+        } else {
+          showLoadingWithDelay();
+          activeRuntime.clipId = activeClip.clipId;
+          activeRuntime.youtubeId = activeClip.youtubeId;
+          activeRuntime.startSeconds = activeClip.startSeconds;
+          activeRuntime.isPrewarmed = false;
+          activePlayer.loadVideoById?.({
+            videoId: activeClip.youtubeId,
+            startSeconds: activeClip.startSeconds
+          });
+          if (isActiveRef.current) {
+            activePlayer.playVideo?.();
+            setIsPlaying(true);
+          } else {
+            activePlayer.pauseVideo?.();
+            setIsPlaying(false);
+          }
+        }
+        setCurrentSubIndex(0);
+        drillRepeatCountRef.current = 1;
+        setDrillRepeatCount(1);
+      } else {
+        showLoadingWithDelay();
+        instantiateSlotPlayer(targetActiveSlot, activeClip, true);
+      }
+
+      // 3. Stagger silent first-frame pre-buffering of NEXT video (N+1) by 180ms
+      const nextSlotEntry = ([0, 1, 2] as PoolSlotId[])
+        .map((sid) => assignments[sid])
+        .find((a) => a.role === 'next' && a.clip);
+
+      if (nextSlotEntry?.clip) {
+        const nextSlotId = nextSlotEntry.slotId;
+        const nextClip = nextSlotEntry.clip;
+        prewarmTimerRef.current = setTimeout(() => {
+          if (!isMountedRef.current || activeSlotRef.current === nextSlotId) return;
+          const nextPlayer = poolPlayersRef.current[nextSlotId];
+          const nextRuntime = poolRuntimesRef.current[nextSlotId];
+
+          if (nextPlayer && nextRuntime.isReady && typeof nextPlayer.loadVideoById === 'function') {
+            const action = planSlotAction(nextRuntime, nextClip);
+            if (action === 'noop-ready') return;
+
+            nextPlayer.mute?.();
+            nextRuntime.clipId = nextClip.clipId;
+            nextRuntime.youtubeId = nextClip.youtubeId;
+            nextRuntime.startSeconds = nextClip.startSeconds;
+
+            if (action === 'reuse-seek') {
+              nextPlayer.seekTo?.(nextClip.startSeconds, true);
+              nextPlayer.pauseVideo?.();
+              nextRuntime.isPrewarmed = true;
+            } else {
+              nextRuntime.isPrewarmed = false;
+              nextPlayer.loadVideoById?.({
+                videoId: nextClip.youtubeId,
+                startSeconds: nextClip.startSeconds
+              });
+            }
+          } else if (!nextPlayer) {
+            instantiateSlotPlayer(nextSlotId, nextClip, false);
+          }
+        }, 180);
       }
     };
 
     loadYouTubeIframeAPI(3500)
       .then(() => {
-        if (!isMounted) return;
-        initPlayer();
+        if (!isMountedRef.current) return;
+        syncPool();
       })
       .catch((err) => {
-        if (!isMounted) return;
+        if (!isMountedRef.current) return;
         console.warn('[ShortsView] YouTube API load failed, switching to direct embed:', err);
         setUseDirectIframe(true);
-        setIsVideoLoading(false);
+        clearLoadingOverlay();
       });
 
     return () => {
-      isMounted = false;
-      if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
+      if (prewarmTimerRef.current) {
+        clearTimeout(prewarmTimerRef.current);
+        prewarmTimerRef.current = null;
+      }
     };
-  }, [currentShort.youtubeId, currentShort.startSeconds, useDirectIframe]);
+  }, [currentIndex, currentShort.youtubeId, currentShort.startSeconds, activeFeed, useDirectIframe, clearLoadingOverlay, showLoadingWithDelay]);
 
   // Handle tab active state changes (Background pre-warm vs Active user viewing)
   useEffect(() => {
@@ -595,24 +787,32 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     return () => clearInterval(timer);
   }, [currentShort, currentSubIndex, isDrillMode, subOffset]);
 
-  // Cleanup on unmount
+  // Cleanup all 3 pooled players & timers on component unmount
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
       if (tapTimeoutRef.current) clearTimeout(tapTimeoutRef.current);
       if (holdSpeedTimerRef.current) clearTimeout(holdSpeedTimerRef.current);
       if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
+      if (loadingDelayTimerRef.current) clearTimeout(loadingDelayTimerRef.current);
+      if (prewarmTimerRef.current) clearTimeout(prewarmTimerRef.current);
       if (recognitionRef.current) {
         try { recognitionRef.current.abort(); } catch (e) {}
       }
-      try {
-        if (playerRef.current && typeof playerRef.current.destroy === 'function') {
-          playerRef.current.destroy();
-        }
-      } catch (e) {}
+      ([0, 1, 2] as PoolSlotId[]).forEach((sid) => {
+        try {
+          const p = poolPlayersRef.current[sid];
+          if (p && typeof p.destroy === 'function') {
+            p.destroy();
+          }
+        } catch (e) {}
+        poolPlayersRef.current[sid] = null;
+      });
     };
   }, []);
 
-  // --- 5. TikTok Gesture & Interaction Mechanics ---
+  // --- 5. TikTok Instant Gesture & Swipe Mechanics (No Forced Loading Flash) ---
   const handleNext = useCallback(() => {
     if (currentIndex < activeFeed.length - 1) {
       if (recognitionRef.current) {
@@ -621,7 +821,6 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
       }
       setIsShadowing(false);
       setSwipeAnimation('slide-up');
-      setIsVideoLoading(true);
       setPlayerError(null);
 
       setTimeout(() => {
@@ -632,7 +831,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
         setIsWordRevealed(false);
         setShadowResult(null);
         setSwipeAnimation(null);
-      }, 140);
+      }, 65);
     }
   }, [currentIndex, activeFeed.length]);
 
@@ -644,7 +843,6 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
       }
       setIsShadowing(false);
       setSwipeAnimation('slide-down');
-      setIsVideoLoading(true);
       setPlayerError(null);
 
       setTimeout(() => {
@@ -655,7 +853,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
         setIsWordRevealed(false);
         setShadowResult(null);
         setSwipeAnimation(null);
-      }, 140);
+      }, 65);
     }
   }, [currentIndex]);
 
@@ -1130,8 +1328,21 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                       allowFullScreen
                     />
                   ) : (
-                    <div ref={playerContainerRef} className="w-full h-full">
-                      <div id="yt-shorts-mount-node" className="w-full h-full pointer-events-none scale-[1.35] origin-center" />
+                    <div className="relative w-full h-full">
+                      {([0, 1, 2] as PoolSlotId[]).map((slotId) => {
+                        const isSlotActive = slotId === activeSlotId;
+                        return (
+                          <div
+                            key={slotId}
+                            ref={(el) => {
+                              poolContainersRef.current[slotId] = el;
+                            }}
+                            className={`absolute inset-0 w-full h-full transition-opacity duration-150 ${
+                              isSlotActive ? 'opacity-100 z-[2]' : 'opacity-0 z-[0] pointer-events-none'
+                            }`}
+                          />
+                        );
+                      })}
                     </div>
                   )}
 
