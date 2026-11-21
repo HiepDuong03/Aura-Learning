@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { AuthUser, ContextExplanation, WordDefinition, LingQWordStatus } from '../../types';
-import { Volume2, Bookmark, BookmarkCheck, X, Sparkles, Loader2, Lock } from 'lucide-react';
+import { Volume2, Bookmark, BookmarkCheck, X, Sparkles, Loader2, Lock, Film, ExternalLink } from 'lucide-react';
 import { explainInContext, speakWord } from '../../services/dictionaryService';
+import { buildPlayPhraseQuery } from '../../utils/americanExpressionMiner';
 import { lingqWordService } from '../../services/lingqWordService';
 import { authService } from '../../services/authService';
 
@@ -276,6 +277,24 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
             {explainError && (
               <p className="mt-1.5 text-[11px] font-semibold text-rose-600">{explainError}</p>
             )}
+
+            {/* Watch real American movie/sitcom scenes on PlayPhrase.me */}
+            {(() => {
+              const playPhraseQuery = buildPlayPhraseQuery(definition.word, contextSentence || '');
+              return (
+                <a
+                  href={`https://www.playphrase.me/#/search?q=${encodeURIComponent(playPhraseQuery)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 w-full py-2 px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-700 text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
+                  title={`Mở cảnh phim & sitcom Mỹ nói "${playPhraseQuery}" trên PlayPhrase.me`}
+                >
+                  <Film className="w-3.5 h-3.5 text-slate-600" />
+                  <span>Nghe &quot;{playPhraseQuery}&quot; trong phim Mỹ</span>
+                  <ExternalLink className="w-3 h-3 opacity-60" />
+                </a>
+              );
+            })()}
           </div>
 
           {/* Synonyms */}
