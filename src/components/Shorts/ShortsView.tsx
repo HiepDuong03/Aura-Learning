@@ -68,6 +68,7 @@ import {
   buildThematicReelsFeed,
   MicroQuizQuestion,
   mineAmericanExpressionsFromLessons,
+  openPlayPhrasePopup,
   ReelTopicFilter
 } from '../../utils/americanExpressionMiner';
 import { AMERICAN_REELS_CORPUS, mapCuratedReelToVideoLesson } from '../../data/americanReelsCorpus';
@@ -3227,8 +3228,12 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                             href={`https://www.playphrase.me/#/search?q=${encodeURIComponent(playPhraseQuery)}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="py-2 px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-all"
-                            title={`Mở cảnh phim & sitcom Mỹ nói "${playPhraseQuery}" trên PlayPhrase.me`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              openPlayPhrasePopup(playPhraseQuery);
+                            }}
+                            className="py-2 px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                            title={`Mở cửa sổ phim Mỹ mini nói "${playPhraseQuery}" trên PlayPhrase.me`}
                           >
                             <Film className="w-3.5 h-3.5 text-slate-600" />
                             <span>Nghe "{playPhraseQuery}" trong phim Mỹ</span>
@@ -3342,8 +3347,12 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                                 href={`https://www.playphrase.me/#/search?q=${encodeURIComponent(playPhraseQuery)}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="py-2 px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-800 text-xs font-bold flex items-center gap-1.5 transition-all"
-                                title={`Mở cảnh phim & sitcom Mỹ nói "${playPhraseQuery}" trên PlayPhrase.me`}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  openPlayPhrasePopup(playPhraseQuery);
+                                }}
+                                className="py-2 px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-800 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                                title={`Mở cửa sổ phim Mỹ mini nói "${playPhraseQuery}" trên PlayPhrase.me`}
                               >
                                 <Film className="w-3.5 h-3.5 text-teal-600" />
                                 <span>
