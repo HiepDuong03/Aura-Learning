@@ -104,7 +104,7 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
   // Player refs & resilient states
   const playerRef = useRef<any>(null);
   const activeSubRef = useRef<HTMLDivElement>(null);
-  const loopTimeoutRef = useRef<any>(null);
+  const segmentStopAtRef = useRef<number | null>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const [playerStatus, setPlayerStatus] = useState<YouTubePlayerStatus>('loading');
   const [playerError, setPlayerError] = useState<YouTubePlayerError | null>(null);
@@ -167,7 +167,7 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
   // 1. Initialize Real YouTube IFrame Player API with Timeout & Network Resilience
   useEffect(() => {
     let isMounted = true;
-    if (loopTimeoutRef.current) clearTimeout(loopTimeoutRef.current);
+    segmentStopAtRef.current = null;
 
     if (useDirectIframe) {
       setPlayerStatus('ready');
@@ -256,7 +256,8 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
 
     return () => {
       isMounted = false;
-      if (loopTimeoutRef.current) clearTimeout(loopTimeoutRef.current);
+      segmentStopAtRef.current = null;
+      if (seekCooldownTimerRef.current) clearTimeout(seekCooldownTimerRef.current);
       if (playerRef.current && typeof playerRef.current.destroy === 'function') {
         try {
           playerRef.current.destroy();
@@ -355,9 +356,24 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
           if (typeof time === 'number' && !isNaN(time)) {
             setCurrentTime(time);
 
+            const ytState = typeof player.getPlayerState === 'function' ? player.getPlayerState() : -1;
+
             // Subtitle segment auto-loop handling
             if (isLooping && activeSubtitleIndex >= 0 && time >= currentSub.end - 0.08) {
-              player.seekTo(currentSub.start, true);
+              player.seekTo(Math.max(0, currentSub.start - 0.05), true);
+              return;
+            }
+
+            // Real-time segment auto-pause:
+            // In Shadowing / Dictation mode (when not looping), always stop cleanly at the end of the sentence.
+            // In other modes, honor explicit segmentStopAtRef (e.g., clicking "Nghe từ video").
+            const isSegmentMode = activeMode === 'shadowing' || activeMode === 'dictation';
+            const stopAt = segmentStopAtRef.current ?? (isSegmentMode ? currentSub.end : null);
+            if (!isLooping && stopAt !== null && ytState === 1 && time >= stopAt - 0.05) {
+              segmentStopAtRef.current = null;
+              if (typeof player.pauseVideo === 'function') {
+                player.pauseVideo();
+              }
               return;
             }
 
@@ -446,24 +462,24 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
   }, [activeSubtitleIndex, activeMode]);
 
   // Play video segment for current subtitle (e.g. for Dictation or Shadowing)
+  // Uses real-time polling boundary (segmentStopAtRef) instead of setTimeout so buffering or speed changes never drift.
   const playVideoSegment = useCallback((sub: SubtitleLine) => {
-    if (loopTimeoutRef.current) clearTimeout(loopTimeoutRef.current);
     const player = getPlayer();
     if (player && typeof player.seekTo === 'function') {
+      isSeekingRef.current = true;
+      if (seekCooldownTimerRef.current) clearTimeout(seekCooldownTimerRef.current);
+      seekCooldownTimerRef.current = setTimeout(() => {
+        isSeekingRef.current = false;
+      }, 320);
+
       // 50ms pre-roll to prevent swallowing the opening consonant
       const seekTarget = Math.max(0, sub.start - 0.05);
+      segmentStopAtRef.current = sub.end;
+      setCurrentTime(sub.start);
       player.seekTo(seekTarget, true);
       if (typeof player.playVideo === 'function') {
         player.playVideo();
       }
-
-      // Duration scaled accurately by current playback speed
-      const durationMs = Math.max(800, (((sub.end - sub.start) / playbackRate) * 1000) + 150);
-      loopTimeoutRef.current = setTimeout(() => {
-        if (player && typeof player.pauseVideo === 'function') {
-          player.pauseVideo();
-        }
-      }, durationMs);
     } else {
       speakWord(sub.text, 'en', playbackRate);
     }
@@ -486,6 +502,9 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
     setSpokenText('');
     setShadowScore(null);
 
+    // Enforce sentence-end auto-pause in Shadowing / Dictation mode
+    segmentStopAtRef.current = (activeMode === 'shadowing' || activeMode === 'dictation') ? sub.end : null;
+
     const player = getPlayer();
     if (player) {
       try {
@@ -501,7 +520,7 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
         console.warn('YouTube seek error:', err);
       }
     }
-  }, [getPlayer]);
+  }, [getPlayer, activeMode]);
 
   // Speed change handler
   const handleRateChange = (rate: number) => {
@@ -517,12 +536,22 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
     const player = getPlayer();
     if (player) {
       if (isPlaying) {
+        segmentStopAtRef.current = null;
         player.pauseVideo();
+      } else if (activeMode === 'shadowing' || activeMode === 'dictation') {
+        const now = typeof player.getCurrentTime === 'function' ? player.getCurrentTime() : currentTime;
+        if (now >= currentSub.end - 0.15 || now < currentSub.start - 0.25) {
+          playVideoSegment(currentSub);
+        } else {
+          segmentStopAtRef.current = currentSub.end;
+          player.playVideo();
+        }
       } else {
+        segmentStopAtRef.current = null;
         player.playVideo();
       }
     }
-  }, [getPlayer, isPlaying]);
+  }, [getPlayer, isPlaying, activeMode, currentTime, currentSub, playVideoSegment]);
 
   // Auto-Pause when WordPopupModal opens & Auto-Resume when it closes (if playing before)
   useEffect(() => {
@@ -678,6 +707,12 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
       recognitionRef.current.stop();
       setIsRecording(false);
     } else {
+      // Pause video immediately when user starts shadowing into the mic
+      segmentStopAtRef.current = null;
+      const player = getPlayer();
+      if (player && typeof player.pauseVideo === 'function') {
+        player.pauseVideo();
+      }
       setSpokenText('');
       setShadowScore(null);
       try {
@@ -1126,12 +1161,15 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
                 role="tab"
                 aria-selected={activeMode === tab.id}
                 onClick={() => {
-                  setActiveMode(tab.id as StudyMode);
-                  if (tab.id !== 'subtitles' && playerRef.current?.pauseVideo) {
+                  const nextMode = tab.id as StudyMode;
+                  setActiveMode(nextMode);
+                  if (nextMode === 'subtitles') {
+                    segmentStopAtRef.current = null;
+                  } else if (nextMode === 'dictation' || nextMode === 'shadowing') {
+                    playVideoSegment(currentSub);
+                  } else if (playerRef.current?.pauseVideo) {
+                    segmentStopAtRef.current = null;
                     playerRef.current.pauseVideo();
-                  }
-                  if (tab.id === 'dictation' || tab.id === 'shadowing') {
-                    setTimeout(() => playVideoSegment(currentSub), 250);
                   }
                 }}
                 className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all ${

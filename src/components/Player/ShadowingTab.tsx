@@ -114,7 +114,6 @@ export const ShadowingTab: React.FC<ShadowingTabProps> = ({
             onClick={() => {
               const prev = activeSubtitleIndex - 1;
               onJumpToSubtitle(subtitles[prev], prev);
-              setTimeout(() => onPlayVideoSegment(subtitles[prev]), 200);
             }}
             className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-30 flex items-center gap-1"
           >
@@ -127,7 +126,6 @@ export const ShadowingTab: React.FC<ShadowingTabProps> = ({
             onClick={() => {
               const next = activeSubtitleIndex + 1;
               onJumpToSubtitle(subtitles[next], next);
-              setTimeout(() => onPlayVideoSegment(subtitles[next]), 200);
             }}
             className="flex-1 py-2.5 rounded-xl btn-3d btn-3d-white text-xs font-bold flex items-center justify-center gap-1 disabled:opacity-30"
           >
