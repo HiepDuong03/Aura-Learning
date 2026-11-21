@@ -447,9 +447,22 @@ class LocalFileDbAdapter {
  */
 class PostgresDbAdapter {
   constructor(connectionString) {
-    const isLocal = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
+    const cleaned = String(connectionString || '').replace(/\s+/g, '');
+    const isLocal = cleaned.includes('localhost') || cleaned.includes('127.0.0.1');
+    let normalizedUrl = cleaned;
+    if (!isLocal) {
+      try {
+        const parsed = new URL(cleaned);
+        // pg-connection-string treats ?sslmode=require as verify-full and overrides ssl.rejectUnauthorized,
+        // which rejects private CA certs used by managed providers like Aiven.
+        parsed.searchParams.delete('sslmode');
+        normalizedUrl = parsed.toString();
+      } catch {
+        normalizedUrl = cleaned;
+      }
+    }
     this.pool = new Pool({
-      connectionString,
+      connectionString: normalizedUrl,
       ssl: isLocal ? false : { rejectUnauthorized: false },
       max: 10,
       idleTimeoutMillis: 30000
