@@ -18,628 +18,584 @@ export interface CuratedAmericanReel {
 }
 
 /**
- * Curated Real American Reels Corpus
+ * Curated Vertical 9:16 Real American YouTube Shorts Corpus (Instant 0ms Fallback + Starter Feed)
  *
- * Every YouTube ID below was verified via `https://www.youtube.com/oembed` (HTTP 200)
- * and paired with exact real timestamps extracted from synced lesson/short transcripts.
- * Grouped by thematic clusters (`daily_life` and `work_talk`) to avoid fragmented
- * random context-switching (Nature Communications Psychology, May 2026).
+ * Every YouTube Short ID below was verified live:
+ * - Portrait 9:16 aspect ratio (vertical: true via youtube.com/oembed)
+ * - Embeddable & playable (playabilityStatus: OK, playableInEmbed: true)
+ * - Exact timestamps extracted directly from YouTube timed captions
+ *
+ * Fresh Shorts are also fetched automatically at runtime via `GET /api/reels/feed`.
  */
 export const AMERICAN_REELS_CORPUS: CuratedAmericanReel[] = [
-  // ===================== CLUSTER 1: DAILY LIFE & CASUAL US =====================
+  // ===================== CLUSTER 1: DAILY LIFE & CASUAL US (6 VERTICAL SHORTS) =====================
   {
-    id: 'reel-us-sounds-good',
-    youtubeId: 'x1hRlGhaM9s',
-    expression: 'sounds good',
-    expressionMeaningVi: 'Nghe hay đấy / chốt luôn nhé',
-    americanUsageNote: 'Câu cửa miệng số 1 của người Mỹ để đồng ý nhẹ nhàng khi gọi món, hẹn giờ hoặc chốt ý tưởng.',
+    id: 'reel-us-grab-coffee',
+    youtubeId: 'FkdIpHm4fjc',
+    expression: 'grab a coffee',
+    expressionMeaningVi: 'Đi làm ly cà phê / lấy nhanh thứ gì đó',
+    americanUsageNote: 'Người Mỹ dùng "grab" suốt ngày thay cho "get/take" để nghe thân thiện, tự nhiên: grab a coffee, grab a seat, grab lunch.',
     reelCategory: 'daily_life',
     register: 'casual_us',
     level: 'A2',
-    channel: 'Deeplingo - American Cafe',
-    sourceLessonTitle: 'Ordering Food at a Cozy American Cafe',
-    startSeconds: 41.7,
-    endSeconds: 56.0,
-    targetSubIndex: 2,
-    subtitles: [
-      {
-        id: 'rus-sg-1',
-        start: 41.72,
-        end: 46.56,
-        text: 'What do you recommend?',
-        translation: 'Quán có món gì ngon, bạn gợi ý giúp mình với?'
-      },
-      {
-        id: 'rus-sg-2',
-        start: 43.56,
-        end: 50.52,
-        text: 'Our grilled chicken wrap is popular. We also have chicken, tuna, and veggie sandwiches.',
-        translation: 'Bánh cuộn gà nướng rất được ưa chuộng. Tụi mình còn có sandwich gà, cá ngừ và rau củ.'
-      },
-      {
-        id: 'rus-sg-3',
-        start: 50.52,
-        end: 54.32,
-        text: "The chicken wrap sounds good. What's inside?",
-        translation: 'Bánh cuộn gà nghe ổn đấy. Bên trong có những gì vậy?'
-      }
-    ]
-  },
-  {
-    id: 'reel-us-a-side',
-    youtubeId: 'x1hRlGhaM9s',
-    expression: 'a side',
-    expressionMeaningVi: 'Món ăn kèm (khoai tây chiên, salad...)',
-    americanUsageNote: 'Ở quán ăn Mỹ, nhân viên hỏi "Would you like a side?" là hỏi món ăn kèm chứ không phải "một bên".',
-    reelCategory: 'daily_life',
-    register: 'casual_us',
-    level: 'A2',
-    channel: 'Deeplingo - American Cafe',
-    sourceLessonTitle: 'Ordering Food at a Cozy American Cafe',
-    startSeconds: 74.6,
-    endSeconds: 86.6,
-    targetSubIndex: 2,
-    subtitles: [
-      {
-        id: 'rus-sd-1',
-        start: 74.64,
-        end: 78.52,
-        text: 'Regular or large?',
-        translation: 'Cỡ vừa hay cỡ lớn ạ?'
-      },
-      {
-        id: 'rus-sd-2',
-        start: 76.72,
-        end: 80.08,
-        text: 'Regular is fine.',
-        translation: 'Cỡ vừa là được rồi ạ.'
-      },
-      {
-        id: 'rus-sd-3',
-        start: 78.52,
-        end: 82.08,
-        text: 'Would you like a side?',
-        translation: 'Bạn có muốn gọi thêm món ăn kèm không?'
-      },
-      {
-        id: 'rus-sd-4',
-        start: 80.08,
-        end: 85.52,
-        text: 'What sides do you have?',
-        translation: 'Quán có những món ăn kèm nào vậy?'
-      }
-    ]
-  },
-  {
-    id: 'reel-us-that-explains-it',
-    youtubeId: 'x1hRlGhaM9s',
-    expression: 'That explains it',
-    expressionMeaningVi: 'Thảo nào / Hèn gì!',
-    americanUsageNote: 'Cực kỳ tự nhiên khi vừa nghe lý do giải thích cho chuyện gì đó thay vì nói "Now I understand why".',
-    reelCategory: 'daily_life',
-    register: 'everyday',
-    level: 'A2',
-    channel: 'Deeplingo - American Cafe',
-    sourceLessonTitle: 'Ordering Food at a Cozy American Cafe',
-    startSeconds: 159.1,
-    endSeconds: 170.0,
-    targetSubIndex: 2,
-    subtitles: [
-      {
-        id: 'rus-te-1',
-        start: 159.16,
-        end: 164.56,
-        text: 'You must be hungry.',
-        translation: 'Chắc hẳn bạn đang đói lắm.'
-      },
-      {
-        id: 'rus-te-2',
-        start: 160.96,
-        end: 166.28,
-        text: "I skipped lunch. I'm very hungry.",
-        translation: 'Mình bỏ bữa trưa rồi, giờ đói meo luôn.'
-      },
-      {
-        id: 'rus-te-3',
-        start: 164.56,
-        end: 168.52,
-        text: 'That explains it.',
-        translation: 'Thảo nào!'
-      }
-    ]
-  },
-  {
-    id: 'reel-us-make-it-a-combo',
-    youtubeId: 'x1hRlGhaM9s',
-    expression: 'Make it a combo',
-    expressionMeaningVi: 'Lên thành combo giúp mình nhé',
-    americanUsageNote: 'Cấu trúc "Make it + [thứ bạn chốt]" dùng siêu gọn ở Mỹ: "Make it iced", "Make it a large", "Make it two".',
-    reelCategory: 'daily_life',
-    register: 'casual_us',
-    level: 'A2',
-    channel: 'Deeplingo - American Cafe',
-    sourceLessonTitle: 'Ordering Food at a Cozy American Cafe',
-    startSeconds: 229.9,
-    endSeconds: 242.0,
-    targetSubIndex: 2,
-    subtitles: [
-      {
-        id: 'rus-cb-1',
-        start: 229.96,
-        end: 234.44,
-        text: 'How much is the combo?',
-        translation: 'Combo giá bao nhiêu vậy?'
-      },
-      {
-        id: 'rus-cb-2',
-        start: 231.96,
-        end: 239.64,
-        text: "It's $11.50 with a side and drink.",
-        translation: '11 đô 50 kèm một món phụ và đồ uống ạ.'
-      },
-      {
-        id: 'rus-cb-3',
-        start: 236.52,
-        end: 240.92,
-        text: 'That sounds good. Make it a combo.',
-        translation: 'Nghe hợp lý đấy. Lên thành combo giúp mình nhé.'
-      }
-    ]
-  },
-  {
-    id: 'reel-us-tap-your-card',
-    youtubeId: 'x1hRlGhaM9s',
-    expression: 'Tap your card',
-    expressionMeaningVi: 'Chạm thẻ (thanh toán không tiếp xúc)',
-    americanUsageNote: 'Ở Mỹ hiện nay thu ngân nói "Tap your card" hoặc "Tap to pay" nhiều hơn "Swipe your card".',
-    reelCategory: 'daily_life',
-    register: 'everyday',
-    level: 'A2',
-    channel: 'Deeplingo - American Cafe',
-    sourceLessonTitle: 'Ordering Food at a Cozy American Cafe',
-    startSeconds: 247.0,
-    endSeconds: 261.0,
-    targetSubIndex: 2,
-    subtitles: [
-      {
-        id: 'rus-tc-1',
-        start: 247.04,
-        end: 253.64,
-        text: "Okay. What's the total? — Your total is $18.75.",
-        translation: 'Ok tổng cộng bao nhiêu vậy? — Tổng của bạn là 18 đô 75.'
-      },
-      {
-        id: 'rus-tc-2',
-        start: 253.88,
-        end: 258.32,
-        text: 'Can I pay by card?',
-        translation: 'Mình thanh toán bằng thẻ được không?'
-      },
-      {
-        id: 'rus-tc-3',
-        start: 255.68,
-        end: 259.56,
-        text: 'Yes. Tap your card here.',
-        translation: 'Được ạ. Bạn chạm thẻ vào đây nhé.'
-      }
-    ]
-  },
-  {
-    id: 'reel-us-restroom',
-    youtubeId: 'ys8KkyWI_W8',
-    expression: 'Restroom',
-    expressionMeaningVi: 'Nhà vệ sinh (cách hỏi lịch sự ở Mỹ)',
-    americanUsageNote: 'Ở nơi công cộng Mỹ, luôn hỏi "Where is the restroom?" thay vì "toilet" (nghe hơi thô ở Mỹ).',
-    reelCategory: 'daily_life',
-    register: 'everyday',
-    level: 'A2',
-    channel: 'BBC Learning English (US vs UK)',
-    sourceLessonTitle: 'American English vs British English Vocabulary Quiz',
-    startSeconds: 61.0,
-    endSeconds: 75.5,
-    targetSubIndex: 0,
-    subtitles: [
-      {
-        id: 'rus-rr-1',
-        start: 61.3,
-        end: 71.0,
-        text: 'And where to wash hands: in America you ask for the Restroom or Bathroom, while in Britain people say the Toilet or Loo!',
-        translation: 'Còn chỗ rửa tay: ở Mỹ bạn hỏi Restroom hoặc Bathroom, còn ở Anh người ta nói Toilet hoặc Loo!'
-      },
-      {
-        id: 'rus-rr-2',
-        start: 71.3,
-        end: 76.0,
-        text: 'Did you answer more like Savannah or Nicola? Let us know in the comments!',
-        translation: 'Bạn trả lời giống Savannah (Mỹ) hay Nicola (Anh) hơn?'
-      }
-    ]
-  },
-  {
-    id: 'reel-us-here-you-go',
-    youtubeId: 'sikiDeWtv_k',
-    expression: 'here you go',
-    expressionMeaningVi: 'Của bạn đây nhé!',
-    americanUsageNote: 'Luôn nói "Here you go" (nhẹ nhàng, thân thiện) khi đưa đồ ăn, thẻ ngân hàng hay tài liệu cho ai đó.',
-    reelCategory: 'daily_life',
-    register: 'casual_us',
-    level: 'A2',
-    channel: 'BBC Learning English',
-    sourceLessonTitle: 'Natural English Conversation: Have Dinner with Sian!',
-    startSeconds: 3.5,
-    endSeconds: 17.5,
+    channel: 'My Bilingual Life',
+    sourceLessonTitle: 'What Americans Really Mean When They Say "Grab"',
+    startSeconds: 14.4,
+    endSeconds: 36.3,
     targetSubIndex: 1,
     subtitles: [
       {
-        id: 'rus-hg-1',
-        start: 3.8,
-        end: 7.5,
-        text: 'Can you pass me the pepper, please?',
-        translation: 'Bạn chuyền giúp mình lọ hạt tiêu với nhé?'
-      },
-      {
-        id: 'rus-hg-2',
-        start: 7.8,
-        end: 10.0,
-        text: 'Yeah, here you go!',
-        translation: 'Ừ, của bạn đây nè!'
-      },
-      {
-        id: 'rus-hg-3',
-        start: 14.2,
+        id: 'rus-gr-1',
+        start: 14.4,
         end: 17.0,
-        text: 'Oops, there you go!',
-        translation: 'À đây, của bạn đây nhé!'
+        text: 'And yes, that is true, but listen to how Americans really use it.',
+        translation: 'Đúng là nghĩa từ điển vậy, nhưng hãy nghe cách người Mỹ thực sự dùng nó.'
+      },
+      {
+        id: 'rus-gr-2',
+        start: 17.0,
+        end: 23.2,
+        text: 'Grab a coffee. Grab a seat. Grab lunch.',
+        translation: 'Làm ly cà phê nhé. Ngồi xuống tự nhiên đi. Đi ăn trưa thôi.'
+      },
+      {
+        id: 'rus-gr-3',
+        start: 23.28,
+        end: 26.24,
+        text: 'Grab your jacket. Let me grab my phone.',
+        translation: 'Cầm áo khoác đi. Để mình lấy điện thoại cái đã.'
+      },
+      {
+        id: 'rus-gr-4',
+        start: 26.24,
+        end: 31.6,
+        text: 'In everyday English, grab has become a friendly, casual way to say get.',
+        translation: 'Trong tiếng Anh hàng ngày, "grab" trở thành cách nói thân thiện, tự nhiên thay cho "get".'
+      },
+      {
+        id: 'rus-gr-5',
+        start: 31.6,
+        end: 36.3,
+        text: 'Want to grab dinner later? That just means, do you want to get dinner together?',
+        translation: '"Want to grab dinner later?" chỉ đơn giản là rủ nhau lát nữa đi ăn tối cùng nhau.'
       }
     ]
   },
   {
-    id: 'reel-us-another-bite',
-    youtubeId: 'sikiDeWtv_k',
-    expression: "couldn't eat another bite",
-    expressionMeaningVi: 'No căng bụng không ăn nổi thêm miếng nào nữa',
-    americanUsageNote: 'Cách khen đồ ăn ngon và từ chối lịch sự khi đã quá no trên bàn ăn với bạn bè/đồng nghiệp.',
+    id: 'reel-us-wanna-hafta',
+    youtubeId: 'mwTpw9_6Aig',
+    expression: 'wanna / hafta',
+    expressionMeaningVi: 'Nối âm kiểu Mỹ: want to → wanna, have to → hafta',
+    americanUsageNote: 'Trong văn nói Mỹ tự nhiên, "want to" gần như luôn nuốt thành "wanna" và "have to" thành "hafta".',
+    reelCategory: 'daily_life',
+    register: 'casual_us',
+    level: 'A2',
+    channel: 'Speak English With Vanessa',
+    sourceLessonTitle: 'Speak Like an American: Wanna & Hafta',
+    startSeconds: 0.0,
+    endSeconds: 27.2,
+    targetSubIndex: 1,
+    subtitles: [
+      {
+        id: 'rus-wh-1',
+        start: 0.0,
+        end: 3.4,
+        text: 'Can you say this like an American? I want to go with you.',
+        translation: 'Bạn có thể nói câu này chuẩn kiểu Mỹ không? "I want to go with you."'
+      },
+      {
+        id: 'rus-wh-2',
+        start: 3.42,
+        end: 6.9,
+        text: 'I wanna go with you. The words want and to become wanna.',
+        translation: '"I wanna go with you." Hai từ "want" và "to" nối liền thành "wanna".'
+      },
+      {
+        id: 'rus-wh-3',
+        start: 6.9,
+        end: 13.26,
+        text: "I wanna go with you. What about this sentence: You don't have to clean that up by yourself.",
+        translation: '"I wanna go with you." Còn câu này thì sao: Bạn không cần phải tự dọn chỗ đó một mình đâu.'
+      },
+      {
+        id: 'rus-wh-4',
+        start: 15.32,
+        end: 22.86,
+        text: "You don't hafta clean that up by yourself. The words have to become hafta in American English.",
+        translation: '"You don\'t hafta clean that up by yourself." Cụm "have to" biến thành "hafta" trong tiếng Mỹ.'
+      },
+      {
+        id: 'rus-wh-5',
+        start: 22.86,
+        end: 27.2,
+        text: "You don't hafta clean that up all by yourself.",
+        translation: 'Bạn không phải dọn sạch chỗ đó một mình đâu.'
+      }
+    ]
+  },
+  {
+    id: 'reel-us-hit-the-sack',
+    youtubeId: '44IhmZVASd8',
+    expression: 'hit the sack',
+    expressionMeaningVi: 'Đi ngủ / leo lên giường ngủ',
+    americanUsageNote: 'Thành ngữ đời thường cực phổ biến ở Mỹ khi mệt lử cuối ngày, tự nhiên hơn nhiều so với "go to sleep".',
     reelCategory: 'daily_life',
     register: 'casual_us',
     level: 'B1',
-    channel: 'BBC Learning English',
-    sourceLessonTitle: 'Natural English Conversation: Have Dinner with Sian!',
-    startSeconds: 28.5,
-    endSeconds: 39.0,
+    channel: 'San Diego Voice and Accent',
+    sourceLessonTitle: '"Hit the sack" — American English Idiom',
+    startSeconds: 7.5,
+    endSeconds: 27.9,
     targetSubIndex: 1,
     subtitles: [
       {
-        id: 'rus-ab-1',
-        start: 28.8,
-        end: 32.8,
-        text: "There's plenty more, do you want seconds?",
-        translation: 'Còn nhiều lắm, bạn có muốn ăn thêm phần nữa không?'
+        id: 'rus-hs-1',
+        start: 7.56,
+        end: 11.64,
+        text: 'To hit the sack means to go to bed.',
+        translation: '"Hit the sack" có nghĩa là đi ngủ.'
       },
       {
-        id: 'rus-ab-2',
-        start: 33.0,
-        end: 36.5,
-        text: "Oh thanks, that was delicious, but I couldn't eat another bite!",
-        translation: 'Cảm ơn nhiều, ngon xuất sắc luôn nhưng mình no căng không ăn nổi thêm miếng nào nữa!'
+        id: 'rus-hs-2',
+        start: 11.64,
+        end: 14.5,
+        text: "I'm exhausted. I think I'm going to hit the sack.",
+        translation: 'Mình kiệt sức rồi. Chắc mình đi ngủ đây.'
       },
       {
-        id: 'rus-ab-3',
-        start: 36.8,
-        end: 39.0,
-        text: 'Room for dessert? I made some cake! - Oh, go on then!',
-        translation: 'Còn bụng ăn tráng miệng không? Mình có làm bánh đấy! — Thế thì ăn luôn!'
+        id: 'rus-hs-3',
+        start: 14.5,
+        end: 21.4,
+        text: "It's been a long week and I can't wait to hit the sack and catch up on sleep this weekend.",
+        translation: 'Cả tuần dài mệt mỏi rồi, mình chỉ mong được lên giường ngủ bù cuối tuần này.'
+      },
+      {
+        id: 'rus-hs-4',
+        start: 21.44,
+        end: 27.9,
+        text: 'Jane had to wake up early for her flight, so she hit the sack as soon as she got home.',
+        translation: 'Jane phải dậy sớm kịp chuyến bay nên vừa về đến nhà là cô ấy đi ngủ ngay.'
+      }
+    ]
+  },
+  {
+    id: 'reel-us-have-to-aftuh',
+    youtubeId: 'IIUd7suvUFI',
+    expression: 'I have to',
+    expressionMeaningVi: 'Tôi phải... (đọc nối kiểu Mỹ: "I aftuh")',
+    americanUsageNote: 'Khi nói nhanh, người Mỹ lược âm /h/ của "have" và nối thành "I aftuh" — tập nghe cụm này giúp bắt kịp 90% hội thoại hàng ngày.',
+    reelCategory: 'daily_life',
+    register: 'casual_us',
+    level: 'A2',
+    channel: 'SpeechModification',
+    sourceLessonTitle: 'Fluent American Practice: "I have to"',
+    startSeconds: 0.4,
+    endSeconds: 24.3,
+    targetSubIndex: 2,
+    subtitles: [
+      {
+        id: 'rus-ht-1',
+        start: 0.48,
+        end: 4.0,
+        text: "Hi guys, here's a quick practice for the phrase I have to.",
+        translation: 'Chào mọi người, đây là bài luyện nhanh cho cụm "I have to".'
+      },
+      {
+        id: 'rus-ht-2',
+        start: 4.0,
+        end: 8.5,
+        text: 'We say it like "I aftuh". I have to think about it.',
+        translation: 'Người Mỹ đọc nối như "I aftuh". Tôi phải suy nghĩ thêm về việc đó.'
+      },
+      {
+        id: 'rus-ht-3',
+        start: 8.5,
+        end: 15.0,
+        text: 'I have to work. I have to go. I have to be there.',
+        translation: 'Mình phải làm việc. Mình phải đi rồi. Mình phải có mặt ở đó.'
+      },
+      {
+        id: 'rus-ht-4',
+        start: 15.08,
+        end: 21.8,
+        text: 'I have to call her. I have to get some. I have to buy that.',
+        translation: 'Mình phải gọi cho cô ấy. Mình phải mua một ít. Mình phải mua món đó.'
+      },
+      {
+        id: 'rus-ht-5',
+        start: 21.8,
+        end: 24.3,
+        text: 'I have to write it down. I have to remember that.',
+        translation: 'Mình phải ghi lại mới được. Mình phải nhớ chuyện đó.'
+      }
+    ]
+  },
+  {
+    id: 'reel-us-small-talk',
+    youtubeId: 'P6MfNZBfrNU',
+    expression: 'not clicking with',
+    expressionMeaningVi: 'Không hợp cạ / khó bắt nhịp trò chuyện',
+    americanUsageNote: 'Khi nói chuyện xã giao ở Mỹ ("small talk"), mở đầu bằng câu xã giao nhẹ nhàng là văn hóa mặc định trước khi đi vào chuyện sâu.',
+    reelCategory: 'daily_life',
+    register: 'casual_us',
+    level: 'B2',
+    channel: 'Tannia Suárez',
+    sourceLessonTitle: 'The American Small Talk Trap',
+    startSeconds: 8.4,
+    endSeconds: 24.4,
+    targetSubIndex: 1,
+    subtitles: [
+      {
+        id: 'rus-st-1',
+        start: 8.4,
+        end: 11.4,
+        text: 'When I work with that culture clash, they come to me and say:',
+        translation: 'Khi gặp cú sốc văn hóa đó, mọi người hay tìm đến mình và bảo:'
+      },
+      {
+        id: 'rus-st-2',
+        start: 11.4,
+        end: 15.12,
+        text: '"I don\'t understand. I\'m just not clicking with people."',
+        translation: '"Mình không hiểu sao cứ không bắt nhịp / không hợp cạ được với mọi người."'
+      },
+      {
+        id: 'rus-st-3',
+        start: 15.12,
+        end: 18.6,
+        text: "It's because we have this quirky way of starting with the superficial stuff.",
+        translation: 'Bởi vì người Mỹ có thói quen mở đầu bằng những câu xã giao bề nổi.'
+      },
+      {
+        id: 'rus-st-4',
+        start: 18.6,
+        end: 24.4,
+        text: 'Like "How\'s the weather?" "How are you? Good. How are you? Great."',
+        translation: 'Kiểu như "Thời tiết thế nào?", "Khỏe không? Ổn. Còn bạn? Tuyệt vời."'
+      }
+    ]
+  },
+  {
+    id: 'reel-us-hotel-checkin',
+    youtubeId: 'pOLF41l4-eU',
+    expression: 'have a reservation',
+    expressionMeaningVi: 'Có đặt phòng / đặt bàn trước',
+    americanUsageNote: 'Mẫu hội thoại thực tế chuẩn Mỹ khi nhận phòng khách sạn hoặc vào nhà hàng — ngắn gọn, lịch sự, dùng được ngay.',
+    reelCategory: 'daily_life',
+    register: 'everyday',
+    level: 'A2',
+    channel: 'English Teaching Friends',
+    sourceLessonTitle: 'Hotel Check-In English in America',
+    startSeconds: 0.0,
+    endSeconds: 18.2,
+    targetSubIndex: 0,
+    subtitles: [
+      {
+        id: 'rus-hc-1',
+        start: 0.0,
+        end: 4.3,
+        text: 'Do you have a reservation? — Yes, I do.',
+        translation: 'Bạn có đặt phòng trước không? — Có, tôi có đặt rồi.'
+      },
+      {
+        id: 'rus-hc-2',
+        start: 4.4,
+        end: 8.9,
+        text: 'May I see your ID, please? — Sure, here it is.',
+        translation: 'Cho tôi xem giấy tờ tùy thân của bạn nhé? — Vâng, đây ạ.'
+      },
+      {
+        id: 'rus-hc-3',
+        start: 8.96,
+        end: 13.4,
+        text: 'How many nights will you stay? — Two nights.',
+        translation: 'Bạn sẽ ở lại mấy đêm? — Hai đêm ạ.'
+      },
+      {
+        id: 'rus-hc-4',
+        start: 13.44,
+        end: 18.2,
+        text: 'Here is your room key. — Thank you.',
+        translation: 'Đây là chìa khóa phòng của bạn. — Cảm ơn bạn.'
       }
     ]
   },
 
-  // ===================== CLUSTER 2: WORKPLACE & REAL AMERICAN TALK =====================
+  // ===================== CLUSTER 2: WORKPLACE & AMERICAN OFFICE (6 VERTICAL SHORTS) =====================
   {
-    id: 'reel-work-truth-be-told',
-    youtubeId: 'UF8uR6Z6KLc',
-    expression: 'Truth be told',
-    expressionMeaningVi: 'Thành thật mà nói thì...',
-    americanUsageNote: 'Cụm mở lời cực tự nhiên & tinh tế trong cuộc họp hoặc khi chia sẻ thật lòng (đỡ cứng hơn "Honestly speaking").',
+    id: 'reel-work-circle-back',
+    youtubeId: '9LsK85CrsWU',
+    expression: 'circle back',
+    expressionMeaningVi: 'Quay lại bàn tiếp sau / để sau xử lý tiếp',
+    americanUsageNote: 'Cụm từ số 1 trong các cuộc họp Mỹ khi muốn tạm gác 1 chủ đề để xử lý vào cuối ngày hoặc tuần sau.',
     reelCategory: 'work_talk',
     register: 'workplace_us',
     level: 'B1',
-    channel: 'Stanford / Steve Jobs',
-    sourceLessonTitle: 'Steve Jobs: How to Live Before You Die',
-    startSeconds: 35.2,
-    endSeconds: 46.5,
-    targetSubIndex: 0,
+    channel: 'coachshanesesl',
+    sourceLessonTitle: 'What Does "Circle Back" Really Mean?',
+    startSeconds: 12.7,
+    endSeconds: 37.8,
+    targetSubIndex: 1,
     subtitles: [
       {
-        id: 'rw-tbt-1',
-        start: 35.56,
-        end: 41.56,
-        text: 'Truth be told, I never graduated from college',
-        translation: 'Thành thật mà nói, tôi chưa bao giờ tốt nghiệp đại học'
+        id: 'rw-cb-1',
+        start: 12.72,
+        end: 14.56,
+        text: 'Circle back.',
+        translation: 'Quay lại bàn tiếp sau ("Circle back").'
       },
       {
-        id: 'rw-tbt-2',
+        id: 'rw-cb-2',
+        start: 14.56,
+        end: 18.48,
+        text: 'Yeah, can we circle back to this next week?',
+        translation: 'Ừ, tuần sau mình quay lại bàn tiếp vấn đề này được không?'
+      },
+      {
+        id: 'rw-cb-3',
+        start: 18.48,
+        end: 23.84,
+        text: "Let's circle back to the budget after lunch.",
+        translation: 'Ăn trưa xong tụi mình quay lại chốt ngân sách nhé.'
+      },
+      {
+        id: 'rw-cb-4',
+        start: 23.84,
+        end: 30.5,
+        text: "We're going to have to circle back to this after we finish the main work.",
+        translation: 'Chúng ta sẽ phải quay lại việc này sau khi làm xong phần việc chính.'
+      },
+      {
+        id: 'rw-cb-5',
+        start: 30.56,
+        end: 37.8,
+        text: 'To circle back means to get back to something later.',
+        translation: '"Circle back" nghĩa là tạm gác lại rồi quay lại xử lý sau.'
+      }
+    ]
+  },
+  {
+    id: 'reel-work-just-checking-in',
+    youtubeId: 'dQ9SW57Cln4',
+    expression: 'just checking in',
+    expressionMeaningVi: 'Hỏi thăm nhẹ xem tiến độ tới đâu rồi',
+    americanUsageNote: 'Nhắn Slack/Email cho đồng nghiệp Mỹ dùng "Just checking in" để nhắc khéo cập nhật tiến độ mà không gây cảm giác gắt gỏng.',
+    reelCategory: 'work_talk',
+    register: 'workplace_us',
+    level: 'B1',
+    channel: 'ChatterFox',
+    sourceLessonTitle: 'What "Just Checking In" Actually Means at Work',
+    startSeconds: 8.4,
+    endSeconds: 34.3,
+    targetSubIndex: 2,
+    subtitles: [
+      {
+        id: 'rw-jc-1',
+        start: 8.48,
+        end: 14.16,
+        text: 'If you work in the US, sooner or later you will get a message that says, "Just checking in."',
+        translation: 'Nếu làm việc ở Mỹ, sớm muộn gì bạn cũng nhận được tin nhắn: "Just checking in."'
+      },
+      {
+        id: 'rw-jc-2',
+        start: 14.16,
+        end: 20.0,
+        text: "And if English isn't your first language, that message can feel stressful.",
+        translation: 'Và nếu tiếng Anh không phải tiếng mẹ đẻ, tin nhắn đó dễ khiến bạn thấy áp lực.'
+      },
+      {
+        id: 'rw-jc-3',
+        start: 25.64,
+        end: 31.92,
+        text: 'In most American workplaces, "Just checking in" simply means, "Any updates?"',
+        translation: 'Ở hầu hết công sở Mỹ, "Just checking in" chỉ đơn giản là hỏi: "Có cập nhật gì mới chưa?"'
+      },
+      {
+        id: 'rw-jc-4',
+        start: 31.92,
+        end: 34.28,
+        text: "It's not criticism. It's just a polite way to follow up.",
+        translation: 'Đó không phải là chê trách. Chỉ là cách hỏi thăm tiến độ rất lịch sự thôi.'
+      }
+    ]
+  },
+  {
+    id: 'reel-work-with-all-due-respect',
+    youtubeId: 'eAizldoLIkk',
+    expression: 'with all due respect',
+    expressionMeaningVi: 'Xin phép nói thẳng / tôi tôn trọng nhưng không đồng ý',
+    americanUsageNote: 'Tín hiệu lịch sự nhưng rất rõ ràng trong cuộc họp Mỹ: ngay sau cụm này sẽ là một quan điểm phản biện trực diện.',
+    reelCategory: 'work_talk',
+    register: 'workplace_us',
+    level: 'B2',
+    channel: 'ChatterFox',
+    sourceLessonTitle: '"With All Due Respect" = Workplace Disagreement',
+    startSeconds: 9.6,
+    endSeconds: 48.4,
+    targetSubIndex: 3,
+    subtitles: [
+      {
+        id: 'rw-wr-1',
+        start: 9.6,
+        end: 15.08,
+        text: 'Quick tip: you might hear this phrase, "with all due respect."',
+        translation: 'Mẹo nhỏ: bạn có thể hay nghe cụm "with all due respect."'
+      },
+      {
+        id: 'rw-wr-2',
+        start: 15.08,
+        end: 24.4,
+        text: 'Sounds polite, right? But in real conversations, they are probably about to disagree with you.',
+        translation: 'Nghe lịch sự đúng không? Nhưng thực tế là họ sắp phản biện lại ý bạn đấy.'
+      },
+      {
+        id: 'rw-wr-3',
+        start: 29.0,
+        end: 35.6,
+        text: 'It basically means, I respect you, but I see this differently.',
+        translation: 'Về cơ bản nó có nghĩa là: tôi tôn trọng bạn, nhưng tôi nhìn vấn đề này theo hướng khác.'
+      },
+      {
+        id: 'rw-wr-4',
+        start: 42.6,
+        end: 48.4,
+        text: "For example: With all due respect, I don't think this will work.",
+        translation: 'Ví dụ: Xin phép nói thẳng, tôi không nghĩ phương án này sẽ khả thi.'
+      }
+    ]
+  },
+  {
+    id: 'reel-work-earliest-convenience',
+    youtubeId: 'PhOgmBhouXA',
+    expression: 'at your earliest convenience',
+    expressionMeaningVi: 'Sớm nhất có thể khi bạn tiện',
+    americanUsageNote: 'Câu chốt email công việc cực chuẩn để giục đối tác/đồng nghiệp làm sớm mà vẫn giữ thái độ chuyên nghiệp, không thô lỗ.',
+    reelCategory: 'work_talk',
+    register: 'workplace_us',
+    level: 'B2',
+    channel: 'ChatterFox',
+    sourceLessonTitle: 'Business English: "At Your Earliest Convenience"',
+    startSeconds: 9.3,
+    endSeconds: 45.6,
+    targetSubIndex: 3,
+    subtitles: [
+      {
+        id: 'rw-ec-1',
+        start: 9.32,
+        end: 15.4,
+        text: "Here's a phrase that sounds super formal: at your earliest convenience.",
+        translation: 'Đây là cụm nghe rất trang trọng: "at your earliest convenience."'
+      },
+      {
+        id: 'rw-ec-2',
+        start: 15.4,
+        end: 22.4,
+        text: 'Basically it means: please take care of this as soon as you can.',
+        translation: 'Hiểu đơn giản là: vui lòng xử lý việc này sớm nhất có thể khi bạn thu xếp được.'
+      },
+      {
+        id: 'rw-ec-3',
+        start: 22.44,
+        end: 26.08,
+        text: "It doesn't mean drop everything right now, and not whenever you get around to it.",
+        translation: 'Không phải bắt bạn bỏ hết mọi thứ làm ngay, nhưng cũng đừng để ngâm quá lâu.'
+      },
+      {
+        id: 'rw-ec-4',
+        start: 36.72,
+        end: 45.6,
+        text: 'For example: Please review the document at your earliest convenience, or send the signed contract.',
+        translation: 'Ví dụ: Vui lòng xem giúp tài liệu (hoặc gửi hợp đồng đã ký) sớm nhất khi bạn tiện.'
+      }
+    ]
+  },
+  {
+    id: 'reel-work-repeat-more-slowly',
+    youtubeId: 'dRLPWwI0_1s',
+    expression: 'a little fast for me',
+    expressionMeaningVi: 'Hơi nhanh với tôi — xin nhắc lại chậm hơn',
+    americanUsageNote: 'Đừng im lặng khi đồng nghiệp bản xứ nói quá nhanh trong cuộc họp: câu này vừa chuyên nghiệp vừa tự tin.',
+    reelCategory: 'work_talk',
+    register: 'workplace_us',
+    level: 'B1',
+    channel: 'BizWise Business English',
+    sourceLessonTitle: 'When Someone Speaks Too Fast in Meetings',
+    startSeconds: 1.4,
+    endSeconds: 49.8,
+    targetSubIndex: 3,
+    subtitles: [
+      {
+        id: 'rw-rf-1',
+        start: 1.48,
+        end: 8.08,
+        text: 'Do you ever stay quiet in a meeting because someone is speaking too fast?',
+        translation: 'Bạn có bao giờ ngồi im trong cuộc họp chỉ vì ai đó nói quá nhanh không?'
+      },
+      {
+        id: 'rw-rf-2',
+        start: 12.8,
+        end: 18.8,
+        text: 'We need the revised figures by Thursday so finance can check them before Friday.',
+        translation: 'Ta cần số liệu chỉnh sửa trước thứ Năm để bên tài chính kiểm tra trước thứ Sáu.'
+      },
+      {
+        id: 'rw-rf-3',
+        start: 32.12,
+        end: 41.5,
+        text: "The person speaking has a responsibility to be understood. It's reasonable to ask them to slow down.",
+        translation: 'Người nói có trách nhiệm truyền đạt dễ hiểu. Đề nghị họ nói chậm lại là hoàn toàn hợp lý.'
+      },
+      {
+        id: 'rw-rf-4',
+        start: 43.32,
+        end: 49.8,
+        text: 'Sorry, that was a little fast for me. Could you repeat that more slowly, please?',
+        translation: 'Xin lỗi, đoạn vừa rồi hơi nhanh với mình. Bạn nhắc lại chậm hơn một chút được không?'
+      }
+    ]
+  },
+  {
+    id: 'reel-work-can-of-worms',
+    youtubeId: 'hr_Dkpzd3ak',
+    expression: 'open a can of worms',
+    expressionMeaningVi: 'Khơi ra một mớ rắc rối / đụng vào ổ kiến lửa',
+    americanUsageNote: 'Idiom công sở cực đắt giá khi muốn cảnh báo rằng 1 đề xuất mới sẽ kéo theo hàng loạt vấn đề phức tạp.',
+    reelCategory: 'work_talk',
+    register: 'workplace_us',
+    level: 'B2',
+    channel: 'Speak Confident English',
+    sourceLessonTitle: 'Workplace Idiom: Open a Can of Worms',
+    startSeconds: 0.3,
+    endSeconds: 47.9,
+    targetSubIndex: 3,
+    subtitles: [
+      {
+        id: 'rw-cw-1',
+        start: 0.32,
+        end: 5.36,
+        text: 'To open a can of worms. That is a workplace idiom you are likely to hear.',
+        translation: '"Open a can of worms" là một thành ngữ công sở bạn rất hay gặp.'
+      },
+      {
+        id: 'rw-cw-2',
+        start: 12.16,
+        end: 21.2,
+        text: 'It means to warn someone that whatever they are proposing is going to lead to greater complexity.',
+        translation: 'Nó dùng để cảnh báo rằng điều họ đang đề xuất sẽ kéo theo nhiều rắc rối phức tạp hơn.'
+      },
+      {
+        id: 'rw-cw-3',
+        start: 26.48,
+        end: 35.2,
+        text: 'For example, someone proposes a change to an existing policy that everyone knows how to follow.',
+        translation: 'Ví dụ ai đó đề xuất đổi một quy định cũ mà tất cả mọi người đã quen làm theo.'
+      },
+      {
+        id: 'rw-cw-4',
         start: 41.56,
-        end: 45.93,
-        text: "and this is the closest I've ever gotten to a college graduation.",
-        translation: 'và đây là lần tôi ở gần một buổi lễ tốt nghiệp đại học nhất.'
-      }
-    ]
-  },
-  {
-    id: 'reel-work-no-big-deal',
-    youtubeId: 'UF8uR6Z6KLc',
-    expression: 'No big deal',
-    expressionMeaningVi: 'Chuyện nhỏ thôi / Không có gì to tát',
-    americanUsageNote: 'Dùng để hạ nhiệt căng thẳng hoặc đáp lại lời cảm ơn/xin lỗi trong team ("Sorry I\'m 2 minutes late" — "No big deal!").',
-    reelCategory: 'work_talk',
-    register: 'casual_us',
-    level: 'A2',
-    channel: 'Stanford / Steve Jobs',
-    sourceLessonTitle: 'Steve Jobs: How to Live Before You Die',
-    startSeconds: 47.8,
-    endSeconds: 56.0,
-    targetSubIndex: 1,
-    subtitles: [
-      {
-        id: 'rw-nbd-1',
-        start: 47.98,
-        end: 52.01,
-        text: "Today I want to tell you three stories from my life. That's it.",
-        translation: 'Hôm nay tôi muốn kể cho các bạn nghe ba câu chuyện đời mình. Thế thôi.'
-      },
-      {
-        id: 'rw-nbd-2',
-        start: 52.01,
-        end: 54.85,
-        text: 'No big deal. Just three stories.',
-        translation: 'Chẳng có gì to tát đâu. Chỉ ba câu chuyện thôi.'
-      }
-    ]
-  },
-  {
-    id: 'reel-work-all-set',
-    youtubeId: 'UF8uR6Z6KLc',
-    expression: 'all set',
-    expressionMeaningVi: 'Mọi thứ sẵn sàng / Xong xuôi hết rồi',
-    americanUsageNote: 'Cụm đa năng bậc nhất nước Mỹ: họp xong nói "We\'re all set!", gửi file xong nói "You\'re all set!".',
-    reelCategory: 'work_talk',
-    register: 'workplace_us',
-    level: 'B1',
-    channel: 'Stanford / Steve Jobs',
-    sourceLessonTitle: 'Steve Jobs: How to Live Before You Die',
-    startSeconds: 85.8,
-    endSeconds: 98.0,
-    targetSubIndex: 0,
-    subtitles: [
-      {
-        id: 'rw-as-1',
-        start: 86.31,
-        end: 91.1,
-        text: 'so everything was all set for me to be adopted at birth by a lawyer and his wife.',
-        translation: 'vì vậy mọi thứ đã được sắp xếp xong xuôi để tôi được vợ chồng một luật sư nhận nuôi ngay khi chào đời.'
-      },
-      {
-        id: 'rw-as-2',
-        start: 91.74,
-        end: 97.55,
-        text: 'Except that when I popped out they decided at the last minute that they really wanted a girl.',
-        translation: 'Ngoại trừ lúc tôi vừa chào đời thì họ lại đổi ý vào phút chót rằng họ muốn một bé gái.'
-      }
-    ]
-  },
-  {
-    id: 'reel-work-figure-it-out',
-    youtubeId: 'UF8uR6Z6KLc',
-    expression: 'figure it out',
-    expressionMeaningVi: 'Tìm ra cách giải quyết / Tự xoay xở',
-    americanUsageNote: 'Phrasal verb công sở Mỹ dùng hằng ngày khi xử lý bug hay bài toán khó: "Don\'t worry, we\'ll figure it out."',
-    reelCategory: 'work_talk',
-    register: 'workplace_us',
-    level: 'B1',
-    channel: 'Stanford / Steve Jobs',
-    sourceLessonTitle: 'Steve Jobs: How to Live Before You Die',
-    startSeconds: 150.5,
-    endSeconds: 157.0,
-    targetSubIndex: 1,
-    subtitles: [
-      {
-        id: 'rw-fio-1',
-        start: 150.72,
-        end: 152.76,
-        text: 'I had no idea what I wanted to do with my life',
-        translation: 'Tôi chẳng biết mình muốn làm gì với cuộc đời mình'
-      },
-      {
-        id: 'rw-fio-2',
-        start: 152.76,
-        end: 156.38,
-        text: 'and no idea how college was going to help me figure it out.',
-        translation: 'và cũng không biết đại học sẽ giúp tôi tìm ra câu trả lời kiểu gì.'
-      }
-    ]
-  },
-  {
-    id: 'reel-work-work-out-ok',
-    youtubeId: 'UF8uR6Z6KLc',
-    expression: 'work out',
-    expressionMeaningVi: 'Ổn thỏa / Diễn ra suôn sẻ',
-    americanUsageNote: 'Ngoài nghĩa "tập gym", người Mỹ dùng "work out" cực nhiều với nghĩa mọi việc ổn thỏa ("It\'ll all work out!").',
-    reelCategory: 'work_talk',
-    register: 'workplace_us',
-    level: 'B1',
-    channel: 'Stanford / Steve Jobs',
-    sourceLessonTitle: 'Steve Jobs: How to Live Before You Die',
-    startSeconds: 162.3,
-    endSeconds: 173.2,
-    targetSubIndex: 0,
-    subtitles: [
-      {
-        id: 'rw-wo-1',
-        start: 162.6,
-        end: 166.94,
-        text: 'So I decided to drop out and trust that it would all work out OK.',
-        translation: 'Vì vậy tôi quyết định bỏ học và tin rằng mọi thứ rồi sẽ ổn thỏa thôi.'
-      },
-      {
-        id: 'rw-wo-2',
-        start: 166.94,
-        end: 172.81,
-        text: 'It was pretty scary at the time, but looking back it was one of the best decisions I ever made.',
-        translation: 'Lúc đó cũng khá đáng sợ, nhưng nhìn lại thì đó là một trong những quyết định sáng suốt nhất đời tôi.'
-      }
-    ]
-  },
-  {
-    id: 'reel-work-turned-out',
-    youtubeId: 'UF8uR6Z6KLc',
-    expression: 'turned out',
-    expressionMeaningVi: 'Hóa ra lại là / Kết quả lại thành ra',
-    americanUsageNote: 'Dùng suốt khi kể chuyện hoặc review dự án: "It turned out to be much faster than we expected."',
-    reelCategory: 'work_talk',
-    register: 'workplace_us',
-    level: 'B1',
-    channel: 'Stanford / Steve Jobs',
-    sourceLessonTitle: 'Steve Jobs: How to Live Before You Die',
-    startSeconds: 203.5,
-    endSeconds: 210.5,
-    targetSubIndex: 1,
-    subtitles: [
-      {
-        id: 'rw-to-1',
-        start: 203.85,
-        end: 206.26,
-        text: 'And much of what I stumbled into by following',
-        translation: 'Và rất nhiều thứ tôi tình cờ gặp được khi đi theo'
-      },
-      {
-        id: 'rw-to-2',
-        start: 206.26,
-        end: 209.69,
-        text: 'my curiosity and intuition turned out to be priceless later on.',
-        translation: 'sự tò mò và trực giác của mình về sau hóa ra lại vô giá.'
-      }
-    ]
-  },
-  {
-    id: 'reel-work-down-the-road',
-    youtubeId: 'UF8uR6Z6KLc',
-    expression: 'down the road',
-    expressionMeaningVi: 'Về sau này / Trong tương lai gần-xa',
-    americanUsageNote: 'Idiom cực chuẩn trong họp chiến lược & công việc ở Mỹ: "This decision will save us hours down the road."',
-    reelCategory: 'work_talk',
-    register: 'workplace_us',
-    level: 'B2',
-    channel: 'Stanford / Steve Jobs',
-    sourceLessonTitle: 'Steve Jobs: How to Live Before You Die',
-    startSeconds: 322.0,
-    endSeconds: 333.8,
-    targetSubIndex: 0,
-    subtitles: [
-      {
-        id: 'rw-dtr-1',
-        start: 322.35,
-        end: 328.1,
-        text: 'Believing that the dots will connect down the road will give you the confidence to follow your heart',
-        translation: 'Tin rằng các điểm sẽ tự kết nối với nhau về sau này sẽ cho bạn sự tự tin để đi theo trái tim'
-      },
-      {
-        id: 'rw-dtr-2',
-        start: 328.1,
-        end: 333.35,
-        text: 'even when it leads you off the well-worn path, and that will make all the difference.',
-        translation: 'ngay cả khi nó dẫn bạn ra khỏi lối mòn quen thuộc, và điều đó sẽ tạo nên mọi sự khác biệt.'
-      }
-    ]
-  },
-  {
-    id: 'reel-work-screw-up',
-    youtubeId: 'UF8uR6Z6KLc',
-    expression: 'screwing up',
-    expressionMeaningVi: 'Làm hỏng bét / Phạm sai lầm lớn',
-    americanUsageNote: 'Tiếng Mỹ đời thực ở công sở thân mật (dùng khi nhận lỗi thẳng thắn): "My bad, I screwed up the deployment."',
-    reelCategory: 'work_talk',
-    register: 'casual_us',
-    level: 'B2',
-    channel: 'Stanford / Steve Jobs',
-    sourceLessonTitle: 'Steve Jobs: How to Live Before You Die',
-    startSeconds: 407.0,
-    endSeconds: 414.5,
-    targetSubIndex: 1,
-    subtitles: [
-      {
-        id: 'rw-su-1',
-        start: 407.21,
-        end: 410.49,
-        text: 'I met with David Packard and Bob Noyce',
-        translation: 'Tôi đã gặp David Packard và Bob Noyce'
-      },
-      {
-        id: 'rw-su-2',
-        start: 410.88,
-        end: 413.7,
-        text: 'and tried to apologize for screwing up so badly.',
-        translation: 'và cố gắng xin lỗi vì mình đã làm hỏng bét mọi chuyện đến thế.'
-      }
-    ]
-  },
-  {
-    id: 'reel-work-start-over',
-    youtubeId: 'UF8uR6Z6KLc',
-    expression: 'start over',
-    expressionMeaningVi: 'Làm lại từ đầu',
-    americanUsageNote: 'Tự nhiên hơn hẳn "begin again from zero": "Let\'s scrap this draft and start over."',
-    reelCategory: 'work_talk',
-    register: 'workplace_us',
-    level: 'B1',
-    channel: 'Stanford / Steve Jobs',
-    sourceLessonTitle: 'Steve Jobs: How to Live Before You Die',
-    startSeconds: 427.5,
-    endSeconds: 438.5,
-    targetSubIndex: 1,
-    subtitles: [
-      {
-        id: 'rw-so-1',
-        start: 427.8,
-        end: 430.97,
-        text: 'I had been rejected, but I was still in love.',
-        translation: 'Tôi bị gạt ra ngoài, nhưng tôi vẫn còn yêu công việc này.'
-      },
-      {
-        id: 'rw-so-2',
-        start: 432.09,
-        end: 433.84,
-        text: 'And so I decided to start over.',
-        translation: 'Và thế là tôi quyết định bắt đầu lại từ đầu.'
-      }
-    ]
-  },
-  {
-    id: 'reel-work-keep-going',
-    youtubeId: '0YnRI-RsLfU',
-    expression: 'can be tough',
-    expressionMeaningVi: 'Khá là khó nhằn / Không dễ chút nào',
-    americanUsageNote: 'Người Mỹ rất hay dùng "tough" thay cho "difficult" trong giao tiếp thật ("That\'s a tough call", "Staying focused can be tough").',
-    reelCategory: 'work_talk',
-    register: 'everyday',
-    level: 'B1',
-    channel: 'POC English',
-    sourceLessonTitle: 'English Pronunciation: Tricky -OUGH Words',
-    startSeconds: 13.8,
-    endSeconds: 29.8,
-    targetSubIndex: 1,
-    subtitles: [
-      {
-        id: 'rw-kg-1',
-        start: 13.8,
-        end: 21.5,
-        text: 'Number two: Though. It sounds like T-H-O-H: Though. Even though it was late, we kept going.',
-        translation: 'Số hai: Though. Mặc dù đã muộn nhưng chúng tôi vẫn tiếp tục cố gắng.'
-      },
-      {
-        id: 'rw-kg-2',
-        start: 21.8,
-        end: 29.5,
-        text: 'Number three: Tough. It sounds like T-U-F-F: Tough. Staying focused can be tough.',
-        translation: 'Số ba: Tough (/tʌf/). Giữ được sự tập trung đôi khi khá là khó nhằn.'
+        end: 47.9,
+        text: 'Another coworker might say, "Be careful with that. You\'re opening a can of worms."',
+        translation: 'Đồng nghiệp khác có thể nói: "Cẩn thận đấy. Bạn đang khơi ra cả một mớ rắc rối đó."'
       }
     ]
   }
@@ -652,7 +608,7 @@ export function mapCuratedReelToVideoLesson(reel: CuratedAmericanReel): VideoLes
     youtubeId: reel.youtubeId,
     title: `${reel.expression} — ${reel.sourceLessonTitle}`,
     channel: reel.channel,
-    thumbnail: `https://img.youtube.com/vi/${reel.youtubeId}/hqdefault.jpg`,
+    thumbnail: `https://i.ytimg.com/vi/${reel.youtubeId}/hqdefault.jpg`,
     level: reel.level,
     topic: reel.reelCategory === 'work_talk' ? 'Công sở & Giao tiếp Mỹ' : 'Đời sống Mỹ',
     duration: `00:${durationSec.toString().padStart(2, '0')}`,

@@ -279,6 +279,14 @@ const AMERICAN_EXPRESSION_CATALOG: ExpressionCatalogItem[] = [
     usageNote: 'Câu chốt siêu chuẩn trong team Mỹ: "Just making sure we\'re all on the same page."',
     category: 'work_talk',
     register: 'workplace_us'
+  },
+  {
+    expression: 'circle back',
+    pattern: /\bcircl(?:e|es|ed|ing)\s+back\b/i,
+    meaningVi: 'Quay lại bàn tiếp sau / để sau xử lý tiếp',
+    usageNote: 'Cụm từ số 1 trong cuộc họp Mỹ khi tạm gác một chủ đề để xử lý sau.',
+    category: 'work_talk',
+    register: 'workplace_us'
   }
 ];
 

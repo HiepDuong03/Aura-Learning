@@ -5,7 +5,8 @@ import {
   AnkiRating,
   AuthUser,
   ContextExplanation,
-  DailyReelProgress
+  DailyReelProgress,
+  SubtitleLine
 } from '../../types';
 import {
   ChevronUp,
@@ -43,10 +44,11 @@ import {
   X,
   Settings2,
   Film,
-  ExternalLink
+  ExternalLink,
+  RefreshCw
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { explainInContext } from '../../services/dictionaryService';
+import { batchTranslateSubtitles, explainInContext } from '../../services/dictionaryService';
 import { authService } from '../../services/authService';
 import { getLocalDateKey } from '../../services/scopedStorage';
 import { tokenizeText } from '../../utils/textTokenizer';
@@ -112,7 +114,6 @@ interface HeartParticle {
 
 export const ShortsView: React.FC<ShortsViewProps> = ({
   isActive = true,
-  shorts: initialShorts,
   onSelectWord,
   onOpenLesson,
   savedWords = [],
@@ -197,6 +198,52 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   // Local / R2 MP4 movie reels manifest (auto-loaded from /reels/manifest.json if present)
   const [manifestReels, setManifestReels] = useState<VideoLesson[]>([]);
 
+  // Auto-Updating Live YouTube Shorts RSS Feed + User-Followed Channels & User-Added Shorts
+  interface FollowedReelChannel {
+    channelId: string;
+    channelName: string;
+    shortsCount?: number;
+  }
+  const [liveRssReels, setLiveRssReels] = useState<VideoLesson[]>([]);
+  const [isRefreshingFeed, setIsRefreshingFeed] = useState<boolean>(false);
+  const [showAddSourcePanel, setShowAddSourcePanel] = useState<boolean>(false);
+  const [sourceInput, setSourceInput] = useState<string>('');
+  const [isResolvingSource, setIsResolvingSource] = useState<boolean>(false);
+  const [sourceError, setSourceError] = useState<string | null>(null);
+
+  const [followedChannels, setFollowedChannels] = useState<FollowedReelChannel[]>(() => {
+    try {
+      const raw = localStorage.getItem(`4you_shorts_followed_channels_${activeProfileId}`);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [customAddedShorts, setCustomAddedShorts] = useState<VideoLesson[]>(() => {
+    try {
+      const raw = localStorage.getItem(`4you_shorts_custom_added_${activeProfileId}`);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [dynamicSubtitlesMap, setDynamicSubtitlesMap] = useState<Record<string, SubtitleLine[]>>(() => {
+    try {
+      const raw = localStorage.getItem('4you_shorts_captions_cache_v1');
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
+  const [hydratingVideoId, setHydratingVideoId] = useState<string | null>(null);
+  const [failedCaptionIds, setFailedCaptionIds] = useState<Record<string, boolean>>({});
+  const inFlightCaptionIdsRef = useRef<Set<string>>(new Set());
+
   // Mobile companion drawer toggle
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
 
@@ -266,15 +313,242 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     };
   }, []);
 
-  // --- 0. Curated + Local MP4 Movie Reels + Auto-Mined Real American Reels Feed ---
-  const curatedReels: VideoLesson[] = useMemo(() => {
-    return [...manifestReels, ...AMERICAN_REELS_CORPUS.map(mapCuratedReelToVideoLesson)];
-  }, [manifestReels]);
+  const lastLoadedProfileIdRef = useRef<string>(activeProfileId);
 
+  // Reload profile-scoped channels & custom Shorts cleanly when activeProfileId changes (never bleed across accounts!)
+  useEffect(() => {
+    if (lastLoadedProfileIdRef.current === activeProfileId) return;
+    lastLoadedProfileIdRef.current = activeProfileId;
+    try {
+      const rawCh = localStorage.getItem(`4you_shorts_followed_channels_${activeProfileId}`);
+      const parsedCh = rawCh ? JSON.parse(rawCh) : [];
+      setFollowedChannels(Array.isArray(parsedCh) ? parsedCh : []);
+    } catch {
+      setFollowedChannels([]);
+    }
+    try {
+      const rawSh = localStorage.getItem(`4you_shorts_custom_added_${activeProfileId}`);
+      const parsedSh = rawSh ? JSON.parse(rawSh) : [];
+      setCustomAddedShorts(Array.isArray(parsedSh) ? parsedSh : []);
+    } catch {
+      setCustomAddedShorts([]);
+    }
+  }, [activeProfileId]);
+
+  // Persist user-followed YouTube channels & custom-added Shorts strictly for the active profile
+  useEffect(() => {
+    if (lastLoadedProfileIdRef.current !== activeProfileId) return;
+    try {
+      localStorage.setItem(`4you_shorts_followed_channels_${activeProfileId}`, JSON.stringify(followedChannels));
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [followedChannels, activeProfileId]);
+
+  useEffect(() => {
+    if (lastLoadedProfileIdRef.current !== activeProfileId) return;
+    try {
+      localStorage.setItem(`4you_shorts_custom_added_${activeProfileId}`, JSON.stringify(customAddedShorts));
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [customAddedShorts, activeProfileId]);
+
+  // Fetch auto-updating live YouTube Shorts feed from official RSS via /api/reels/feed
+  const loadLiveRssFeed = useCallback(async (forceRefresh = false, showToastOnDone = false) => {
+    setIsRefreshingFeed(true);
+    try {
+      const customChannelIds = followedChannels.map((c) => c.channelId).filter(Boolean);
+      const params = new URLSearchParams();
+      if (forceRefresh) params.set('refresh', '1');
+      if (customChannelIds.length > 0) params.set('channels', customChannelIds.join(','));
+      const query = params.toString();
+      const res = await fetch(`/api/reels/feed${query ? `?${query}` : ''}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!Array.isArray(data?.reels)) return;
+
+      const mapped: VideoLesson[] = data.reels
+        .filter((item: unknown): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+        .map((item: Record<string, unknown>) => {
+          const youtubeId = String(item.youtubeId || '');
+          const title = String(item.title || 'Real American Short');
+          const channel = String(item.channel || 'American English');
+          const expression = String(item.expression || title);
+          const category =
+            item.reelCategory === 'work_talk' || item.reelCategory === 'my_videos'
+              ? item.reelCategory
+              : 'daily_life';
+          const register =
+            item.register === 'workplace_us' || item.register === 'everyday'
+              ? item.register
+              : 'casual_us';
+          const level = item.level === 'A2' || item.level === 'B2' ? item.level : 'B1';
+
+          return {
+            id: `rss-short-${youtubeId}`,
+            youtubeId,
+            title,
+            channel,
+            thumbnail: `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`,
+            level,
+            topic: category === 'work_talk' ? 'Công sở Mỹ' : category === 'my_videos' ? 'Kênh bạn theo dõi' : 'Đời sống Mỹ',
+            duration: '00:55',
+            durationSec: 55,
+            views: 'Live RSS',
+            description: `Shorts dọc 9:16 mới nhất từ ${channel} — phụ đề & dịch tiếng Việt tự động nạp khi xem.`,
+            subtitles: [],
+            quizzes: [],
+            isShort: true,
+            isCustom: category === 'my_videos',
+            startSeconds: 0,
+            endSeconds: 59,
+            targetWord: expression,
+            sourceLessonTitle: title,
+            expression,
+            expressionMeaningVi: '',
+            americanUsageNote: `Clip Shorts dọc 9:16 tự động cập nhật từ kênh ${channel}. Nhấn vào bất kỳ từ nào trong phụ đề để tra & lưu FSRS-6.`,
+            reelCategory: category,
+            register
+          } as VideoLesson;
+        });
+
+      setLiveRssReels(mapped);
+      if (showToastOnDone) {
+        toast.success(`Đã cập nhật ${mapped.length} Shorts dọc 9:16 mới nhất từ YouTube!`);
+      }
+    } catch {
+      if (showToastOnDone) {
+        toast.error('Không thể làm mới feed lúc này — đang dùng kho Shorts dự phòng.');
+      }
+    } finally {
+      setIsRefreshingFeed(false);
+    }
+  }, [followedChannels, toast]);
+
+  useEffect(() => {
+    void loadLiveRssFeed(false, false);
+  }, [loadLiveRssFeed]);
+
+  // User adds ANY YouTube Short link or YouTube channel (@handle / URL) right inside the app
+  const handleAddReelSource = useCallback(async (rawValue?: string) => {
+    const input = (rawValue ?? sourceInput).trim();
+    if (!input || isResolvingSource) return;
+    setIsResolvingSource(true);
+    setSourceError(null);
+    try {
+      const res = await fetch('/api/reels/resolve-channel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSourceError(data?.error || 'Không nhận diện được link YouTube Short hoặc kênh này.');
+        return;
+      }
+
+      if (data.type === 'short' && data.videoId) {
+        const newShort: VideoLesson = {
+          id: `custom-short-${data.videoId}`,
+          youtubeId: data.videoId,
+          title: data.title || `YouTube Short (${data.videoId})`,
+          channel: data.author || 'Short bạn thêm',
+          thumbnail: data.thumbnail || `https://i.ytimg.com/vi/${data.videoId}/hqdefault.jpg`,
+          level: 'B1',
+          topic: 'Short bạn thêm',
+          duration: '00:55',
+          durationSec: 55,
+          views: 'Của bạn',
+          description: `Video Short bạn tự thêm từ ${data.author || 'YouTube'}.`,
+          subtitles: [],
+          quizzes: [],
+          isShort: true,
+          isCustom: true,
+          startSeconds: 0,
+          endSeconds: 59,
+          targetWord: data.title || 'YouTube Short',
+          sourceLessonTitle: data.title || 'YouTube Short',
+          expression: (data.title || 'YouTube Short').slice(0, 52),
+          americanUsageNote: `Clip bạn tự dán từ kênh ${data.author || 'YouTube'}. Hệ thống tự kéo phụ đề khớp giây & dịch tiếng Việt.`,
+          reelCategory: 'my_videos',
+          register: 'casual_us'
+        };
+
+        setCustomAddedShorts((prev) => [
+          newShort,
+          ...prev.filter((item) => item.youtubeId !== newShort.youtubeId)
+        ]);
+        setSourceInput('');
+        setShowAddSourcePanel(false);
+        setFeedMode('reels');
+        setReelTopicFilter('my_videos');
+        setCurrentIndex(0);
+        toast.success(`Đã thêm Short "${newShort.title.slice(0, 42)}" — đang tự tải phụ đề!`);
+        return;
+      }
+
+      if (data.type === 'channel' && data.channelId) {
+        const already = followedChannels.some((c) => c.channelId === data.channelId);
+        if (!already) {
+          setFollowedChannels((prev) => [
+            { channelId: data.channelId, channelName: data.channelName || data.channelId, shortsCount: data.shortsCount || 0 },
+            ...prev
+          ]);
+        }
+        setSourceInput('');
+        toast.success(
+          `Đã theo dõi kênh ${data.channelName || data.channelId} (${data.shortsCount || 0} Shorts dọc mới nhất)!`
+        );
+        setFeedMode('reels');
+        setReelTopicFilter('my_videos');
+      }
+    } catch {
+      setSourceError('Lỗi kết nối tới server khi kiểm tra link YouTube.');
+    } finally {
+      setIsResolvingSource(false);
+    }
+  }, [sourceInput, isResolvingSource, followedChannels, toast]);
+
+  const handleRemoveFollowedChannel = useCallback((channelId: string) => {
+    setFollowedChannels((prev) => prev.filter((c) => c.channelId !== channelId));
+    toast.info('Đã hủy theo dõi kênh.');
+  }, [toast]);
+
+  // --- 0. Curated Vertical 9:16 + Auto-Updating RSS Shorts + Local MP4 + User Custom Videos ---
+  const curatedReels: VideoLesson[] = useMemo(() => {
+    const starter = [
+      ...manifestReels,
+      ...customAddedShorts,
+      ...AMERICAN_REELS_CORPUS.map(mapCuratedReelToVideoLesson),
+      ...liveRssReels
+    ];
+    const seen = new Set<string>();
+    const deduped: VideoLesson[] = [];
+    for (const reel of starter) {
+      const key = reel.videoUrl ? `mp4:${reel.videoUrl}` : `yt:${reel.youtubeId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const cachedSubs = reel.subtitles.length === 0 ? dynamicSubtitlesMap[reel.youtubeId] : undefined;
+      if (cachedSubs && cachedSubs.length > 0) {
+        const lastEnd = cachedSubs[cachedSubs.length - 1]?.end || reel.endSeconds || 55;
+        deduped.push({
+          ...reel,
+          subtitles: cachedSubs,
+          endSeconds: Math.max(12, Math.min(90, Math.ceil(lastEnd + 1)))
+        });
+      } else {
+        deduped.push(reel);
+      }
+    }
+    return deduped;
+  }, [manifestReels, customAddedShorts, liveRssReels, dynamicSubtitlesMap]);
+
+  // Only auto-mine user-imported custom lessons (never pollute vertical 9:16 tabs with 16:9 MOCK_LESSONS!)
   const minedReels: VideoLesson[] = useMemo(() => {
-    const sourcePool = [...(initialShorts || []), ...lessons];
-    return mineAmericanExpressionsFromLessons(sourcePool, curatedReels, 4);
-  }, [initialShorts, lessons, curatedReels]);
+    const customUserLessons = lessons.filter((l) => l.isCustom);
+    return mineAmericanExpressionsFromLessons(customUserLessons, curatedReels, 4);
+  }, [lessons, curatedReels]);
 
   const allReelsPool: VideoLesson[] = useMemo(() => {
     return [...curatedReels, ...minedReels];
@@ -426,6 +700,80 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     setAiNuanceError(null);
   }, [currentShort.id]);
 
+  // Auto-hydrate real timed subtitles + Vietnamese translations on demand for RSS / custom Shorts
+  const hydrateShortCaptions = useCallback(async (videoId: string, isPrimary: boolean) => {
+    if (!videoId || videoId === 'placeholder') return;
+    if (dynamicSubtitlesMap[videoId]?.length) return;
+    if (failedCaptionIds[videoId] || inFlightCaptionIdsRef.current.has(videoId)) return;
+
+    inFlightCaptionIdsRef.current.add(videoId);
+    if (isPrimary) setHydratingVideoId(videoId);
+
+    try {
+      const res = await fetch(`/api/youtube-captions?v=${encodeURIComponent(videoId)}`);
+      if (!res.ok) {
+        setFailedCaptionIds((prev) => ({ ...prev, [videoId]: true }));
+        return;
+      }
+      const data = await res.json();
+      const rawSubs: SubtitleLine[] = Array.isArray(data?.subtitles) ? data.subtitles : [];
+      if (rawSubs.length === 0) {
+        setFailedCaptionIds((prev) => ({ ...prev, [videoId]: true }));
+        return;
+      }
+
+      // Immediately show English captions before Vietnamese translation finishes
+      setDynamicSubtitlesMap((prev) => ({ ...prev, [videoId]: rawSubs }));
+
+      // Batch-translate missing Vietnamese lines via existing /api/dict/translate-batch proxy
+      const needsVi = rawSubs.some((s) => !s.translation || !s.translation.trim());
+      let finalSubs = rawSubs;
+      if (needsVi) {
+        try {
+          const translatedTexts = await batchTranslateSubtitles(rawSubs);
+          finalSubs = rawSubs.map((line, idx) => ({
+            ...line,
+            translation: line.translation?.trim() || translatedTexts[idx] || ''
+          }));
+        } catch {
+          // Keep English captions if batch translation temporarily fails
+        }
+      }
+
+      setDynamicSubtitlesMap((prev) => {
+        const next = { ...prev, [videoId]: finalSubs };
+        try {
+          // Keep bounded cache (latest 60 Shorts)
+          const keys = Object.keys(next);
+          const trimmed: Record<string, SubtitleLine[]> = {};
+          keys.slice(-60).forEach((k) => {
+            trimmed[k] = next[k];
+          });
+          localStorage.setItem('4you_shorts_captions_cache_v1', JSON.stringify(trimmed));
+        } catch {
+          // ignore storage quota errors
+        }
+        return next;
+      });
+    } catch {
+      setFailedCaptionIds((prev) => ({ ...prev, [videoId]: true }));
+    } finally {
+      inFlightCaptionIdsRef.current.delete(videoId);
+      setHydratingVideoId((prev) => (prev === videoId ? null : prev));
+    }
+  }, [dynamicSubtitlesMap, failedCaptionIds]);
+
+  useEffect(() => {
+    if (feedMode !== 'reels') return;
+    if (currentShort.youtubeId && !currentShort.videoUrl && currentShort.subtitles.length === 0) {
+      void hydrateShortCaptions(currentShort.youtubeId, true);
+    }
+    const nextShort = activeFeed[currentIndex + 1];
+    if (nextShort?.youtubeId && !nextShort.videoUrl && nextShort.subtitles.length === 0) {
+      void hydrateShortCaptions(nextShort.youtubeId, false);
+    }
+  }, [feedMode, currentShort.youtubeId, currentShort.videoUrl, currentShort.subtitles.length, activeFeed, currentIndex, hydrateShortCaptions]);
+
   const currentOccurrence = feedMode === 'youglish' ? youglishOccurrences[currentIndex] : null;
   const activeExpression = (currentShort.expression || currentShort.targetWord || '').trim();
   const isCurrentExpressionSaved = useMemo(() => {
@@ -434,13 +782,23 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     return savedWords.some((w) => w?.word && w.word.toLowerCase().trim() === normalized);
   }, [activeExpression, savedWords]);
 
+  const isCurrentHydrating = hydratingVideoId === currentShort.youtubeId && currentShort.subtitles.length === 0;
+  const isCurrentNoCaptions = Boolean(failedCaptionIds[currentShort.youtubeId]) && currentShort.subtitles.length === 0;
   const subtitles = currentShort?.subtitles || [];
   const currentSub = subtitles[currentSubIndex] || subtitles[0] || {
     id: 'empty',
     start: 0,
     end: 5,
-    text: 'Enjoy this English learning Short!',
-    translation: 'Hãy thưởng thức video ngắn học tiếng Anh này!'
+    text: isCurrentHydrating
+      ? 'Loading synced English captions...'
+      : isCurrentNoCaptions
+        ? currentShort.title || 'Listen directly to this American Short'
+        : 'Enjoy this English learning Short!',
+    translation: isCurrentHydrating
+      ? 'Đang tự động tải phụ đề khớp giây & dịch tiếng Việt...'
+      : isCurrentNoCaptions
+        ? 'Video này chưa có phụ đề YouTube — bạn vẫn nghe trực tiếp hoặc lướt tiếp nhé.'
+        : 'Hãy thưởng thức video ngắn học tiếng Anh này!'
   };
 
   // American Connected Speech Hints (0ms, receptive-first, capped at 2 chips)
@@ -1610,7 +1968,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
             { mode: 'reels' as ShortsFeedMode, filter: 'all' as ReelTopicFilter, label: 'Tất cả', count: reelsCategoryCounts.all },
             { mode: 'reels' as ShortsFeedMode, filter: 'daily_life' as ReelTopicFilter, label: '☕ Đời sống Mỹ', count: reelsCategoryCounts.daily_life },
             { mode: 'reels' as ShortsFeedMode, filter: 'work_talk' as ReelTopicFilter, label: '💼 Công sở', count: reelsCategoryCounts.work_talk },
-            { mode: 'reels' as ShortsFeedMode, filter: 'my_videos' as ReelTopicFilter, label: '🎬 Kho phim', count: reelsCategoryCounts.my_videos }
+            { mode: 'reels' as ShortsFeedMode, filter: 'my_videos' as ReelTopicFilter, label: '🎬 Của tôi', count: reelsCategoryCounts.my_videos }
           ]).map((tab) => {
             const isTabActive = feedMode === 'reels' && reelTopicFilter === tab.filter;
             return (
@@ -1678,6 +2036,33 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
           <button
             type="button"
             onClick={() => {
+              setShowAddSourcePanel((prev) => !prev);
+              setSourceError(null);
+            }}
+            className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+              showAddSourcePanel
+                ? 'bg-teal-600 text-white border-teal-600'
+                : 'bg-teal-50 hover:bg-teal-100 text-teal-800 border-teal-200'
+            }`}
+            title="Dán link YouTube Short hoặc theo dõi kênh YouTube tự cập nhật"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Thêm nguồn</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={isRefreshingFeed}
+            onClick={() => void loadLiveRssFeed(true, true)}
+            className="p-2 rounded-xl border bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200 transition-all cursor-pointer disabled:opacity-50"
+            title="Tải Shorts mới nhất từ YouTube ngay"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshingFeed ? 'animate-spin text-teal-600' : ''}`} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
               const next = !showSearchBar;
               setShowSearchBar(next);
               if (next) setFeedMode('search');
@@ -1716,6 +2101,99 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Self-Service Add Short / Follow YouTube Channel Drawer (Hidden by default) */}
+      {showAddSourcePanel && (
+        <div className="bg-white border border-teal-200 rounded-2xl p-4 shadow-sm space-y-3 animate-fade-in">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-black text-slate-900">
+                + Tự thêm YouTube Short hoặc theo dõi kênh tự cập nhật
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Dán link bất kỳ clip Short (<code className="text-teal-700">youtube.com/shorts/...</code>) hoặc <code className="text-teal-700">@tenkenh</code> — app tự tải video mới, kéo phụ đề khớp giây & dịch tiếng Việt.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAddSourcePanel(false)}
+              className="p-1 rounded-lg hover:bg-slate-100 text-slate-500 cursor-pointer"
+              aria-label="Đóng"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleAddReelSource();
+            }}
+            className="flex flex-col sm:flex-row gap-2"
+          >
+            <input
+              type="text"
+              value={sourceInput}
+              onChange={(e) => {
+                setSourceInput(e.target.value);
+                if (sourceError) setSourceError(null);
+              }}
+              placeholder="Ví dụ: https://youtube.com/shorts/... hoặc @rachelsenglish"
+              className="flex-1 px-3.5 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-teal-500 focus:outline-hidden text-sm text-slate-900"
+            />
+            <button
+              type="submit"
+              disabled={isResolvingSource || !sourceInput.trim()}
+              className="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white text-xs font-bold cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+            >
+              {isResolvingSource ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+              <span>{isResolvingSource ? 'Đang kiểm tra...' : 'Thêm ngay'}</span>
+            </button>
+          </form>
+
+          {sourceError && (
+            <p className="text-xs font-semibold text-rose-600">{sourceError}</p>
+          )}
+
+          {/* Quick-Follow Suggestions + Currently Followed Custom Channels */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            <span className="text-[11px] font-bold text-slate-500 mr-1">Gợi ý kênh Mỹ (bấm để theo dõi):</span>
+            {['@rachelsenglish', '@EnglishwithLucy', '@HadarShemesh'].map((handle) => (
+              <button
+                key={handle}
+                type="button"
+                disabled={isResolvingSource}
+                onClick={() => void handleAddReelSource(handle)}
+                className="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-teal-50 hover:text-teal-800 border border-slate-200 hover:border-teal-200 text-[11px] font-bold text-slate-700 transition-colors cursor-pointer"
+              >
+                + {handle}
+              </button>
+            ))}
+          </div>
+
+          {followedChannels.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100">
+              <span className="text-[11px] font-bold text-slate-500 mr-1">Kênh bạn đang theo dõi:</span>
+              {followedChannels.map((ch) => (
+                <span
+                  key={ch.channelId}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-teal-50 border border-teal-200 text-[11px] font-bold text-teal-800"
+                >
+                  <span>{ch.channelName}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveFollowedChannel(ch.channelId)}
+                    className="hover:text-rose-600 cursor-pointer"
+                    title="Hủy theo dõi kênh này"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Consolidated Settings Drawer (Hidden by default — Zero UI Clutter) */}
       {showSettingsPanel && (
@@ -1859,25 +2337,35 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
           <div className="space-y-1">
             <h3 className="text-base font-black text-slate-900">
               {feedMode === 'reels' && reelTopicFilter === 'my_videos'
-                ? 'Chưa có Reels từ video bạn import'
+                ? 'Chưa có Short hoặc kênh nào bạn tự thêm'
                 : 'Chưa tìm thấy trích đoạn phù hợp'}
             </h3>
             <p className="text-xs text-slate-500 leading-relaxed max-w-xs">
               {feedMode === 'reels' && reelTopicFilter === 'my_videos'
-                ? 'Dán link YouTube yêu thích (vlog, sitcom, podcast Mỹ) — hệ thống sẽ tự động cắt thành các Reels 15–25s kèm giải mã nối âm!'
+                ? 'Dán link bất kỳ YouTube Short hoặc @tenkenh yêu thích — app tự tải video mới, kéo phụ đề khớp giây và dịch tiếng Việt!'
                 : feedMode === 'search'
                   ? `Không có trích đoạn nào chứa "${searchQuery}". Hãy thử cụm từ khác.`
                   : 'Không có trích đoạn nào phù hợp với bộ lọc bạn vừa chọn.'}
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2">
-            {feedMode === 'reels' && reelTopicFilter === 'my_videos' && onImportShortClick && (
+            {feedMode === 'reels' && reelTopicFilter === 'my_videos' && (
               <button
-                onClick={onImportShortClick}
+                type="button"
+                onClick={() => setShowAddSourcePanel(true)}
                 className="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-xs cursor-pointer flex items-center gap-1.5"
               >
                 <Plus className="w-4 h-4" />
-                <span>Dán link YouTube ngay</span>
+                <span>Thêm Short hoặc Kênh ngay</span>
+              </button>
+            )}
+            {feedMode === 'reels' && reelTopicFilter === 'my_videos' && onImportShortClick && (
+              <button
+                type="button"
+                onClick={onImportShortClick}
+                className="px-4 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 font-bold text-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <span>Import video dài</span>
               </button>
             )}
             <button
@@ -1979,7 +2467,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                       key={`direct-iframe-${currentShort.youtubeId}-${currentIndex}`}
                       src={`https://www.youtube-nocookie.com/embed/${currentShort.youtubeId}?autoplay=1&mute=${isGlobalMuted ? 1 : 0}&start=${Math.floor(clipStart)}&controls=0&rel=0&modestbranding=1&enablejsapi=1&origin=${encodeURIComponent(typeof window !== 'undefined' ? window.location.origin : '')}`}
                       title={currentShort.title}
-                      className="w-full h-full border-0 scale-[1.35] origin-center pointer-events-none"
+                      className="w-full h-full border-0 pointer-events-none"
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                       allowFullScreen
                     />
@@ -1993,7 +2481,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                             ref={(el) => {
                               poolContainersRef.current[slotId] = el;
                             }}
-                            className={`absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-150 ${
+                            className={`absolute inset-0 w-full h-full pointer-events-none [&_iframe]:pointer-events-none [&_iframe]:w-full [&_iframe]:h-full transition-opacity duration-150 ${
                               isSlotActive ? 'opacity-100 z-[2]' : 'opacity-0 z-[0]'
                             }`}
                           />

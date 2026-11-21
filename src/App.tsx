@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { VideoLesson, SavedWord, WordDefinition, AnkiRating, AnkiUserProfile, AuthUser, DailyReelProgress } from './types';
 import { MOCK_LESSONS, MOCK_SHORTS, INITIAL_SAVED_WORDS } from './data/mockLessons';
 import { calculateFsrsSchedule } from './services/fsrsScheduler';
@@ -70,6 +70,8 @@ export const App: React.FC = () => {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState<boolean>(false);
   const [isBootHydrated, setIsBootHydrated] = useState<boolean>(false);
+  // Synchronous lock preventing guest state from writing into a newly signed-in/out account partition
+  const isAccountSwitchingRef = useRef<boolean>(false);
 
   // Persistent state with ScopedStorage & Database-per-User isolation
   const [lessons, setLessons] = useState<VideoLesson[]>(() => {
@@ -88,18 +90,20 @@ export const App: React.FC = () => {
     try {
       const user = authService.getCurrentUser();
       const scoped = ScopedStorage.getSavedWords(user?.id);
+      // Authenticated accounts ALWAYS own their exact vault (empty [] if none saved yet — NEVER mock words)
+      if (user) {
+        return scoped;
+      }
       if (scoped && scoped.length > 0) {
         return scoped;
       }
-      if (!user) {
-        const guestTransient = ScopedStorage.getGuestTransientWords();
-        if (guestTransient && guestTransient.length > 0) {
-          return guestTransient;
-        }
+      const guestTransient = ScopedStorage.getGuestTransientWords();
+      if (guestTransient && guestTransient.length > 0) {
+        return guestTransient;
       }
       return INITIAL_SAVED_WORDS;
     } catch {
-      return INITIAL_SAVED_WORDS;
+      return authService.getCurrentUser() ? [] : INITIAL_SAVED_WORDS;
     }
   });
 
@@ -118,7 +122,7 @@ export const App: React.FC = () => {
       const user = authService.getCurrentUser();
       return ScopedStorage.getStreakDays(user?.id);
     } catch {
-      return 5;
+      return 1;
     }
   });
 
@@ -171,9 +175,11 @@ export const App: React.FC = () => {
     ]);
     if (isCancelled?.()) return;
 
-    setSavedWords(cloudWords || []);
-    ScopedStorage.setSavedWords(user.id, cloudWords || []);
+    const cleanCloudWords = Array.isArray(cloudWords) ? cloudWords : [];
+    setSavedWords(cleanCloudWords);
+    ScopedStorage.setSavedWords(user.id, cleanCloudWords);
 
+    // Strictly merge ONLY this user's cloud lessons + this user's IndexedDB partition (never guest lessons)
     const localCustom = await ankiDb.getCustomLessons();
     if (isCancelled?.()) return;
     const mergedCustomMap = new Map<string, VideoLesson>();
@@ -182,77 +188,118 @@ export const App: React.FC = () => {
     }
     const validCustom = Array.from(mergedCustomMap.values());
     setLessons([...validCustom, ...MOCK_LESSONS]);
+    ScopedStorage.setCustomLessons(user.id, validCustom);
 
-    if (cloudState && typeof cloudState === 'object') {
-      if (Array.isArray(cloudState.scenarios) && cloudState.scenarios.length > 0) {
-        setScenarios(cloudState.scenarios);
-        ScopedStorage.setScenarios(user.id, cloudState.scenarios);
-      }
-      if (typeof cloudState.streakDays === 'number' && cloudState.streakDays > 0) {
-        setStreakDays(cloudState.streakDays);
-        ScopedStorage.setStreakDays(user.id, cloudState.streakDays);
-      }
-      if (Array.isArray(cloudState.customShorts)) {
-        ScopedStorage.setCustomShorts(user.id, cloudState.customShorts);
-      }
-      if (cloudState.shortsOffsets && typeof cloudState.shortsOffsets === 'object') {
-        ScopedStorage.setShortsOffsets(user.id, cloudState.shortsOffsets);
-      }
-      if (cloudState.roleplayHistory && typeof cloudState.roleplayHistory === 'object') {
-        setRoleplayHistory(cloudState.roleplayHistory);
-        ScopedStorage.setRoleplayHistory(user.id, cloudState.roleplayHistory);
-      }
-      if (cloudState.completedScenarios && typeof cloudState.completedScenarios === 'object') {
-        setCompletedScenarios(cloudState.completedScenarios);
-        ScopedStorage.setCompletedScenarios(user.id, cloudState.completedScenarios);
-      }
-      if (
-        cloudState.dailyReelProgress &&
-        typeof cloudState.dailyReelProgress === 'object' &&
-        cloudState.dailyReelProgress.date === getLocalDateKey() &&
-        Array.isArray(cloudState.dailyReelProgress.completedReelIds)
-      ) {
-        setDailyReelProgress(cloudState.dailyReelProgress);
-        ScopedStorage.setDailyReelProgress(user.id, cloudState.dailyReelProgress);
-      }
+    const nextScenarios =
+      cloudState && Array.isArray(cloudState.scenarios) && cloudState.scenarios.length > 0
+        ? cloudState.scenarios
+        : (ScopedStorage.getScenarios(user.id) || SPEAKING_SCENARIOS);
+    setScenarios(nextScenarios);
+    ScopedStorage.setScenarios(user.id, nextScenarios);
+
+    const nextStreak =
+      cloudState && typeof cloudState.streakDays === 'number' && cloudState.streakDays > 0
+        ? cloudState.streakDays
+        : ScopedStorage.getStreakDays(user.id);
+    setStreakDays(nextStreak);
+    ScopedStorage.setStreakDays(user.id, nextStreak);
+
+    if (cloudState && Array.isArray(cloudState.customShorts)) {
+      ScopedStorage.setCustomShorts(user.id, cloudState.customShorts);
     }
+    if (cloudState && cloudState.shortsOffsets && typeof cloudState.shortsOffsets === 'object') {
+      ScopedStorage.setShortsOffsets(user.id, cloudState.shortsOffsets);
+    }
+
+    const nextRoleplay =
+      cloudState && cloudState.roleplayHistory && typeof cloudState.roleplayHistory === 'object'
+        ? cloudState.roleplayHistory
+        : ScopedStorage.getRoleplayHistory(user.id);
+    setRoleplayHistory(nextRoleplay);
+    ScopedStorage.setRoleplayHistory(user.id, nextRoleplay);
+
+    const nextCompleted =
+      cloudState && cloudState.completedScenarios && typeof cloudState.completedScenarios === 'object'
+        ? cloudState.completedScenarios
+        : ScopedStorage.getCompletedScenarios(user.id);
+    setCompletedScenarios(nextCompleted);
+    ScopedStorage.setCompletedScenarios(user.id, nextCompleted);
+
+    const todayKey = getLocalDateKey();
+    const nextDailyProgress =
+      cloudState &&
+      cloudState.dailyReelProgress &&
+      typeof cloudState.dailyReelProgress === 'object' &&
+      cloudState.dailyReelProgress.date === todayKey &&
+      Array.isArray(cloudState.dailyReelProgress.completedReelIds)
+        ? cloudState.dailyReelProgress
+        : ScopedStorage.getDailyReelProgress(user.id);
+    setDailyReelProgress(nextDailyProgress);
+    ScopedStorage.setDailyReelProgress(user.id, nextDailyProgress);
   };
 
   const handleAuthSuccess = async (user: AuthUser) => {
-    setCurrentUser(user);
-    ScopedStorage.clearGuestTransientWords();
-    const token = authService.getToken();
-    const loadedProfiles = await ankiDb.getProfiles();
-    const active = await ankiDb.getActiveProfile();
-    setProfiles(loadedProfiles);
-    setActiveProfile(active);
+    // Lock persistence effects BEFORE switching user so guest words/videos NEVER overwrite the new account!
+    isAccountSwitchingRef.current = true;
+    setIsBootHydrated(false);
+    try {
+      ScopedStorage.clearGuestTransientWords();
+      await ankiDb.switchUser(user.id);
+      const token = authService.getToken();
+      const loadedProfiles = await ankiDb.getProfiles();
+      const active = await ankiDb.getActiveProfile();
+      setProfiles(loadedProfiles);
+      setActiveProfile(active);
 
-    if (token) {
-      await hydrateCloudAccountData(user, token);
-    } else {
-      const words = await ankiDb.getAllWords(user.id);
-      setSavedWords(words || []);
-      const dbCustom = await ankiDb.getCustomLessons();
-      const validCustom = (dbCustom || []).filter(c => Boolean(c && typeof c === 'object' && c.id && c.title));
-      setLessons([...validCustom, ...MOCK_LESSONS]);
+      if (token) {
+        await hydrateCloudAccountData(user, token);
+      } else {
+        const words = await ankiDb.getAllWords(user.id);
+        setSavedWords(words || []);
+        ScopedStorage.setSavedWords(user.id, words || []);
+        const dbCustom = await ankiDb.getCustomLessons();
+        const validCustom = (dbCustom || []).filter(c => Boolean(c && typeof c === 'object' && c.id && c.title));
+        setLessons([...validCustom, ...MOCK_LESSONS]);
+        ScopedStorage.setCustomLessons(user.id, validCustom);
+        setScenarios(ScopedStorage.getScenarios(user.id) || SPEAKING_SCENARIOS);
+        setStreakDays(ScopedStorage.getStreakDays(user.id));
+        setRoleplayHistory(ScopedStorage.getRoleplayHistory(user.id));
+        setCompletedScenarios(ScopedStorage.getCompletedScenarios(user.id));
+        setDailyReelProgress(ScopedStorage.getDailyReelProgress(user.id));
+      }
+
+      // Commit currentUser AFTER account data is hydrated cleanly
+      setCurrentUser(user);
+    } finally {
+      isAccountSwitchingRef.current = false;
+      setIsBootHydrated(true);
     }
   };
 
   const handleLogout = async () => {
-    await authService.logout();
-    setCurrentUser(null);
-    const loadedProfiles = await ankiDb.getProfiles();
-    const active = await ankiDb.getActiveProfile();
-    setProfiles(loadedProfiles);
-    setActiveProfile(active);
-    const guestWords = await ankiDb.getAllWords();
-    setSavedWords(guestWords && guestWords.length > 0 ? guestWords : INITIAL_SAVED_WORDS);
-    setLessons(MOCK_LESSONS);
-    setScenarios(SPEAKING_SCENARIOS);
-    setStreakDays(ScopedStorage.getStreakDays(null));
-    setRoleplayHistory(ScopedStorage.getRoleplayHistory(null));
-    setCompletedScenarios(ScopedStorage.getCompletedScenarios(null));
-    setDailyReelProgress(ScopedStorage.getDailyReelProgress(null));
+    isAccountSwitchingRef.current = true;
+    setIsBootHydrated(false);
+    try {
+      await authService.logout();
+      setCurrentUser(null);
+      const loadedProfiles = await ankiDb.getProfiles();
+      const active = await ankiDb.getActiveProfile();
+      setProfiles(loadedProfiles);
+      setActiveProfile(active);
+      const guestWords = await ankiDb.getAllWords();
+      setSavedWords(guestWords && guestWords.length > 0 ? guestWords : INITIAL_SAVED_WORDS);
+      const guestCustom = await ankiDb.getCustomLessons();
+      const validGuestCustom = (guestCustom || []).filter(c => Boolean(c && typeof c === 'object' && c.id && c.title));
+      setLessons([...validGuestCustom, ...MOCK_LESSONS]);
+      setScenarios(ScopedStorage.getScenarios(null) || SPEAKING_SCENARIOS);
+      setStreakDays(ScopedStorage.getStreakDays(null));
+      setRoleplayHistory(ScopedStorage.getRoleplayHistory(null));
+      setCompletedScenarios(ScopedStorage.getCompletedScenarios(null));
+      setDailyReelProgress(ScopedStorage.getDailyReelProgress(null));
+    } finally {
+      isAccountSwitchingRef.current = false;
+      setIsBootHydrated(true);
+    }
   };
 
   // Sequential Boot Hydration: prevents race conditions between session verification, IndexedDB init, and cloud sync
@@ -367,9 +414,9 @@ export const App: React.FC = () => {
     }
   };
 
-  // Sync to ScopedStorage, Anki IndexedDB, and Cloud Server (only after boot hydration completes)
+  // Sync to ScopedStorage, Anki IndexedDB, and Cloud Server (ONLY after boot & account switch hydration completes)
   useEffect(() => {
-    if (!isBootHydrated) return;
+    if (!isBootHydrated || isAccountSwitchingRef.current) return;
     try {
       ScopedStorage.setSavedWords(currentUser?.id, savedWords);
       ankiDb.saveWords(savedWords, activeProfile.id).catch(() => {});
@@ -387,41 +434,45 @@ export const App: React.FC = () => {
   }, [savedWords, activeProfile.id, currentUser, isBootHydrated]);
 
   useEffect(() => {
+    if (!isBootHydrated || isAccountSwitchingRef.current) return;
     try {
       const customOnly = lessons.filter(l => Boolean(l && (l.isCustom || (typeof l.id === 'string' && l.id.startsWith('lesson-custom-')))));
       ScopedStorage.setCustomLessons(currentUser?.id, customOnly);
     } catch (e) {
       console.warn('ScopedStorage lessons error', e);
     }
-  }, [lessons, currentUser]);
+  }, [lessons, currentUser, isBootHydrated]);
 
   useEffect(() => {
+    if (!isBootHydrated || isAccountSwitchingRef.current) return;
     try {
       ScopedStorage.setScenarios(currentUser?.id, scenarios);
     } catch (e) {
       console.warn('ScopedStorage scenarios error', e);
     }
-  }, [scenarios, currentUser]);
+  }, [scenarios, currentUser, isBootHydrated]);
 
   useEffect(() => {
+    if (!isBootHydrated || isAccountSwitchingRef.current) return;
     try {
       ScopedStorage.setStreakDays(currentUser?.id, streakDays);
     } catch (e) {
       console.warn('ScopedStorage streak error', e);
     }
-  }, [streakDays, currentUser]);
+  }, [streakDays, currentUser, isBootHydrated]);
 
   useEffect(() => {
+    if (!isBootHydrated || isAccountSwitchingRef.current) return;
     try {
       ScopedStorage.setDailyReelProgress(currentUser?.id, dailyReelProgress);
     } catch (e) {
       console.warn('ScopedStorage daily reel progress error', e);
     }
-  }, [dailyReelProgress, currentUser]);
+  }, [dailyReelProgress, currentUser, isBootHydrated]);
 
   // Cloud State Sync for scenarios, streakDays, profiles, customShorts & shortsOffsets
   useEffect(() => {
-    if (!isBootHydrated || !currentUser) return;
+    if (!isBootHydrated || isAccountSwitchingRef.current || !currentUser) return;
     const token = authService.getToken();
     if (!token) return;
 
@@ -983,7 +1034,7 @@ export const App: React.FC = () => {
                   onOpenLesson={(lesson) => handleSelectLesson(lesson, 'subtitles')}
                   savedWords={savedWords}
                   lessons={lessons}
-                  activeProfileId={activeProfile.id}
+                  activeProfileId={currentUser?.id || activeProfile.id}
                   onImportShortClick={() => setIsImportOpen(true)}
                   onReviewWord={handleReviewWord}
                   onSaveReelExpression={handleSaveReelExpression}
@@ -1067,14 +1118,21 @@ export const App: React.FC = () => {
                   streakDays={streakDays}
                   currentUser={currentUser}
                   onResetProgress={() => {
-                    setSavedWords(INITIAL_SAVED_WORDS);
+                    const resetWords = currentUser ? [] : INITIAL_SAVED_WORDS;
+                    if (currentUser) {
+                      savedWords.forEach((w) => {
+                        ankiDb.deleteWord(w.id, w.word).catch(console.warn);
+                      });
+                    } else {
+                      ankiDb.saveWords(INITIAL_SAVED_WORDS).catch(console.warn);
+                    }
+                    setSavedWords(resetWords);
                     setLessons(MOCK_LESSONS);
                     setStreakDays(1);
-                    ScopedStorage.setSavedWords(currentUser?.id, INITIAL_SAVED_WORDS);
+                    ScopedStorage.setSavedWords(currentUser?.id, resetWords);
                     ScopedStorage.setCustomLessons(currentUser?.id, []);
                     ScopedStorage.setStreakDays(currentUser?.id, 1);
                     ScopedStorage.clearGuestTransientWords();
-                    ankiDb.saveWords(INITIAL_SAVED_WORDS).catch(console.warn);
                   }}
                   onImportWords={(imported) => {
                     setSavedWords(imported);

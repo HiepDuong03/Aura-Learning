@@ -117,9 +117,13 @@ export class ScopedStorage {
     try {
       const key = `${this.getPrefix(userId)}_streak`;
       const raw = localStorage.getItem(key);
-      return raw ? parseInt(raw, 10) : 5;
+      if (raw !== null) {
+        const parsed = parseInt(raw, 10);
+        if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+      }
+      return 1;
     } catch {
-      return 5;
+      return 1;
     }
   }
 

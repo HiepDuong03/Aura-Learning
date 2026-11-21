@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import captionHandler from './api/youtube-captions.js';
 import { handleAuthAndSync } from './api/auth-sync.js';
+import { handleReelsFeedRequest } from './api/reels-feed.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -81,6 +82,19 @@ const server = http.createServer(async (req, res) => {
       if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message || 'API Internal Error' }));
+      }
+    }
+    return;
+  }
+
+  // 1b. Auto-Updating YouTube Shorts RSS Feed & Channel/Short Resolver
+  if (pathname.startsWith('/api/reels')) {
+    try {
+      await handleReelsFeedRequest(req, res, pathname);
+    } catch (err) {
+      if (!res.headersSent) {
+        res.writeHead(err?.statusCode || 500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: err?.message || 'Reels Feed API Error' }));
       }
     }
     return;

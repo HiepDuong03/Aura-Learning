@@ -25,7 +25,7 @@ export const DEFAULT_PROFILE: AnkiUserProfile = {
   avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop',
   createdAt: Date.now(),
   lastActiveAt: Date.now(),
-  streakDays: 5,
+  streakDays: 1,
 };
 
 export class AnkiDatabase {

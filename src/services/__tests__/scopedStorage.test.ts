@@ -69,4 +69,31 @@ describe('ScopedStorage Multi-Tenant Partitioning', () => {
     expect(ScopedStorage.getSavedWords('userA')).toEqual([]);
     expect(ScopedStorage.getSavedWords('userB').map(w => w.word)).toEqual(['beta']);
   });
+
+  it('starts fresh accounts at streak 1 and strictly isolates guest vs user custom lessons', () => {
+    expect(ScopedStorage.getStreakDays('brandNewUser')).toBe(1);
+    expect(ScopedStorage.getSavedWords('brandNewUser')).toEqual([]);
+
+    ScopedStorage.setCustomLessons(null, [
+      {
+        id: 'lesson-custom-guest-1',
+        youtubeId: 'FkdIpHm4fjc',
+        title: 'Guest Pasted Video',
+        channel: 'Guest',
+        thumbnail: '',
+        level: 'B1',
+        topic: 'Custom',
+        duration: '01:00',
+        durationSec: 60,
+        views: '1',
+        description: '',
+        subtitles: [],
+        quizzes: [],
+        isCustom: true
+      }
+    ]);
+
+    expect(ScopedStorage.getCustomLessons(null)).toHaveLength(1);
+    expect(ScopedStorage.getCustomLessons('brandNewUser')).toEqual([]);
+  });
 });

@@ -49,10 +49,10 @@ describe('americanExpressionMiner', () => {
     const duplicateLesson: VideoLesson = {
       ...sampleCustomLesson,
       id: 'dup-1',
-      youtubeId: 'UF8uR6Z6KLc',
+      youtubeId: '9LsK85CrsWU',
       isCustom: false,
       subtitles: [
-        { id: 'd1', start: 52.0, end: 55.0, text: 'No big deal. Just three stories.', translation: 'Chuyện nhỏ thôi.' }
+        { id: 'd1', start: 14.5, end: 18.5, text: 'Yeah, can we circle back to this next week?', translation: 'Tuần sau quay lại bàn tiếp nhé?' }
       ]
     };
 
