@@ -38,6 +38,22 @@ export interface VideoLesson {
   targetWord?: string;
   targetContext?: string;
   sourceLessonTitle?: string;
+  initialSubIndex?: number;
+  // Real American Reels metadata
+  expression?: string;
+  expressionMeaningVi?: string;
+  americanUsageNote?: string;
+  reelCategory?: ReelCategory;
+  register?: ReelRegister;
+}
+
+export type ReelCategory = 'daily_life' | 'work_talk' | 'my_videos';
+export type ReelRegister = 'casual_us' | 'workplace_us' | 'everyday';
+
+export interface DailyReelProgress {
+  date: string; // YYYY-MM-DD (local date)
+  completedReelIds: string[];
+  dailyGoal: number;
 }
 
 export interface WordDefinition {

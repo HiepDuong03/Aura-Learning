@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { VideoLesson, SavedWord, WordDefinition, AnkiRating, AnkiUserProfile, AuthUser } from './types';
+import { VideoLesson, SavedWord, WordDefinition, AnkiRating, AnkiUserProfile, AuthUser, DailyReelProgress } from './types';
 import { MOCK_LESSONS, MOCK_SHORTS, INITIAL_SAVED_WORDS } from './data/mockLessons';
 import { calculateFsrsSchedule } from './services/fsrsScheduler';
 import { lingqWordService } from './services/lingqWordService';
@@ -14,7 +14,7 @@ import { SPEAKING_SCENARIOS, SpeakingScenario } from './data/speakingScenarios';
 import { lookupWord } from './services/dictionaryService';
 import { ankiDb, DEFAULT_PROFILE } from './services/ankiDatabase';
 import { authService } from './services/authService';
-import { ScopedStorage, PersistedRoleplayMessage } from './services/scopedStorage';
+import { ScopedStorage, PersistedRoleplayMessage, getLocalDateKey } from './services/scopedStorage';
 import { ScenarioCompletionRecord } from './utils/speakingMetrics';
 import { loadYouTubeIframeAPI } from './services/youtubeLoader';
 import { ProductionErrorBoundary } from './components/Common/ProductionErrorBoundary';
@@ -140,6 +140,15 @@ export const App: React.FC = () => {
     }
   });
 
+  const [dailyReelProgress, setDailyReelProgress] = useState<DailyReelProgress>(() => {
+    try {
+      const user = authService.getCurrentUser();
+      return ScopedStorage.getDailyReelProgress(user?.id);
+    } catch {
+      return { date: getLocalDateKey(), completedReelIds: [], dailyGoal: 5 };
+    }
+  });
+
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isImportOpen, setIsImportOpen] = useState<boolean>(false);
 
@@ -197,6 +206,15 @@ export const App: React.FC = () => {
         setCompletedScenarios(cloudState.completedScenarios);
         ScopedStorage.setCompletedScenarios(user.id, cloudState.completedScenarios);
       }
+      if (
+        cloudState.dailyReelProgress &&
+        typeof cloudState.dailyReelProgress === 'object' &&
+        cloudState.dailyReelProgress.date === getLocalDateKey() &&
+        Array.isArray(cloudState.dailyReelProgress.completedReelIds)
+      ) {
+        setDailyReelProgress(cloudState.dailyReelProgress);
+        ScopedStorage.setDailyReelProgress(user.id, cloudState.dailyReelProgress);
+      }
     }
   };
 
@@ -234,6 +252,7 @@ export const App: React.FC = () => {
     setStreakDays(ScopedStorage.getStreakDays(null));
     setRoleplayHistory(ScopedStorage.getRoleplayHistory(null));
     setCompletedScenarios(ScopedStorage.getCompletedScenarios(null));
+    setDailyReelProgress(ScopedStorage.getDailyReelProgress(null));
   };
 
   // Sequential Boot Hydration: prevents race conditions between session verification, IndexedDB init, and cloud sync
@@ -392,6 +411,14 @@ export const App: React.FC = () => {
     }
   }, [streakDays, currentUser]);
 
+  useEffect(() => {
+    try {
+      ScopedStorage.setDailyReelProgress(currentUser?.id, dailyReelProgress);
+    } catch (e) {
+      console.warn('ScopedStorage daily reel progress error', e);
+    }
+  }, [dailyReelProgress, currentUser]);
+
   // Cloud State Sync for scenarios, streakDays, profiles, customShorts & shortsOffsets
   useEffect(() => {
     if (!isBootHydrated || !currentUser) return;
@@ -412,13 +439,14 @@ export const App: React.FC = () => {
             customShorts: ScopedStorage.getCustomShorts(currentUser.id),
             shortsOffsets: ScopedStorage.getShortsOffsets(currentUser.id),
             roleplayHistory,
-            completedScenarios
+            completedScenarios,
+            dailyReelProgress
           }
         })
       }).catch(console.warn);
     }, 1500);
     return () => clearTimeout(timer);
-  }, [scenarios, streakDays, roleplayHistory, completedScenarios, currentUser, isBootHydrated]);
+  }, [scenarios, streakDays, roleplayHistory, completedScenarios, dailyReelProgress, currentUser, isBootHydrated]);
 
   // Real-world daily streak tracking based on calendar date
   useEffect(() => {
@@ -597,6 +625,60 @@ export const App: React.FC = () => {
       ScopedStorage.addGuestTransientWord(newWord);
     }
     toast.success('Đã lưu câu bản xứ vào Kho từ vựng FSRS-6 để ôn tập!');
+  };
+
+  // Save an American expression directly from Real American Reels into FSRS-6 with exact video timestamp
+  const handleSaveReelExpression = (payload: {
+    expression: string;
+    meaningVi: string;
+    contextSentence: string;
+    usageNote?: string;
+    videoTitle?: string;
+    sourceLessonId?: string;
+    sourceYoutubeId?: string;
+    sourceTimestampSec?: number;
+  }) => {
+    const cleanExpr = payload.expression.trim();
+    if (!cleanExpr) return;
+    const normalized = cleanExpr.toLowerCase();
+    const alreadyExists = savedWords.some((w) => w?.word && w.word.toLowerCase().trim() === normalized);
+    if (alreadyExists) {
+      toast.info(`"${cleanExpr}" đã có trong Kho từ vựng FSRS-6 của bạn.`);
+      return;
+    }
+
+    const newWord: SavedWord = {
+      id: `word-reel-${Date.now()}`,
+      word: cleanExpr.slice(0, 80),
+      phonetic: '',
+      partOfSpeech: cleanExpr.includes(' ') ? 'expression' : 'spoken word',
+      translation: payload.meaningVi.trim() || `Cụm tiếng Mỹ: "${cleanExpr}"`,
+      definitionEn: payload.usageNote?.trim() || `Real American English expression from "${payload.videoTitle || 'Shorts'}"`,
+      exampleEn: payload.contextSentence,
+      contextSentence: payload.contextSentence,
+      videoTitle: payload.videoTitle || 'Real American Reels',
+      sourceLessonId: payload.sourceLessonId,
+      sourceYoutubeId: payload.sourceYoutubeId,
+      sourceTimestampSec: payload.sourceTimestampSec,
+      savedAt: Date.now(),
+      easeFactor: 2.5,
+      interval: 0,
+      repetitions: 0,
+      lapses: 0,
+      state: 'new',
+      dueAt: Date.now(),
+      lastReviewedAt: Date.now(),
+      schedulerVersion: 'fsrs6',
+      usn: 1,
+      isDirty: true
+    };
+
+    setSavedWords((prev) => [newWord, ...prev]);
+    ankiDb.saveWord(newWord).catch(console.warn);
+    if (!currentUser) {
+      ScopedStorage.addGuestTransientWord(newWord);
+    }
+    toast.success(`Đã lưu "${cleanExpr}" vào Kho từ vựng FSRS-6!`);
   };
 
   // Update translation / context sentence inline from Word Vault
@@ -893,7 +975,7 @@ export const App: React.FC = () => {
             )}
 
             {activeTab === 'shorts' && (
-              <ProductionErrorBoundary componentName="Shorts Video & YouGlish" onGoHome={() => setActiveTab('home')}>
+              <ProductionErrorBoundary componentName="Real American Reels & YouGlish" onGoHome={() => setActiveTab('home')}>
                 <ShortsView
                   isActive={true}
                   shorts={shorts}
@@ -903,6 +985,12 @@ export const App: React.FC = () => {
                   lessons={lessons}
                   activeProfileId={activeProfile.id}
                   onImportShortClick={() => setIsImportOpen(true)}
+                  onReviewWord={handleReviewWord}
+                  onSaveReelExpression={handleSaveReelExpression}
+                  currentUser={currentUser}
+                  onOpenAuth={() => setIsAuthModalOpen(true)}
+                  dailyReelProgress={dailyReelProgress}
+                  onDailyReelProgressChange={setDailyReelProgress}
                 />
               </ProductionErrorBoundary>
             )}

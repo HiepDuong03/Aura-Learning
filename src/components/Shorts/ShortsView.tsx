@@ -1,46 +1,53 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { VideoLesson, SavedWord, SubtitleLine } from '../../types';
-import { 
-  ChevronUp, 
-  ChevronDown, 
-  ChevronLeft,
-  ChevronRight,
-  Heart, 
-  Bookmark, 
-  BookmarkCheck, 
-  Volume2, 
-  VolumeX, 
+import {
+  VideoLesson,
+  SavedWord,
+  AnkiRating,
+  AuthUser,
+  ContextExplanation,
+  DailyReelProgress
+} from '../../types';
+import {
+  ChevronUp,
+  ChevronDown,
+  Heart,
+  Bookmark,
+  BookmarkCheck,
+  Volume2,
+  VolumeX,
   Sparkles,
   ArrowRight,
-  Play, 
-  Pause,
-  RotateCcw, 
-  Gauge, 
-  Repeat, 
-  Eye, 
-  EyeOff, 
-  Compass, 
-  Target, 
-  Search, 
-  Plus, 
-  SlidersHorizontal, 
-  Check, 
-  Mic, 
-  MicOff, 
-  Zap, 
-  CheckCircle2, 
-  BookOpen, 
+  Play,
+  RotateCcw,
+  Repeat,
+  Eye,
+  EyeOff,
+  Target,
+  Search,
+  Plus,
+  SlidersHorizontal,
+  Mic,
+  MicOff,
+  Zap,
+  CheckCircle2,
+  BookOpen,
   AlertTriangle,
-  ExternalLink,
   Loader2,
   ListFilter,
   Layers,
   GraduationCap,
   Lock,
-  Globe
+  Globe,
+  Flame,
+  Ear,
+  Brain,
+  X,
+  Settings2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { speakWord } from '../../services/dictionaryService';
+import { explainInContext } from '../../services/dictionaryService';
+import { authService } from '../../services/authService';
+import { getLocalDateKey } from '../../services/scopedStorage';
 import { tokenizeText } from '../../utils/textTokenizer';
 import { loadYouTubeIframeAPI, parseYouTubePlayerError, YouTubePlayerError } from '../../services/youtubeLoader';
 import {
@@ -50,13 +57,34 @@ import {
   PoolSlotId,
   PoolSlotRuntime
 } from '../../utils/shortsPlayerPool';
+import { decodeConnectedSpeech } from '../../utils/connectedSpeechDecoder';
+import {
+  buildMicroQuizForReels,
+  buildThematicReelsFeed,
+  MicroQuizQuestion,
+  mineAmericanExpressionsFromLessons,
+  ReelTopicFilter
+} from '../../utils/americanExpressionMiner';
+import { AMERICAN_REELS_CORPUS, mapCuratedReelToVideoLesson } from '../../data/americanReelsCorpus';
 import { shortsFeedService } from '../../services/shortsFeedService';
 import { youglishEngine, AccentZone, ContextRegister, YouGlishOccurrence } from '../../services/youglishEngine';
 import { speechScoringService, SpeechScoreResult } from '../../services/speechScoringService';
 import { YouGlishLiveWidget } from './YouGlishLiveWidget';
 import { useNotify } from '../Common/ToastProvider';
 
-type ShortsFeedMode = 'youglish' | 'search';
+type ShortsFeedMode = 'reels' | 'youglish' | 'search';
+type SubtitleDisplayMode = 'bilingual' | 'en_only' | 'blind';
+
+export interface SaveReelExpressionPayload {
+  expression: string;
+  meaningVi: string;
+  contextSentence: string;
+  usageNote?: string;
+  videoTitle?: string;
+  sourceLessonId?: string;
+  sourceYoutubeId?: string;
+  sourceTimestampSec?: number;
+}
 
 interface ShortsViewProps {
   isActive?: boolean;
@@ -67,6 +95,12 @@ interface ShortsViewProps {
   lessons?: VideoLesson[];
   activeProfileId?: string;
   onImportShortClick?: () => void;
+  onReviewWord?: (wordId: string, rating: AnkiRating) => void;
+  onSaveReelExpression?: (payload: SaveReelExpressionPayload) => void;
+  currentUser?: AuthUser | null;
+  onOpenAuth?: () => void;
+  dailyReelProgress?: DailyReelProgress;
+  onDailyReelProgressChange?: (progress: DailyReelProgress) => void;
 }
 
 interface HeartParticle {
@@ -83,11 +117,18 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   savedWords = [],
   lessons = [],
   activeProfileId = 'default_profile',
-  onImportShortClick
+  onImportShortClick,
+  onReviewWord,
+  onSaveReelExpression,
+  currentUser,
+  onOpenAuth,
+  dailyReelProgress,
+  onDailyReelProgressChange
 }) => {
   const { toast } = useNotify();
-  // Feed Mode State: Pure YouGlish Study & Search
-  const [feedMode, setFeedMode] = useState<ShortsFeedMode>('youglish');
+  // Feed Mode State: Real American Reels (default, entertainment-first) | YouGlish SRS | Search
+  const [feedMode, setFeedMode] = useState<ShortsFeedMode>('reels');
+  const [reelTopicFilter, setReelTopicFilter] = useState<ReelTopicFilter>('all');
   const [selectedWordFilter, setSelectedWordFilter] = useState<string>('all');
   const [accentFilter, setAccentFilter] = useState<AccentZone>('GLOBAL');
   const [registerFilter, setRegisterFilter] = useState<'all' | ContextRegister>('all');
@@ -98,13 +139,12 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   // Active Index & Feed
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [currentSubIndex, setCurrentSubIndex] = useState<number>(0);
-  const [liked, setLiked] = useState<boolean>(false);
   const [bookmarked, setBookmarked] = useState<boolean>(false);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [currentTime, setCurrentTime] = useState<number>(0);
 
   // TikTok Ergonomics & Micro-Interactions
-  // Default to muted on first visit to comply with browser autoplay policies and ensure instant start
+  // Start muted on initial load so browsers never block autoplay; display a prominent unmute pill (PLOS ONE 2024)
   const [isGlobalMuted, setIsGlobalMuted] = useState<boolean>(() => {
     const saved = localStorage.getItem('4you_shorts_muted');
     return saved !== null ? saved === 'true' : true;
@@ -124,37 +164,39 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   const [useDirectIframe, setUseDirectIframe] = useState<boolean>(false);
   const loadingTimeoutRef = useRef<any>(null);
 
-  // YouGlish Learning Enhancements — Blind Listening (Nghe Mù) enabled by default for SRS Active Recall!
-  const [isBlindMode, setIsBlindMode] = useState<boolean>(true);
+  // Subtitle Display Mode: Default 'bilingual' in Reels (Comprehensible Input i+1, Cambridge 2026 L2-top)
+  const [subtitleMode, setSubtitleMode] = useState<SubtitleDisplayMode>('bilingual');
+  const isBlindMode = subtitleMode === 'blind';
+  const setIsBlindMode = useCallback((nextBlind: boolean) => {
+    setSubtitleMode(nextBlind ? 'blind' : 'bilingual');
+  }, []);
   const [isWordRevealed, setIsWordRevealed] = useState<boolean>(false);
   const [isDrillMode, setIsDrillMode] = useState<boolean>(false);
   const [drillRepeatCount, setDrillRepeatCount] = useState<number>(1);
   const drillRepeatCountRef = useRef<number>(1);
+
+  // Interpolated 3-Second Micro-Quiz State (Nature Comms Psych 2025)
+  const [activeMicroQuiz, setActiveMicroQuiz] = useState<MicroQuizQuestion | null>(null);
+  const [microQuizAnswer, setMicroQuizAnswer] = useState<number | null>(null);
+  const watchedReelsRef = useRef<VideoLesson[]>([]);
+  const swipesSinceQuizRef = useRef<number>(0);
+
+  // AI American Nuance Decoder State (reuses POST /api/ai/explain)
+  const [aiNuance, setAiNuance] = useState<ContextExplanation | null>(null);
+  const [isLoadingAiNuance, setIsLoadingAiNuance] = useState<boolean>(false);
+  const [aiNuanceError, setAiNuanceError] = useState<string | null>(null);
 
   // 1-Tap Shadowing States
   const [isShadowing, setIsShadowing] = useState<boolean>(false);
   const [shadowResult, setShadowResult] = useState<SpeechScoreResult | null>(null);
   const recognitionRef = useRef<any>(null);
 
-  // Subtitle offset calibration
-  const [showOffsetBar, setShowOffsetBar] = useState<boolean>(false);
+  // Settings drawer (consolidates Player Pool/IFrame, Subtitle Offset & YouGlish Live API)
+  const [showSettingsPanel, setShowSettingsPanel] = useState<boolean>(false);
   const [subOffset, setSubOffset] = useState<number>(0);
 
   // Mobile companion drawer toggle
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
-
-  // SRS Rating for Revealed Flashcards
-  const handleRateCard = async (rating: 1 | 2 | 3 | 4) => {
-    const targetW = currentShort?.targetWord?.toLowerCase().trim();
-    const matchingWord = targetW ? savedWords.find(w => w?.word && w.word.toLowerCase().trim() === targetW) : null;
-    if (matchingWord) {
-      await speechScoringService.recordShadowingResult(matchingWord, rating, activeProfileId);
-      confetti({ particleCount: 35, spread: 50, origin: { y: 0.6 } });
-    }
-    setTimeout(() => {
-      handleNext();
-    }, 450);
-  };
 
   const playerRef = useRef<any>(null);
   const poolPlayersRef = useRef<Record<PoolSlotId, any>>({ 0: null, 1: null, 2: null });
@@ -187,6 +229,33 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     playbackRateRef.current = playbackRate;
   }, [playbackRate]);
 
+  // --- 0. Curated + Auto-Mined Real American Reels Feed (Thematic Mini-Clustering) ---
+  const curatedReels: VideoLesson[] = useMemo(() => {
+    return AMERICAN_REELS_CORPUS.map(mapCuratedReelToVideoLesson);
+  }, []);
+
+  const minedReels: VideoLesson[] = useMemo(() => {
+    const sourcePool = [...(initialShorts || []), ...lessons];
+    return mineAmericanExpressionsFromLessons(sourcePool, curatedReels, 4);
+  }, [initialShorts, lessons, curatedReels]);
+
+  const allReelsPool: VideoLesson[] = useMemo(() => {
+    return [...curatedReels, ...minedReels];
+  }, [curatedReels, minedReels]);
+
+  const reelsCategoryCounts = useMemo(() => {
+    return {
+      all: allReelsPool.length,
+      daily_life: allReelsPool.filter((r) => r.reelCategory === 'daily_life').length,
+      work_talk: allReelsPool.filter((r) => r.reelCategory === 'work_talk').length,
+      my_videos: allReelsPool.filter((r) => r.reelCategory === 'my_videos').length
+    };
+  }, [allReelsPool]);
+
+  const thematicReelsFeed: VideoLesson[] = useMemo(() => {
+    return buildThematicReelsFeed(curatedReels, minedReels, reelTopicFilter);
+  }, [curatedReels, minedReels, reelTopicFilter]);
+
   // --- 1. Compute YouGlish Mined Occurrences with SRS Smart Sorter ---
   const youglishOccurrences: YouGlishOccurrence[] = useMemo(() => {
     return youglishEngine.mineYouGlishOccurrences(savedWords, lessons, {
@@ -213,6 +282,10 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
 
   // --- 2. Convert Active Feed items into Uniform VideoLesson Array ---
   const activeFeed: VideoLesson[] = useMemo(() => {
+    if (feedMode === 'reels') {
+      return thematicReelsFeed;
+    }
+
     if (feedMode === 'search') {
       const results = youglishEngine.searchYouGlishQuery(searchQuery, lessons);
       return results.map(occ => {
@@ -245,7 +318,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
       });
     }
 
-    // Default 'youglish' mode
+    // 'youglish' SRS review mode
     return youglishOccurrences.map(occ => {
       return {
         id: occ.id,
@@ -271,17 +344,21 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
         initialSubIndex: 0
       };
     });
-  }, [feedMode, youglishOccurrences, searchQuery, lessons]);
+  }, [feedMode, thematicReelsFeed, youglishOccurrences, searchQuery, lessons]);
 
   // Reset index when feed criteria change
   useEffect(() => {
     setCurrentIndex(0);
     const first = activeFeed[0];
-    const initIdx = (first as any)?.initialSubIndex ?? 0;
+    const initIdx = first?.initialSubIndex ?? 0;
     setCurrentSubIndex(initIdx);
     setIsWordRevealed(false);
     setShadowResult(null);
-  }, [feedMode, selectedWordFilter, accentFilter, registerFilter, searchQuery]);
+    setAiNuance(null);
+    setAiNuanceError(null);
+    setActiveMicroQuiz(null);
+    setMicroQuizAnswer(null);
+  }, [feedMode, reelTopicFilter, selectedWordFilter, accentFilter, registerFilter, searchQuery]);
 
   // Active current short
   const currentShort: VideoLesson = activeFeed[currentIndex] || activeFeed[0] || {
@@ -302,15 +379,157 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     quizzes: []
   };
 
-  // When active short changes, immediately position to target sentence and mask keyword for Blind Listening
+  // When active short changes, immediately position to target sentence
   useEffect(() => {
-    const initIdx = (currentShort as any)?.initialSubIndex ?? 0;
+    const initIdx = currentShort.initialSubIndex ?? 0;
     setCurrentSubIndex(initIdx);
     setIsWordRevealed(false);
     setShadowResult(null);
+    setAiNuance(null);
+    setAiNuanceError(null);
   }, [currentShort.id]);
 
   const currentOccurrence = feedMode === 'youglish' ? youglishOccurrences[currentIndex] : null;
+  const activeExpression = (currentShort.expression || currentShort.targetWord || '').trim();
+  const isCurrentExpressionSaved = useMemo(() => {
+    if (!activeExpression) return false;
+    const normalized = activeExpression.toLowerCase();
+    return savedWords.some((w) => w?.word && w.word.toLowerCase().trim() === normalized);
+  }, [activeExpression, savedWords]);
+
+  const subtitles = currentShort?.subtitles || [];
+  const currentSub = subtitles[currentSubIndex] || subtitles[0] || {
+    id: 'empty',
+    start: 0,
+    end: 5,
+    text: 'Enjoy this English learning Short!',
+    translation: 'Hãy thưởng thức video ngắn học tiếng Anh này!'
+  };
+
+  // American Connected Speech Hints (0ms, receptive-first, capped at 2 chips)
+  const connectedSpeechHints = useMemo(() => {
+    return decodeConnectedSpeech(currentSub.text, 2);
+  }, [currentSub.text]);
+
+  // Daily Micro-Habit Progress Helper (5 real American expressions/day)
+  const effectiveDailyGoal = dailyReelProgress?.dailyGoal || 5;
+  const completedTodayIds = useMemo(() => {
+    const today = getLocalDateKey();
+    if (dailyReelProgress && dailyReelProgress.date === today) {
+      return dailyReelProgress.completedReelIds;
+    }
+    return [];
+  }, [dailyReelProgress]);
+
+  const markReelCompleted = useCallback((reelId: string) => {
+    if (!reelId || reelId === 'placeholder' || !onDailyReelProgressChange) return;
+    const today = getLocalDateKey();
+    const currentList = dailyReelProgress && dailyReelProgress.date === today
+      ? dailyReelProgress.completedReelIds
+      : [];
+    if (currentList.includes(reelId)) return;
+
+    const nextIds = [...currentList, reelId];
+    const goal = dailyReelProgress?.dailyGoal || 5;
+    onDailyReelProgressChange({
+      date: today,
+      completedReelIds: nextIds,
+      dailyGoal: goal
+    });
+
+    if (nextIds.length === goal) {
+      confetti({ particleCount: 70, spread: 75, origin: { y: 0.55 } });
+      toast.success(`🔥 Đạt mục tiêu ${goal}/${goal} cụm tiếng Mỹ hôm nay! Đỉnh cao!`);
+    }
+  }, [dailyReelProgress, onDailyReelProgressChange, toast]);
+
+  // Mark reel as absorbed after 3 seconds of active viewing
+  useEffect(() => {
+    if (!isActive || feedMode !== 'reels' || !currentShort?.id || currentShort.id === 'placeholder') {
+      return;
+    }
+    const timer = setTimeout(() => {
+      markReelCompleted(currentShort.id);
+      const alreadyTracked = watchedReelsRef.current.some((r) => r.id === currentShort.id);
+      if (!alreadyTracked) {
+        watchedReelsRef.current = [...watchedReelsRef.current.slice(-8), currentShort];
+      }
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [isActive, feedMode, currentShort, markReelCompleted]);
+
+  // SRS Rating for Revealed Flashcards — wired directly to FSRS-6 via App.tsx
+  const handleRateCard = async (rating: AnkiRating) => {
+    const targetW = activeExpression.toLowerCase();
+    const matchingWord = targetW ? savedWords.find(w => w?.word && w.word.toLowerCase().trim() === targetW) : null;
+    if (matchingWord) {
+      if (onReviewWord) {
+        onReviewWord(matchingWord.id, rating);
+      } else {
+        await speechScoringService.recordShadowingResult(matchingWord, rating, activeProfileId);
+      }
+      confetti({ particleCount: 35, spread: 50, origin: { y: 0.6 } });
+    }
+    setTimeout(() => {
+      handleNext();
+    }, 350);
+  };
+
+  // 1-Tap Save Expression directly to FSRS-6 with exact video timestamp
+  const handleSaveCurrentExpression = useCallback(() => {
+    if (!activeExpression) return;
+    const contextSentence = currentSub.text || currentShort.targetContext || '';
+    const meaningVi = currentShort.expressionMeaningVi || currentSub.translation || '';
+    if (onSaveReelExpression) {
+      onSaveReelExpression({
+        expression: activeExpression,
+        meaningVi,
+        contextSentence,
+        usageNote: currentShort.americanUsageNote || currentShort.description,
+        videoTitle: currentShort.sourceLessonTitle || currentShort.title,
+        sourceYoutubeId: currentShort.youtubeId,
+        sourceTimestampSec: Math.max(0, Math.floor(currentSub.start ?? currentShort.startSeconds ?? 0))
+      });
+      setBookmarked(true);
+      markReelCompleted(currentShort.id);
+    } else {
+      onSelectWord(activeExpression, contextSentence);
+    }
+  }, [activeExpression, currentSub, currentShort, onSaveReelExpression, onSelectWord, markReelCompleted]);
+
+  // 1-Click AI American Nuance Decoder (reuses POST /api/ai/explain)
+  const handleAskAiNuance = async () => {
+    if (!activeExpression) return;
+    if (!currentUser) {
+      onOpenAuth?.();
+      return;
+    }
+    setIsLoadingAiNuance(true);
+    setAiNuanceError(null);
+    try {
+      const result = await explainInContext({
+        phrase: activeExpression,
+        sentence: currentSub.text || currentShort.targetContext || activeExpression,
+        videoTitle: currentShort.sourceLessonTitle || currentShort.title,
+        token: authService.getToken()
+      });
+      setAiNuance(result);
+    } catch (err) {
+      setAiNuanceError(err instanceof Error ? err.message : 'Không thể tải giải mã AI lúc này.');
+    } finally {
+      setIsLoadingAiNuance(false);
+    }
+  };
+
+  // Playback speed quick switcher (0.75x / 1.0x / 1.25x)
+  const handleChangePlaybackRate = (rate: number) => {
+    setPlaybackRate(rate);
+    if (playerRef.current && typeof playerRef.current.setPlaybackRate === 'function') {
+      try {
+        playerRef.current.setPlaybackRate(rate);
+      } catch {}
+    }
+  };
 
   // Subtitle offset sync
   useEffect(() => {
@@ -322,15 +541,6 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     setSubOffset(nextOffset);
     currentShort.subtitleOffset = nextOffset;
     shortsFeedService.setShortOffset(currentShort.id, nextOffset);
-  };
-
-  const subtitles = currentShort?.subtitles || [];
-  const currentSub = subtitles[currentSubIndex] || subtitles[0] || {
-    id: 'empty',
-    start: 0,
-    end: 5,
-    text: 'Enjoy this English learning Short!',
-    translation: 'Hãy thưởng thức video ngắn học tiếng Anh này!'
   };
 
   // Reset drill count & shadowing on video or subtitle change
@@ -812,8 +1022,8 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     };
   }, []);
 
-  // --- 5. TikTok Instant Gesture & Swipe Mechanics (No Forced Loading Flash) ---
-  const handleNext = useCallback(() => {
+  // --- 5. TikTok Instant Gesture & Swipe Mechanics (No Forced Loading Flash + 3s Interpolated Micro-Quiz) ---
+  const advanceToNextReel = useCallback(() => {
     if (currentIndex < activeFeed.length - 1) {
       if (recognitionRef.current) {
         try { recognitionRef.current.abort(); } catch (e) {}
@@ -822,11 +1032,12 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
       setIsShadowing(false);
       setSwipeAnimation('slide-up');
       setPlayerError(null);
+      setActiveMicroQuiz(null);
+      setMicroQuizAnswer(null);
 
       setTimeout(() => {
         setCurrentIndex(prev => prev + 1);
         setCurrentSubIndex(0);
-        setLiked(false);
         setBookmarked(false);
         setIsWordRevealed(false);
         setShadowResult(null);
@@ -834,6 +1045,50 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
       }, 65);
     }
   }, [currentIndex, activeFeed.length]);
+
+  const handleNext = useCallback(() => {
+    if (currentIndex >= activeFeed.length - 1) return;
+
+    // Trigger 3-Second Interpolated Micro-Quiz every 4 clips in 'reels' mode (non-blocking — skip anytime)
+    if (feedMode === 'reels' && !activeMicroQuiz) {
+      if (currentShort?.id && currentShort.id !== 'placeholder') {
+        const exists = watchedReelsRef.current.some((r) => r.id === currentShort.id);
+        if (!exists) {
+          watchedReelsRef.current = [...watchedReelsRef.current.slice(-8), currentShort];
+        }
+      }
+      swipesSinceQuizRef.current += 1;
+      if (swipesSinceQuizRef.current >= 4 && watchedReelsRef.current.length >= 2) {
+        const quiz = buildMicroQuizForReels(watchedReelsRef.current, allReelsPool);
+        if (quiz) {
+          swipesSinceQuizRef.current = 0;
+          setActiveMicroQuiz(quiz);
+          setMicroQuizAnswer(null);
+          if (playerRef.current && typeof playerRef.current.pauseVideo === 'function') {
+            try { playerRef.current.pauseVideo(); } catch {}
+          }
+          setIsPlaying(false);
+          return;
+        }
+      }
+    }
+
+    advanceToNextReel();
+  }, [currentIndex, activeFeed.length, feedMode, activeMicroQuiz, currentShort, allReelsPool, advanceToNextReel]);
+
+  const handleAnswerMicroQuiz = (optionIdx: number) => {
+    if (!activeMicroQuiz || microQuizAnswer !== null) return;
+    setMicroQuizAnswer(optionIdx);
+    if (optionIdx === activeMicroQuiz.correctIndex) {
+      confetti({ particleCount: 40, spread: 55, origin: { y: 0.6 } });
+    }
+  };
+
+  const handleDismissMicroQuiz = () => {
+    setActiveMicroQuiz(null);
+    setMicroQuizAnswer(null);
+    advanceToNextReel();
+  };
 
   const handlePrev = useCallback(() => {
     if (currentIndex > 0) {
@@ -844,11 +1099,12 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
       setIsShadowing(false);
       setSwipeAnimation('slide-down');
       setPlayerError(null);
+      setActiveMicroQuiz(null);
+      setMicroQuizAnswer(null);
 
       setTimeout(() => {
         setCurrentIndex(prev => prev - 1);
         setCurrentSubIndex(0);
-        setLiked(false);
         setBookmarked(false);
         setIsWordRevealed(false);
         setShadowResult(null);
@@ -911,7 +1167,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     }
   };
 
-  // TikTok Double-Tap to Like with Particle Physics
+  // TikTok Double-Tap to Like with Particle Physics + First-Tap Auto-Unmute (PLOS ONE 2024)
   const handleCardTap = (e: React.MouseEvent<HTMLDivElement>) => {
     const now = Date.now();
     const DOUBLE_TAP_DELAY = 280;
@@ -921,7 +1177,6 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
         clearTimeout(tapTimeoutRef.current);
         tapTimeoutRef.current = null;
       }
-      setLiked(true);
       const rect = e.currentTarget.getBoundingClientRect();
       const newParticle: HeartParticle = {
         id: Date.now(),
@@ -935,7 +1190,11 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     } else {
       if (tapTimeoutRef.current) clearTimeout(tapTimeoutRef.current);
       tapTimeoutRef.current = setTimeout(() => {
-        togglePlayPause();
+        if (isGlobalMutedRef.current) {
+          toggleMute();
+        } else {
+          togglePlayPause();
+        }
         tapTimeoutRef.current = null;
       }, DOUBLE_TAP_DELAY);
     }
@@ -995,10 +1254,15 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
 
       if (score.accuracy >= 75) {
         confetti({ particleCount: 50, spread: 60, origin: { y: 0.6 } });
-        const targetW = currentShort?.targetWord?.toLowerCase().trim();
+        markReelCompleted(currentShort.id);
+        const targetW = activeExpression.toLowerCase();
         const matchingWord = targetW ? savedWords.find(w => w?.word && w.word.toLowerCase().trim() === targetW) : null;
         if (matchingWord) {
-          await speechScoringService.recordShadowingResult(matchingWord, score.ankiRating, activeProfileId);
+          if (onReviewWord) {
+            onReviewWord(matchingWord.id, score.ankiRating);
+          } else {
+            await speechScoringService.recordShadowingResult(matchingWord, score.ankiRating, activeProfileId);
+          }
         }
       }
     };
@@ -1057,21 +1321,54 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     }
   }, [currentSub, currentShort.startSeconds, subtitles]);
 
-  // Tokenize subtitle and render words
-  const renderWords = (text: string) => {
+  // Tokenize subtitle and render smooth natural text (no cluttered per-word boxes)
+  const renderWords = (text: string, surface: 'video' | 'light' = 'video') => {
     const tokens = tokenizeText(text);
-    const target = currentShort.targetWord?.toLowerCase().trim();
+    const targetPhrase = activeExpression.toLowerCase();
+    const shouldMask = !isWordRevealed && (isBlindMode || feedMode === 'youglish');
+
+    // Compute highlighted character span for multi-word expressions (e.g., "figure it out", "sounds good")
+    let phraseStart = -1;
+    let phraseEnd = -1;
+    if (targetPhrase && targetPhrase.includes(' ')) {
+      const escaped = targetPhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b${escaped}\\b`, 'i');
+      const match = regex.exec(text);
+      if (match && match.index !== undefined) {
+        phraseStart = match.index;
+        phraseEnd = match.index + match[0].length;
+      }
+    }
+
+    let cursor = 0;
+    let maskedPhraseEmitted = false;
+
+    const maskButtonClass =
+      surface === 'video'
+        ? 'cursor-pointer inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs shadow-sm mx-0.5 align-baseline'
+        : 'cursor-pointer inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-bold text-xs mx-0.5 align-baseline';
+
+    const targetHighlightClass =
+      surface === 'video'
+        ? 'cursor-pointer bg-amber-400 text-slate-950 font-black rounded-md px-1.5 py-0.5 shadow-sm'
+        : 'cursor-pointer bg-amber-100 text-amber-900 font-black rounded-md px-1.5 py-0.5 border border-amber-300/80';
+
+    const normalWordClass =
+      surface === 'video'
+        ? 'cursor-pointer hover:text-teal-300 hover:underline decoration-teal-400/80 underline-offset-4 transition-colors'
+        : 'cursor-pointer hover:text-teal-700 hover:bg-teal-50 rounded px-0.5 transition-colors';
 
     return tokens.map((token, i) => {
-      if (!token.isWord) return <span key={i}>{token.text}</span>;
+      const tokenStart = cursor;
+      const tokenEnd = cursor + token.text.length;
+      cursor = tokenEnd;
 
-      const isTarget = target && (
-        token.lookupWord?.toLowerCase() === target ||
-        token.text?.toLowerCase().replace(/[^a-z]/g, '') === target
-      );
+      const isInsideMultiWordPhrase =
+        phraseStart >= 0 && tokenStart >= phraseStart && tokenEnd <= phraseEnd;
 
-      // Review Mode (Active Recall): mask target word until user reveals!
-      if (isTarget && (!isWordRevealed && (isBlindMode || feedMode === 'youglish'))) {
+      if (isInsideMultiWordPhrase && shouldMask) {
+        if (maskedPhraseEmitted) return null;
+        maskedPhraseEmitted = true;
         return (
           <button
             key={i}
@@ -1079,25 +1376,66 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
               e.stopPropagation();
               setIsWordRevealed(true);
             }}
-            className="cursor-pointer inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-amber-500/90 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm shadow-md animate-pulse border border-amber-300"
-            title="Đang chế độ nghe mù — Nhấn để mở từ khóa"
+            className={maskButtonClass}
+            title="Đang chế độ nghe mù — Nhấn để mở cụm từ"
           >
-            <Eye className="w-3.5 h-3.5" /> [ 🎧 Nghe & Đoán ]
+            <Eye className="w-3 h-3" /> Nghe & Đoán
           </button>
         );
       }
 
-      // YouGlish Target Word Highlight (Golden Glow)
+      if (!token.isWord) {
+        if (isInsideMultiWordPhrase) {
+          return (
+            <span
+              key={i}
+              className={
+                surface === 'video'
+                  ? 'bg-amber-400 text-slate-950 font-black py-0.5'
+                  : 'bg-amber-100 text-amber-900 font-black py-0.5'
+              }
+            >
+              {token.text}
+            </span>
+          );
+        }
+        return <span key={i}>{token.text}</span>;
+      }
+
+      const isSingleTarget =
+        Boolean(targetPhrase) &&
+        !targetPhrase.includes(' ') &&
+        (token.lookupWord?.toLowerCase() === targetPhrase ||
+          token.text?.toLowerCase().replace(/[^a-z]/g, '') === targetPhrase);
+
+      const isTarget = isInsideMultiWordPhrase || isSingleTarget;
+
+      if (isTarget && shouldMask) {
+        return (
+          <button
+            key={i}
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsWordRevealed(true);
+            }}
+            className={maskButtonClass}
+            title="Đang chế độ nghe mù — Nhấn để mở từ khóa"
+          >
+            <Eye className="w-3 h-3" /> Nghe & Đoán
+          </button>
+        );
+      }
+
       if (isTarget) {
         return (
           <span
             key={i}
             onClick={(e) => {
               e.stopPropagation();
-              onSelectWord(token.lookupWord || token.text, text);
+              onSelectWord(isInsideMultiWordPhrase ? activeExpression : (token.lookupWord || token.text), text);
             }}
-            className="cursor-pointer bg-gradient-to-r from-amber-400 to-yellow-300 text-slate-950 font-black rounded-lg px-2 py-0.5 mx-0.5 inline-block shadow-lg ring-2 ring-amber-300 animate-scale-up"
-            title={`Từ mục tiêu: "${token.text}" — Nhấn để tra nghĩa & lưu Anki`}
+            className={targetHighlightClass}
+            title={`Cụm tiếng Mỹ mục tiêu: "${isInsideMultiWordPhrase ? activeExpression : token.text}" — Nhấn để tra chi tiết`}
           >
             {token.text}
           </span>
@@ -1111,8 +1449,8 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
             e.stopPropagation();
             onSelectWord(token.lookupWord || token.text, text);
           }}
-          className="cursor-pointer hover:bg-teal-400 hover:text-teal-950 rounded px-1 transition-all bg-white/20 mx-0.5 inline-block"
-          title="Nhấn để tra từ & lưu Anki Flashcard"
+          className={normalWordClass}
+          title="Nhấn để tra từ & lưu vào FSRS-6"
         >
           {token.text}
         </span>
@@ -1129,23 +1467,41 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   const cueProgress = Math.min(100, Math.max(0, ((currentTime - cueStartNormalized) / cueDuration) * 100));
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-2 sm:px-6 py-4 font-['Plus_Jakarta_Sans',sans-serif]">
-      {/* 1. Global Navigation Bar: Mode Switcher & Quick Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 bg-slate-900 border border-slate-800 p-2.5 sm:p-3 rounded-2xl shadow-xl backdrop-blur-md">
-        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-1 sm:pb-0">
+    <div className="w-full max-w-6xl mx-auto px-2 sm:px-4 py-2 font-['Plus_Jakarta_Sans',sans-serif] space-y-4">
+      {/* 1. Clean Light Studio Top Bar */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-2 sm:p-2.5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+        {/* Segmented Mode Tabs */}
+        <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-xl overflow-x-auto scrollbar-none">
           <button
-            onClick={() => setFeedMode('youglish')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 ${
-              feedMode === 'youglish'
-                ? 'bg-gradient-to-r from-teal-500 to-emerald-500 text-slate-950 shadow-md shadow-teal-500/20'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            onClick={() => setFeedMode('reels')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0 ${
+              feedMode === 'reels'
+                ? 'bg-teal-600 text-white shadow-xs font-black'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
             }`}
           >
-            <Target className="w-4 h-4" />
-            <span>Ôn Từ YouGlish</span>
+            <Flame className="w-3.5 h-3.5" />
+            <span>🇺🇸 Real American Reels</span>
+            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+              feedMode === 'reels' ? 'bg-white/20 text-white' : 'bg-slate-200/80 text-slate-600'
+            }`}>
+              {allReelsPool.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setFeedMode('youglish')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0 ${
+              feedMode === 'youglish'
+                ? 'bg-teal-600 text-white shadow-xs font-black'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
+            }`}
+          >
+            <Target className="w-3.5 h-3.5" />
+            <span>Ôn từ SRS</span>
             {youglishOccurrences.length > 0 && (
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                feedMode === 'youglish' ? 'bg-slate-950 text-teal-300' : 'bg-slate-800 text-teal-400'
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                feedMode === 'youglish' ? 'bg-white/20 text-white' : 'bg-slate-200/80 text-slate-600'
               }`}>
                 {youglishOccurrences.length}
               </span>
@@ -1154,74 +1510,193 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
 
           <button
             onClick={() => setFeedMode('search')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0 ${
               feedMode === 'search'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                ? 'bg-teal-600 text-white shadow-xs font-black'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
             }`}
           >
-            <Search className="w-4 h-4" />
-            <span>Tra Cứu Video</span>
-          </button>
-
-          <button
-            onClick={() => setShowLiveYouglish(!showLiveYouglish)}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 ${
-              showLiveYouglish
-                ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white shadow-md shadow-red-600/30 ring-2 ring-red-400'
-                : 'text-red-400 hover:text-white hover:bg-slate-800 border border-red-500/30'
-            }`}
-            title="Mở Widget API chính thức từ YouGlish với hơn 100 triệu video"
-          >
-            <Globe className="w-4 h-4 text-red-400 group-hover:text-white" />
-            <span>YouGlish Live API</span>
-            <span className="px-1.5 py-0.5 rounded-full bg-red-950/80 text-red-300 text-[10px] font-bold">
-              100M+
-            </span>
+            <Search className="w-3.5 h-3.5" />
+            <span>Tra cứu</span>
           </button>
         </div>
 
-        <div className="flex items-center justify-between sm:justify-end gap-2">
-          {/* Instant IFrame Fast Mode Toggle */}
-          <button
-            onClick={() => setUseDirectIframe(!useDirectIframe)}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
-              useDirectIframe 
-                ? 'bg-teal-500/20 text-teal-300 border-teal-500/40 shadow-sm' 
-                : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-slate-200'
+        {/* Right Controls: Daily Goal + Add Video + Consolidated Settings */}
+        <div className="flex items-center justify-between md:justify-end gap-2">
+          <div
+            className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-2 shrink-0 ${
+              completedTodayIds.length >= effectiveDailyGoal
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-amber-50 border-amber-200 text-amber-800'
             }`}
-            title="Bật chế độ phát siêu tốc (Nocookie IFrame)"
+            title="Mục tiêu micro-habit mỗi ngày: xem thấm hoặc nhại lại 5 cụm tiếng Mỹ thực tế"
           >
-            <Zap className={`w-3.5 h-3.5 ${useDirectIframe ? 'text-teal-400' : 'text-slate-400'}`} />
-            <span className="text-[11px] font-semibold">{useDirectIframe ? 'Phát Siêu Tốc (IFrame)' : 'Chế độ chuẩn'}</span>
-          </button>
+            <Flame className={`w-3.5 h-3.5 ${completedTodayIds.length >= effectiveDailyGoal ? 'text-emerald-600' : 'text-amber-500'}`} />
+            <span>
+              Hôm nay: <strong>{Math.min(completedTodayIds.length, effectiveDailyGoal)}/{effectiveDailyGoal}</strong> cụm
+            </span>
+            <div className="w-10 h-1.5 rounded-full bg-amber-200/70 overflow-hidden hidden sm:block">
+              <div
+                className={`h-full transition-all duration-300 ${
+                  completedTodayIds.length >= effectiveDailyGoal ? 'bg-emerald-500' : 'bg-amber-500'
+                }`}
+                style={{ width: `${Math.min(100, (completedTodayIds.length / effectiveDailyGoal) * 100)}%` }}
+              />
+            </div>
+          </div>
 
           {onImportShortClick && (
             <button
               onClick={onImportShortClick}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-teal-400 text-xs font-bold border border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer"
+              className="px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs shrink-0"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>Thêm Short</span>
+              <span className="hidden sm:inline">Thêm video</span>
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() => setShowSettingsPanel(!showSettingsPanel)}
+            className={`p-2 rounded-xl border transition-all cursor-pointer shrink-0 flex items-center gap-1.5 text-xs font-bold ${
+              showSettingsPanel || subOffset !== 0 || showLiveYouglish
+                ? 'bg-slate-900 text-white border-slate-900'
+                : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200'
+            }`}
+            title="Cài đặt phát video, chỉnh lệch phụ đề & YouGlish Live API"
+          >
+            <Settings2 className="w-4 h-4" />
+            <span className="hidden xl:inline">Tùy chỉnh</span>
+          </button>
 
           {/* Mobile Companion Drawer Trigger */}
           <button
             onClick={() => setIsMobileDrawerOpen(!isMobileDrawerOpen)}
-            className="lg:hidden px-3 py-1.5 rounded-xl bg-teal-500/20 text-teal-300 border border-teal-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            className="lg:hidden px-3 py-1.5 rounded-xl bg-teal-50 text-teal-700 border border-teal-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0"
           >
             <GraduationCap className="w-3.5 h-3.5" />
-            <span>Góc Học Tập</span>
+            <span>Học chi tiết</span>
           </button>
         </div>
       </div>
 
+      {/* Consolidated Settings Bar (Hidden by default — Zero UI Clutter) */}
+      {showSettingsPanel && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-3 animate-fade-in">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold text-slate-500">Trình phát:</span>
+            <button
+              type="button"
+              onClick={() => setUseDirectIframe(!useDirectIframe)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                useDirectIframe
+                  ? 'bg-teal-50 text-teal-800 border-teal-300'
+                  : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5 text-teal-600" />
+              <span>{useDirectIframe ? 'IFrame Siêu tốc (Đang bật)' : '3-Slot Pool mượt (Mặc định)'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowLiveYouglish(!showLiveYouglish)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                showLiveYouglish
+                  ? 'bg-rose-600 text-white border-rose-600'
+                  : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+              }`}
+            >
+              <Globe className="w-3.5 h-3.5" />
+              <span>{showLiveYouglish ? 'Đóng YouGlish Live' : 'Mở YouGlish Live (100M+)'}</span>
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-bold text-slate-500 flex items-center gap-1 mr-1">
+              <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400" />
+              Lệch sub ({subOffset > 0 ? `+${subOffset}s` : `${subOffset}s`}):
+            </span>
+            {[-0.5, -0.2, 0.2, 0.5].map((delta) => (
+              <button
+                key={delta}
+                type="button"
+                onClick={() => handleAdjustOffset(delta)}
+                className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+              >
+                {delta > 0 ? `+${delta}s` : `${delta}s`}
+              </button>
+            ))}
+            {subOffset !== 0 && (
+              <button
+                type="button"
+                onClick={() => handleAdjustOffset(0, true)}
+                className="px-2 py-1 text-xs font-bold text-teal-700 hover:underline cursor-pointer"
+              >
+                Reset
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Topic / Vibe Filter Pills & 3-Mode Subtitle Switcher (Real American Reels Mode) */}
+      {feedMode === 'reels' && (
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 px-1">
+          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
+            {([
+              { id: 'all' as ReelTopicFilter, label: '🔥 Tất cả', count: reelsCategoryCounts.all },
+              { id: 'daily_life' as ReelTopicFilter, label: '☕ Đời sống Mỹ', count: reelsCategoryCounts.daily_life },
+              { id: 'work_talk' as ReelTopicFilter, label: '💼 Công sở & Giao tiếp', count: reelsCategoryCounts.work_talk },
+              { id: 'my_videos' as ReelTopicFilter, label: '🎬 Video của tôi', count: reelsCategoryCounts.my_videos }
+            ]).map((pill) => (
+              <button
+                key={pill.id}
+                onClick={() => setReelTopicFilter(pill.id)}
+                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                  reelTopicFilter === pill.id
+                    ? 'bg-teal-600 text-white border-teal-600 shadow-xs'
+                    : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:text-slate-900'
+                }`}
+              >
+                <span>{pill.label}</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                  reelTopicFilter === pill.id ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
+                }`}>
+                  {pill.count}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/80 self-start md:self-auto shrink-0">
+            <span className="text-[11px] font-bold text-slate-500 px-2">Phụ đề:</span>
+            {([
+              { id: 'bilingual' as SubtitleDisplayMode, label: 'EN + VI' },
+              { id: 'en_only' as SubtitleDisplayMode, label: 'Chỉ EN' },
+              { id: 'blind' as SubtitleDisplayMode, label: 'Nghe mù' }
+            ]).map((mode) => (
+              <button
+                key={mode.id}
+                onClick={() => setSubtitleMode(mode.id)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                  subtitleMode === mode.id
+                    ? 'bg-white text-slate-900 shadow-xs font-black'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* YouGlish Official Live Widget API Panel */}
       {showLiveYouglish && (
-        <div className="mb-6 animate-fade-in">
+        <div className="animate-fade-in">
           <YouGlishLiveWidget
-            initialWord={currentShort.targetWord || searchQuery || 'complicated'}
+            initialWord={activeExpression || searchQuery || 'complicated'}
             accent={accentFilter}
             onClose={() => setShowLiveYouglish(false)}
             onSelectWord={(w) => {
@@ -1238,19 +1713,19 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
             e.preventDefault();
             setSearchQuery(searchInput);
           }}
-          className="flex items-center gap-2 mb-6 bg-slate-900 p-2 rounded-2xl border border-slate-800 shadow-md max-w-2xl mx-auto"
+          className="flex items-center gap-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-xs max-w-2xl mx-auto"
         >
-          <Search className="w-5 h-5 text-slate-500 ml-2" />
+          <Search className="w-5 h-5 text-slate-400 ml-2" />
           <input
             type="text"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Nhập từ vựng tiếng Anh để xem cách người bản xứ phát âm..."
-            className="flex-1 bg-transparent px-2 py-2 text-sm text-white placeholder-slate-500 focus:outline-hidden font-medium"
+            placeholder="Nhập từ hoặc cụm tiếng Mỹ (ví dụ: figure out, sounds good)..."
+            className="flex-1 bg-transparent px-2 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-hidden font-medium"
           />
           <button
             type="submit"
-            className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-xl transition-all cursor-pointer shadow-sm"
+            className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs"
           >
             Tìm trích đoạn
           </button>
@@ -1259,31 +1734,49 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
 
       {/* Empty State */}
       {activeFeed.length === 0 ? (
-        <div className="w-full max-w-md mx-auto h-[450px] rounded-[32px] bg-slate-900 border border-slate-800 p-8 flex flex-col items-center justify-center text-center space-y-4 shadow-xl">
-          <div className="size-16 rounded-3xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30">
-            <Target className="w-8 h-8" />
+        <div className="w-full max-w-md mx-auto py-16 rounded-3xl bg-white border border-slate-200 p-8 flex flex-col items-center justify-center text-center space-y-4 shadow-sm">
+          <div className="size-14 rounded-2xl bg-teal-50 text-teal-600 flex items-center justify-center border border-teal-100">
+            <Target className="w-7 h-7" />
           </div>
           <div className="space-y-1">
-            <h3 className="text-lg font-black text-white">Chưa tìm thấy video phù hợp</h3>
-            <p className="text-xs text-slate-400 leading-relaxed max-w-xs">
-              {feedMode === 'search'
-                ? `Không có trích đoạn nào chứa từ "${searchQuery}". Hãy thử tìm kiếm từ vựng khác.`
-                : 'Không có trích đoạn nào phù hợp với bộ lọc từ vựng hoặc giọng bạn vừa chọn.'}
+            <h3 className="text-base font-black text-slate-900">
+              {feedMode === 'reels' && reelTopicFilter === 'my_videos'
+                ? 'Chưa có Reels từ video bạn import'
+                : 'Chưa tìm thấy trích đoạn phù hợp'}
+            </h3>
+            <p className="text-xs text-slate-500 leading-relaxed max-w-xs">
+              {feedMode === 'reels' && reelTopicFilter === 'my_videos'
+                ? 'Dán link YouTube yêu thích (vlog, sitcom, podcast Mỹ) — hệ thống sẽ tự động cắt thành các Reels 15–25s kèm giải mã nối âm!'
+                : feedMode === 'search'
+                  ? `Không có trích đoạn nào chứa "${searchQuery}". Hãy thử cụm từ khác.`
+                  : 'Không có trích đoạn nào phù hợp với bộ lọc bạn vừa chọn.'}
             </p>
           </div>
-          <button
-            onClick={() => {
-              setSelectedWordFilter('all');
-              setAccentFilter('GLOBAL');
-              setRegisterFilter('all');
-              setSearchQuery('');
-              setSearchInput('');
-              setFeedMode('youglish');
-            }}
-            className="px-5 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-black text-xs shadow-md cursor-pointer transition-transform active:scale-95"
-          >
-            Xem lại tất cả từ
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {feedMode === 'reels' && reelTopicFilter === 'my_videos' && onImportShortClick && (
+              <button
+                onClick={onImportShortClick}
+                className="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Dán link YouTube ngay</span>
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setReelTopicFilter('all');
+                setSelectedWordFilter('all');
+                setAccentFilter('GLOBAL');
+                setRegisterFilter('all');
+                setSearchQuery('');
+                setSearchInput('');
+                setFeedMode('reels');
+              }}
+              className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs cursor-pointer"
+            >
+              Xem Real American Reels
+            </button>
+          </div>
         </div>
       ) : (
         /* 2. Main Studio Grid: Clean Video Stage (Left) + YouGlish Study Companion (Right) */
@@ -1310,14 +1803,20 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                   else if (diff < -45) handlePrev();
                   touchStartY.current = null;
                 }}
-                className={`relative w-[340px] sm:w-[380px] h-[640px] sm:h-[690px] rounded-[32px] overflow-hidden shadow-2xl bg-black border-2 border-slate-800 flex flex-col justify-between select-none transition-all duration-150 ${
+                className={`relative w-[340px] sm:w-[376px] h-[630px] sm:h-[675px] rounded-[28px] overflow-hidden shadow-xl bg-slate-950 border border-slate-200 flex flex-col justify-between select-none transition-all duration-150 ${
                   swipeAnimation === 'slide-up' ? '-translate-y-4 opacity-75 scale-[0.98]' : ''
                 } ${
                   swipeAnimation === 'slide-down' ? 'translate-y-4 opacity-75 scale-[0.98]' : ''
                 }`}
               >
-                {/* 1. Underlying YouTube Video Player */}
-                <div className="absolute inset-0 overflow-hidden bg-black flex items-center justify-center">
+                {/* 1. Underlying YouTube Video Player + Soft Ambient Poster Backdrop (Never harsh black screen) */}
+                <div className="absolute inset-0 overflow-hidden bg-slate-950 flex items-center justify-center">
+                  <img
+                    src={currentShort.thumbnail || `https://img.youtube.com/vi/${currentShort.youtubeId}/hqdefault.jpg`}
+                    alt=""
+                    aria-hidden="true"
+                    className="absolute inset-0 w-full h-full object-cover opacity-30 blur-md scale-110 pointer-events-none"
+                  />
                   {useDirectIframe ? (
                     <iframe
                       key={`direct-iframe-${currentShort.youtubeId}-${currentIndex}`}
@@ -1419,6 +1918,105 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                     </div>
                   ))}
 
+                  {/* 3-Second Interpolated Micro-Quiz Overlay (Nature Comms Psych 2025 — Non-blocking!) */}
+                  {activeMicroQuiz && (
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute inset-0 z-35 bg-slate-950/92 backdrop-blur-md p-5 flex flex-col justify-center gap-4 animate-fade-in"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-400/20 border border-amber-400/40 text-amber-300 text-[11px] font-black">
+                          <Brain className="w-3.5 h-3.5" />
+                          <span>Micro-Quiz 3 giây • Khóa trí nhớ</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleDismissMicroQuiz}
+                          className="p-1.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                          title="Bỏ qua và lướt tiếp"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-amber-400/15 to-teal-400/15 border border-amber-400/30">
+                          <p className="text-lg font-black text-amber-300">
+                            "{activeMicroQuiz.expression}"
+                          </p>
+                          <p className="text-[11px] text-slate-300 italic mt-0.5 line-clamp-2">
+                            {activeMicroQuiz.contextSentence}
+                          </p>
+                        </div>
+                        <p className="text-xs font-bold text-white">
+                          {activeMicroQuiz.promptVi}
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        {activeMicroQuiz.options.map((opt, idx) => {
+                          const isAnswered = microQuizAnswer !== null;
+                          const isSelected = microQuizAnswer === idx;
+                          const isCorrect = idx === activeMicroQuiz.correctIndex;
+                          let btnClass = 'bg-slate-900 border-slate-700 text-slate-200 hover:border-teal-400 hover:bg-slate-800';
+                          if (isAnswered) {
+                            if (isCorrect) {
+                              btnClass = 'bg-emerald-500/25 border-emerald-400 text-emerald-200 font-black';
+                            } else if (isSelected) {
+                              btnClass = 'bg-rose-500/25 border-rose-400 text-rose-200';
+                            } else {
+                              btnClass = 'bg-slate-900/60 border-slate-800 text-slate-500';
+                            }
+                          }
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => handleAnswerMicroQuiz(idx)}
+                              disabled={isAnswered}
+                              className={`w-full text-left px-3.5 py-2.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${btnClass}`}
+                            >
+                              {opt}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {microQuizAnswer !== null && (
+                        <div className="p-3 rounded-xl bg-slate-900 border border-slate-700 text-[11px] text-slate-200 leading-relaxed">
+                          <span className={microQuizAnswer === activeMicroQuiz.correctIndex ? 'text-emerald-400 font-black' : 'text-amber-300 font-black'}>
+                            {microQuizAnswer === activeMicroQuiz.correctIndex ? '🎉 Chuẩn xác! ' : '💡 Ghi nhớ nhanh: '}
+                          </span>
+                          {activeMicroQuiz.explanationVi}
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={handleDismissMicroQuiz}
+                        className="w-full py-2.5 rounded-xl bg-gradient-to-r from-teal-400 to-emerald-400 hover:brightness-105 text-slate-950 font-black text-xs shadow-lg cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <span>{microQuizAnswer !== null ? 'Lướt clip tiếp theo' : 'Bỏ qua & Lướt tiếp'}</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Prominent Unmute Prompt Pill (PLOS ONE 2024: sound-off hurts enjoyment & comprehension) */}
+                  {isGlobalMuted && !playerError && !activeMicroQuiz && !isVideoLoading && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleMute();
+                      }}
+                      className="absolute top-14 left-1/2 -translate-x-1/2 z-20 px-4 py-2 rounded-full bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black shadow-2xl flex items-center gap-2 cursor-pointer animate-bounce border-2 border-amber-200"
+                    >
+                      <Volume2 className="w-4 h-4" />
+                      <span>🔊 Chạm để bật tiếng Mỹ</span>
+                    </button>
+                  )}
+
                   {/* Hold to 2x Speed Indicator */}
                   {isHoldSpeeding && (
                     <div className="absolute top-12 z-40 px-3 py-1 rounded-full bg-amber-400 text-slate-950 text-xs font-black flex items-center gap-1 shadow-2xl animate-pulse">
@@ -1485,142 +2083,170 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                   </div>
                 </div>
 
-                {/* 3. Bottom Clean Karaoke Subtitle Box (Speaker 100% visible) */}
+                {/* 3. Bottom Clean Karaoke Subtitle Box (L2-Top Hierarchy per Cambridge 2026 + Connected Speech Chips) */}
                 <div className="relative z-10 p-4 bg-gradient-to-t from-black/95 via-black/85 to-transparent space-y-2">
                   {/* Real-time Subtitle Progress Line */}
                   <div className="w-full h-1 bg-white/20 rounded-full overflow-hidden">
-                    <div 
+                    <div
                       className="h-full bg-teal-400 transition-all duration-75 ease-linear"
                       style={{ width: `${cueProgress}%` }}
                     />
                   </div>
 
-                  {/* Subtitle Card */}
-                  <div 
+                  {/* Key American Expression Banner (Reels mode, non-blind) */}
+                  {feedMode === 'reels' && activeExpression && !isBlindMode && (
+                    <div className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-amber-400/20 border border-amber-400/40 backdrop-blur-md">
+                      <div className="min-w-0 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                        <span className="text-xs font-black text-amber-300 truncate">
+                          {activeExpression}
+                        </span>
+                        {currentShort.expressionMeaningVi && (
+                          <span className="text-[11px] text-white/90 truncate">
+                            — {currentShort.expressionMeaningVi}
+                          </span>
+                        )}
+                      </div>
+                      <span className="shrink-0 px-1.5 py-0.5 rounded-md bg-black/50 text-[10px] font-bold text-teal-300">
+                        {currentShort.register === 'workplace_us' ? '💼 Công sở' : '☕ Đời sống Mỹ'}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Subtitle Card (L2 English Top -> L1 Vietnamese Subtle Bottom) */}
+                  <div
                     onClick={replayCurrentSubtitle}
-                    className="p-3 rounded-2xl bg-black/70 backdrop-blur-md border border-white/20 shadow-xl cursor-pointer hover:border-teal-400/50 transition-colors"
+                    className="p-3 rounded-2xl bg-black/75 backdrop-blur-md border border-white/20 shadow-xl cursor-pointer hover:border-teal-400/50 transition-colors"
                     title="Bấm vào thẻ để nghe lại câu này"
                   >
                     <p className="text-sm sm:text-base font-black text-white leading-relaxed">
                       {renderWords(currentSub.text)}
                     </p>
-                    <p className="text-xs text-slate-300 mt-1.5 italic font-medium">
-                      {!isWordRevealed && (isBlindMode || feedMode === 'youglish') ? (
-                        <span className="text-amber-300/80 font-mono text-[11px] inline-flex items-center gap-1.5">
-                          <Lock className="w-3 h-3 text-amber-400 shrink-0" />
-                          <span>[ 🎧 Mở đáp án để xem bản dịch tiếng Việt ]</span>
-                        </span>
-                      ) : (
-                        currentSub.translation
-                      )}
-                    </p>
+                    {subtitleMode !== 'en_only' && (
+                      <p className="text-xs text-slate-300/90 mt-1.5 italic font-medium">
+                        {!isWordRevealed && (isBlindMode || feedMode === 'youglish') ? (
+                          <span className="text-amber-300/80 font-mono text-[11px] inline-flex items-center gap-1.5">
+                            <Lock className="w-3 h-3 text-amber-400 shrink-0" />
+                            <span>[ 🎧 Mở đáp án để xem bản dịch tiếng Việt ]</span>
+                          </span>
+                        ) : (
+                          currentSub.translation
+                        )}
+                      </p>
+                    )}
+
+                    {/* American Connected Speech Receptive Chips (0ms, max 2 chips) */}
+                    {connectedSpeechHints.length > 0 && !(isBlindMode && !isWordRevealed) && (
+                      <div className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t border-white/10">
+                        {connectedSpeechHints.map((hint) => (
+                          <span
+                            key={hint.id}
+                            title={hint.noteVi}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-teal-500/20 border border-teal-400/40 text-[10px] font-bold text-teal-200"
+                          >
+                            <Ear className="w-3 h-3 text-teal-300 shrink-0" />
+                            <span className="opacity-80">{hint.written}</span>
+                            <span className="text-amber-300">→ "{hint.spoken}"</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
-                  {/* Channel Tag */}
-                  <div className="text-white text-xs font-semibold drop-shadow flex items-center justify-between px-1">
-                    <span className="font-bold text-amber-300 truncate max-w-[200px]">
+                  {/* Channel Tag & Quick Speed Controls (0.75x / 1.0x / 1.25x) */}
+                  <div className="text-white text-xs font-semibold drop-shadow flex items-center justify-between gap-2 px-1">
+                    <span className="font-bold text-amber-300 truncate max-w-[165px]">
                       @{currentShort.channel}
                     </span>
-                    <span className="text-slate-300 text-[10px] shrink-0">
-                      {currentShort.views} lượt xem
-                    </span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {[0.75, 1.0, 1.25].map((rate) => (
+                        <button
+                          key={rate}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleChangePlaybackRate(rate);
+                          }}
+                          className={`px-1.5 py-0.5 rounded-md text-[10px] font-black transition-all cursor-pointer ${
+                            playbackRate === rate
+                              ? 'bg-teal-400 text-slate-950'
+                              : 'bg-white/15 text-slate-200 hover:bg-white/25'
+                          }`}
+                          title={`Tốc độ phát ${rate}x`}
+                        >
+                          {rate}x
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
 
-              {/* Outside Action Bar (Desktop Flanking Dock) */}
+              {/* Clean Light Studio Flanking Dock (4 Core Learning Actions + Prev/Next) */}
               <div className="flex flex-col items-center gap-2.5 shrink-0">
-                {/* Like */}
+                {/* 1-Tap Save Expression to FSRS-6 */}
                 <button
-                  onClick={() => setLiked(!liked)}
-                  className="flex flex-col items-center gap-0.5 cursor-pointer group"
+                  onClick={handleSaveCurrentExpression}
+                  className="flex flex-col items-center gap-1 cursor-pointer group"
+                  title={isCurrentExpressionSaved ? 'Cụm này đã có trong Kho FSRS-6' : 'Lưu nhanh cụm này vào FSRS-6'}
                 >
-                  <div className={`p-3 rounded-2xl backdrop-blur-md transition-all shadow-lg ${
-                    liked ? 'bg-rose-500 text-white scale-110 shadow-rose-500/30' : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800'
+                  <div className={`p-3 rounded-2xl border transition-all shadow-xs ${
+                    isCurrentExpressionSaved || bookmarked
+                      ? 'bg-amber-50 border-amber-300 text-amber-700 shadow-amber-200/50'
+                      : 'bg-white border-slate-200 text-slate-600 hover:border-teal-300 hover:text-teal-700'
                   }`}>
-                    <Heart className={`w-5 h-5 ${liked ? 'fill-white' : ''}`} />
+                    {isCurrentExpressionSaved || bookmarked ? <BookmarkCheck className="w-5 h-5" /> : <Bookmark className="w-5 h-5" />}
                   </div>
-                  <span className="text-[10px] font-bold text-slate-400">
-                    {liked ? '1.4K' : '1.3K'}
+                  <span className="text-[10px] font-bold text-slate-500">
+                    {isCurrentExpressionSaved ? 'Đã lưu' : 'Lưu SRS'}
                   </span>
-                </button>
-
-                {/* Bookmark */}
-                <button
-                  onClick={() => setBookmarked(!bookmarked)}
-                  className="flex flex-col items-center gap-0.5 cursor-pointer group"
-                >
-                  <div className={`p-3 rounded-2xl backdrop-blur-md transition-all shadow-lg ${
-                    bookmarked ? 'bg-amber-500 text-slate-950 scale-110 shadow-amber-500/30' : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800'
-                  }`}>
-                    {bookmarked ? <BookmarkCheck className="w-5 h-5" /> : <Bookmark className="w-5 h-5" />}
-                  </div>
-                  <span className="text-[10px] font-bold text-slate-400">Lưu</span>
                 </button>
 
                 {/* 1-Tap Shadowing Mic Button */}
                 <button
                   onClick={handleStartShadowing}
-                  className={`p-3 rounded-2xl backdrop-blur-md transition-all cursor-pointer shadow-lg ${
-                    isShadowing 
-                      ? 'bg-rose-500 text-white scale-110 animate-ping shadow-rose-500/50' 
-                      : 'bg-teal-500 hover:bg-teal-400 text-slate-950 font-black shadow-teal-500/20'
-                  }`}
+                  className="flex flex-col items-center gap-1 cursor-pointer group"
                   title="Nhại giọng câu này (1-Tap Shadowing AI)"
                 >
-                  {isShadowing ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                  <div className={`p-3 rounded-2xl transition-all shadow-sm ${
+                    isShadowing
+                      ? 'bg-rose-500 text-white scale-105 animate-pulse shadow-rose-500/30'
+                      : 'bg-teal-600 hover:bg-teal-700 text-white shadow-teal-600/20'
+                  }`}>
+                    {isShadowing ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                  </div>
+                  <span className="text-[10px] font-bold text-slate-500">
+                    {isShadowing ? 'Đang nghe' : 'Nhại lại'}
+                  </span>
                 </button>
 
                 {/* Replay Current Subtitle */}
                 <button
                   onClick={replayCurrentSubtitle}
-                  className="p-3 rounded-2xl bg-slate-900 border border-slate-800 hover:bg-slate-800 text-teal-400 backdrop-blur-md shadow-lg transition-all cursor-pointer"
-                  title="Phát lại câu phụ đề này"
+                  className="flex flex-col items-center gap-1 cursor-pointer group"
+                  title="Phát lại câu phụ đề này (Phím R)"
                 >
-                  <RotateCcw className="w-5 h-5" />
-                </button>
-
-                {/* Subtitle Offset Calibration Toggle */}
-                <button
-                  onClick={() => setShowOffsetBar(!showOffsetBar)}
-                  className={`p-3 rounded-2xl backdrop-blur-md transition-all cursor-pointer shadow-lg ${
-                    subOffset !== 0 
-                      ? 'bg-amber-500 text-slate-950 font-black' 
-                      : 'bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                  title="Chỉnh độ lệch phụ đề (Lệch sub)"
-                >
-                  <SlidersHorizontal className="w-5 h-5" />
-                </button>
-
-                {/* YouGlish Live API Modal / Viewer Toggle */}
-                <button
-                  type="button"
-                  onClick={() => setShowLiveYouglish(true)}
-                  className="flex flex-col items-center gap-0.5 cursor-pointer group"
-                  title="Mở tra cứu trực tiếp trên YouGlish Live (100M+ video)"
-                >
-                  <div className="p-3 rounded-2xl bg-red-600/20 border border-red-500/40 text-red-400 group-hover:text-white group-hover:bg-red-600 backdrop-blur-md transition-all shadow-lg">
-                    <Globe className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                  <div className="p-3 rounded-2xl bg-white border border-slate-200 hover:border-teal-300 text-slate-600 hover:text-teal-700 shadow-xs transition-all">
+                    <RotateCcw className="w-5 h-5" />
                   </div>
-                  <span className="text-[10px] font-bold text-red-400 group-hover:text-red-300">Live API</span>
+                  <span className="text-[10px] font-bold text-slate-500">Nghe lại</span>
                 </button>
 
                 {/* Up / Down Navigation Buttons */}
-                <div className="flex flex-col gap-1 pt-2 border-t border-slate-800">
+                <div className="flex flex-col gap-1.5 pt-2.5 border-t border-slate-200">
                   <button
                     disabled={currentIndex === 0}
                     onClick={handlePrev}
-                    className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800 text-white disabled:opacity-20 transition-all cursor-pointer shadow-md"
-                    title="Shorts trước đó (Phím Mũi tên lên)"
+                    className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 disabled:opacity-30 transition-all cursor-pointer shadow-xs"
+                    title="Clip trước (Mũi tên lên)"
                   >
                     <ChevronUp className="w-5 h-5" />
                   </button>
                   <button
                     disabled={currentIndex === activeFeed.length - 1}
                     onClick={handleNext}
-                    className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800 text-white disabled:opacity-20 transition-all cursor-pointer shadow-md"
-                    title="Shorts tiếp theo (Phím Mũi tên xuống)"
+                    className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 disabled:opacity-30 transition-all cursor-pointer shadow-xs"
+                    title="Clip tiếp theo (Mũi tên xuống)"
                   >
                     <ChevronDown className="w-5 h-5" />
                   </button>
@@ -1629,288 +2255,355 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
             </div>
           </div>
 
-          {/* ================= COLUMN 2: YOUGLISH STUDY COMPANION PANEL ================= */}
+          {/* ================= COLUMN 2: CLEAN STUDIO LIGHT STUDY COMPANION ================= */}
           <div className={`lg:col-span-6 xl:col-span-7 flex flex-col gap-4 w-full ${isMobileDrawerOpen ? 'block' : 'hidden lg:flex'}`}>
-            
-            {/* 1. Target Vocabulary Spotlight Card */}
-            {currentShort.targetWord && (
-              <div className="p-5 rounded-3xl bg-slate-900 border border-amber-500/30 shadow-2xl space-y-3 relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
 
-                <div className="flex items-start justify-between relative z-10 gap-2">
-                  <div className="flex items-center gap-3">
-                    <div className="size-12 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-xl border border-amber-500/30">
-                      🎯
+            {/* CARD 1: Primary Learning Card (American Expression Spotlight OR SRS Active Recall) */}
+            {activeExpression && (
+              feedMode === 'reels' ? (
+                <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200/90 shadow-sm space-y-4">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                          🇺🇸 Cụm tiếng Mỹ đời thực
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-teal-50 text-teal-800 border border-teal-200">
+                          {currentShort.register === 'workplace_us'
+                            ? '💼 Công sở Mỹ'
+                            : currentShort.register === 'casual_us'
+                              ? '☕ Casual Mỹ'
+                              : '🗣️ Giao tiếp hàng ngày'}
+                        </span>
+                      </div>
+                      <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight pt-1">
+                        "{activeExpression}"
+                      </h2>
+                      {currentShort.expressionMeaningVi && (
+                        <p className="text-sm sm:text-base font-bold text-teal-700">
+                          {currentShort.expressionMeaningVi}
+                        </p>
+                      )}
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-black uppercase tracking-wider text-amber-400">
-                          {!isWordRevealed ? 'Thử thách ôn tập SRS:' : 'YouGlish • Từ mục tiêu:'}
+
+                    <button
+                      type="button"
+                      onClick={handleSaveCurrentExpression}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer flex items-center gap-1.5 shrink-0 border ${
+                        isCurrentExpressionSaved
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : 'bg-teal-600 hover:bg-teal-700 text-white border-teal-600 shadow-xs'
+                      }`}
+                    >
+                      {isCurrentExpressionSaved ? <BookmarkCheck className="w-4 h-4" /> : <Bookmark className="w-4 h-4" />}
+                      <span>{isCurrentExpressionSaved ? 'Đã lưu FSRS-6' : '+ Lưu vào FSRS-6'}</span>
+                    </button>
+                  </div>
+
+                  {/* When Americans use this expression */}
+                  {currentShort.americanUsageNote && (
+                    <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-xs sm:text-sm text-slate-700 leading-relaxed space-y-1">
+                      <div className="flex items-center gap-1.5 font-bold text-slate-900 text-xs">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        <span>Người Mỹ dùng khi nào?</span>
+                      </div>
+                      <p>{currentShort.americanUsageNote}</p>
+                    </div>
+                  )}
+
+                  {/* Receptive-First Connected Speech Breakdown (0ms / 0đ) */}
+                  {connectedSpeechHints.length > 0 && (
+                    <div className="p-3.5 rounded-2xl bg-teal-50/70 border border-teal-200/80 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-bold text-teal-900">
+                        <span className="flex items-center gap-1.5">
+                          <Ear className="w-4 h-4 text-teal-600" />
+                          <span>Giải mã nối âm (Để nghe ra người Mỹ)</span>
+                        </span>
+                        <span className="text-[10px] font-semibold text-teal-700 bg-white px-2 py-0.5 rounded-full border border-teal-200">
+                          Nghe hiểu
+                        </span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {connectedSpeechHints.map((hint) => (
+                          <div key={hint.id} className="text-xs bg-white rounded-xl p-2.5 border border-teal-100">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-semibold text-slate-600">"{hint.written}"</span>
+                              <span className="text-slate-400">→</span>
+                              <span className="font-black text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                                👂 Nghe như: "{hint.spoken}"
+                              </span>
+                              <span className="font-mono text-[11px] text-teal-700">{hint.ipaLike}</span>
+                            </div>
+                            <p className="text-[11px] text-slate-600 mt-1">{hint.noteVi}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 1-Click AI American Nuance Decoder */}
+                  <div className="space-y-2.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleAskAiNuance}
+                      disabled={isLoadingAiNuance}
+                      className="w-full py-2.5 px-4 rounded-xl bg-indigo-50 hover:bg-indigo-100/80 border border-indigo-200 text-indigo-800 text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-60"
+                    >
+                      {isLoadingAiNuance ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-4 h-4 text-indigo-600" />
+                      )}
+                      <span>
+                        {currentUser
+                          ? '✨ AI Giải mã sắc thái & Câu thay thế tự nhiên kiểu Mỹ'
+                          : 'Đăng nhập để dùng AI Giải mã sắc thái kiểu Mỹ'}
+                      </span>
+                    </button>
+
+                    {aiNuanceError && (
+                      <p className="text-xs text-rose-600 font-semibold">{aiNuanceError}</p>
+                    )}
+
+                    {aiNuance && (
+                      <div className="p-3.5 rounded-2xl bg-indigo-50/60 border border-indigo-200 text-xs space-y-2 animate-fade-in">
+                        <p className="font-black text-indigo-950">{aiNuance.meaningVi}</p>
+                        <p className="text-slate-700 leading-relaxed">{aiNuance.nuance}</p>
+                        {aiNuance.grammarNote && (
+                          <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 font-medium">
+                            💡 {aiNuance.grammarNote}
+                          </p>
+                        )}
+                        {Array.isArray(aiNuance.examples) && aiNuance.examples.length > 0 && (
+                          <div className="space-y-1.5 pt-1.5 border-t border-indigo-200/70">
+                            {aiNuance.examples.slice(0, 2).map((ex, i) => (
+                              <div key={i} className="text-[11px]">
+                                <p className="text-slate-900 font-semibold">• {ex.en}</p>
+                                <p className="text-slate-600 pl-2.5">{ex.vi}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200/90 shadow-sm space-y-4">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-black uppercase tracking-wider text-teal-700">
+                          {!isWordRevealed ? '🎯 Thử thách ôn tập FSRS-6' : '🎯 Từ mục tiêu'}
                         </span>
                         {currentOccurrence?.isDueToday && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-500 text-white font-bold animate-pulse">
-                            {!isWordRevealed ? 'Lắng nghe để nhớ từ' : 'Cần ôn hôm nay (SRS Due)'}
+                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-50 text-rose-700 border border-rose-200 font-bold">
+                            Cần ôn hôm nay
                           </span>
                         )}
                       </div>
 
-                      {/* When Not Revealed: HIDE TARGET WORD COMPLETELY! */}
                       {!isWordRevealed ? (
-                        <div className="flex items-center gap-2.5 mt-1.5">
-                          <div className="px-3.5 py-1.5 rounded-xl bg-amber-500/10 border border-dashed border-amber-400/60 text-amber-300 font-mono font-black text-lg tracking-widest flex items-center gap-2">
+                        <div className="flex items-center gap-2.5 pt-1">
+                          <div className="px-3.5 py-1.5 rounded-xl bg-amber-50 border border-dashed border-amber-300 text-amber-900 font-mono font-black text-base tracking-widest flex items-center gap-2">
                             <span>• • • • • •</span>
-                            <span className="text-[10px] font-sans text-amber-400 font-bold bg-amber-400/20 px-1.5 py-0.5 rounded">
-                              {currentShort.targetWord?.length || 0} ký tự
+                            <span className="text-[11px] font-sans text-amber-800 font-bold bg-amber-100 px-1.5 py-0.5 rounded">
+                              {activeExpression.length} ký tự
                             </span>
                           </div>
                           <button
                             onClick={() => setIsWordRevealed(true)}
-                            className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-400 to-yellow-400 hover:brightness-110 text-slate-950 font-black text-xs shadow-md flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                            className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
                           >
                             <Eye className="w-3.5 h-3.5" />
                             <span>Mở đáp án</span>
                           </button>
                         </div>
                       ) : (
-                        <h2 className="text-2xl font-black text-amber-300 mt-0.5 tracking-tight animate-scale-up">
-                          "{currentShort.targetWord}"
+                        <h2 className="text-2xl font-black text-slate-900 pt-0.5 tracking-tight">
+                          "{activeExpression}"
                         </h2>
                       )}
                     </div>
-                  </div>
 
-                  {!isWordRevealed ? (
-                    <button
-                      onClick={() => setIsWordRevealed(true)}
-                      className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-xl text-xs font-black border border-amber-400/40 shadow-sm transition-transform active:scale-95 cursor-pointer flex items-center gap-1.5"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>Xem từ</span>
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => onSelectWord(currentShort.targetWord!, currentShort.targetContext || '')}
-                      className="px-4 py-2 bg-gradient-to-r from-amber-400 to-yellow-400 hover:brightness-105 text-slate-950 rounded-xl text-xs font-black shadow-lg transition-transform active:scale-95 cursor-pointer flex items-center gap-1.5"
-                    >
-                      <BookOpen className="w-4 h-4" />
-                      <span>Tra từ & Lưu Anki</span>
-                    </button>
-                  )}
-                </div>
-
-                {/* Collocation & Real Context: Target word is masked if !isWordRevealed! */}
-                {currentOccurrence?.collocation && (
-                  <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-slate-200 text-xs space-y-1">
-                    <div className="flex items-center gap-1.5 font-bold text-amber-300">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Cụm từ tự nhiên (Collocation):</span>
-                    </div>
-                    {!isWordRevealed ? (
-                      <div className="flex items-center justify-between text-slate-400 py-0.5">
-                        <span className="font-mono text-amber-300/90 text-xs flex items-center gap-1.5">
-                          <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                          <span>
-                            {currentShort.targetWord
-                              ? currentOccurrence.collocation.replace(new RegExp(`\\b${currentShort.targetWord}\\b`, 'gi'), '[ •••••• ]')
-                              : '[ •••••• ]'}
-                          </span>
-                        </span>
-                        <span className="text-[10px] text-slate-500 italic">Mở đáp án để xem</span>
-                      </div>
-                    ) : (
-                      <>
-                        <p className="font-bold text-white text-sm">
-                          {currentOccurrence.collocation}
-                        </p>
-                        {currentOccurrence.collocationTip && (
-                          <p className="text-slate-400 text-[11px] italic">
-                            {currentOccurrence.collocationTip}
-                          </p>
-                        )}
-                      </>
+                    {isWordRevealed && (
+                      <button
+                        onClick={() => onSelectWord(activeExpression, currentShort.targetContext || '')}
+                        className="px-3.5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                      >
+                        <BookOpen className="w-3.5 h-3.5" />
+                        <span>Tra chi tiết</span>
+                      </button>
                     )}
                   </div>
-                )}
 
-                {/* Anki Flashcard Quick Rating (Appears as soon as answer is revealed) */}
-                {isWordRevealed && (
-                  <div className="pt-2 border-t border-slate-800 flex flex-wrap items-center gap-1.5 animate-fade-in">
-                    <span className="text-[11px] font-bold text-slate-400 mr-1">Đánh giá Anki:</span>
-                    <button
-                      onClick={() => handleRateCard(1)}
-                      className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[11px] font-bold hover:bg-rose-500 hover:text-white transition-colors cursor-pointer"
-                      title="Quên từ này — Ôn lại sau 1 ngày"
-                    >
-                      Quên (1d)
-                    </button>
-                    <button
-                      onClick={() => handleRateCard(2)}
-                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[11px] font-bold hover:bg-amber-500 hover:text-slate-950 transition-colors cursor-pointer"
-                      title="Từ khó nhớ — Ôn lại sau 3 ngày"
-                    >
-                      Khó (3d)
-                    </button>
-                    <button
-                      onClick={() => handleRateCard(3)}
-                      className="px-2.5 py-1 rounded-lg bg-teal-500/20 text-teal-300 border border-teal-500/40 text-[11px] font-bold hover:bg-teal-500 hover:text-slate-950 transition-colors cursor-pointer"
-                      title="Nhớ tốt — Ôn lại sau 7 ngày"
-                    >
-                      Tốt (7d)
-                    </button>
-                    <button
-                      onClick={() => handleRateCard(4)}
-                      className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold hover:bg-emerald-500 hover:text-slate-950 transition-colors cursor-pointer"
-                      title="Rất dễ — Ôn lại sau 14 ngày"
-                    >
-                      Dễ (14d)
-                    </button>
-                  </div>
-                )}
+                  {/* Collocation Hint */}
+                  {currentOccurrence?.collocation && (
+                    <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 text-xs space-y-1">
+                      <div className="flex items-center gap-1.5 font-bold text-slate-700">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        <span>Cụm từ tự nhiên (Collocation)</span>
+                      </div>
+                      {!isWordRevealed ? (
+                        <p className="font-mono text-amber-800 text-xs flex items-center gap-1.5">
+                          <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span>
+                            {activeExpression
+                              ? currentOccurrence.collocation.replace(new RegExp(`\\b${activeExpression}\\b`, 'gi'), '[ •••••• ]')
+                              : '[ •••••• ]'}
+                          </span>
+                        </p>
+                      ) : (
+                        <>
+                          <p className="font-bold text-slate-900 text-sm">{currentOccurrence.collocation}</p>
+                          {currentOccurrence.collocationTip && (
+                            <p className="text-slate-600 text-[11px]">{currentOccurrence.collocationTip}</p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
 
-                {/* Accent & Register Meta Badges */}
-                <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
-                  <span className="px-3 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-semibold">
-                    Giọng: {currentOccurrence?.zone === 'UK' ? '🇬🇧 Anh - Anh' : '🇺🇸 Anh - Mỹ'}
-                  </span>
-                  <span className="px-3 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-semibold">
-                    Ngữ cảnh: {currentOccurrence?.register === 'academic' ? '👔 Học thuật / Thuyết trình TED' : '☕ Đời thường / Giao tiếp'}
-                  </span>
-                  <span className="px-3 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-semibold truncate max-w-xs">
-                    Nguồn: {currentOccurrence?.sourceLessonTitle || currentShort.title}
-                  </span>
-                </div>
-
-                {/* 1-Click YouGlish Live API Discovery Button */}
-                <button
-                  type="button"
-                  onClick={() => setShowLiveYouglish(true)}
-                  className="w-full mt-2 py-2 px-3 rounded-xl bg-red-600/15 hover:bg-red-600/25 border border-red-500/30 text-red-300 hover:text-white text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm"
-                >
-                  <Globe className="w-4 h-4 text-red-400" />
-                  <span>Mở thêm hàng ngàn video phát âm từ "{currentShort.targetWord}" trên YouGlish Live</span>
-                </button>
-              </div>
-            )}
-
-            {/* 2. YouGlish Filters: Accents & Context Registers */}
-            {feedMode === 'youglish' && (
-              <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 shadow-xl space-y-3">
-                <div className="flex items-center justify-between text-xs font-bold text-slate-400">
-                  <div className="flex items-center gap-1.5 text-slate-200">
-                    <ListFilter className="w-4 h-4 text-teal-400" />
-                    <span>Lọc từ vựng trong sổ tay:</span>
-                  </div>
-                  <span>{availableWordsWithCount.length} từ đã học</span>
-                </div>
-
-                {/* Word Chips Carousel: Masked during Active Recall when in 'all' */}
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                  <button
-                    onClick={() => setSelectedWordFilter('all')}
-                    className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                      selectedWordFilter === 'all'
-                        ? 'bg-teal-500 text-slate-950 border-teal-400 shadow-md font-black'
-                        : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-white'
-                    }`}
-                  >
-                    Tất cả từ ({youglishOccurrences.length})
-                  </button>
-
-                  {!isWordRevealed && selectedWordFilter === 'all' ? (
-                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950/70 border border-amber-500/30 text-amber-300 text-xs shrink-0">
-                      <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                      <span>Danh sách từ đang ẩn để nghe đoán (Active Recall)</span>
+                  {/* FSRS-6 Flashcard Quick Rating */}
+                  {isWordRevealed && (
+                    <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-2 animate-fade-in">
+                      <span className="text-xs font-bold text-slate-600 mr-1">Chấm FSRS-6:</span>
                       <button
-                        onClick={() => setIsWordRevealed(true)}
-                        className="ml-1 px-2.5 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 text-[10px] font-bold border border-amber-500/30 cursor-pointer flex items-center gap-1"
+                        onClick={() => handleRateCard(1)}
+                        className="px-3 py-1.5 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold hover:bg-rose-600 hover:text-white transition-colors cursor-pointer"
                       >
-                        <Eye className="w-3 h-3" />
-                        <span>Mở từ</span>
+                        Quên
+                      </button>
+                      <button
+                        onClick={() => handleRateCard(2)}
+                        className="px-3 py-1.5 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 text-xs font-bold hover:bg-amber-500 hover:text-white transition-colors cursor-pointer"
+                      >
+                        Khó
+                      </button>
+                      <button
+                        onClick={() => handleRateCard(3)}
+                        className="px-3 py-1.5 rounded-xl bg-teal-50 text-teal-800 border border-teal-200 text-xs font-bold hover:bg-teal-600 hover:text-white transition-colors cursor-pointer"
+                      >
+                        Tốt
+                      </button>
+                      <button
+                        onClick={() => handleRateCard(4)}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold hover:bg-emerald-600 hover:text-white transition-colors cursor-pointer"
+                      >
+                        Dễ
                       </button>
                     </div>
-                  ) : (
-                    availableWordsWithCount.map(({ word, count, isDue }) => (
-                      <button
-                        key={word}
-                        onClick={() => setSelectedWordFilter(word)}
-                        className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
-                          selectedWordFilter && word && selectedWordFilter.toLowerCase() === word.toLowerCase()
-                            ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-md font-black'
-                            : 'bg-slate-800/80 text-slate-300 border-slate-700 hover:text-white'
-                        }`}
-                      >
-                        {isDue && (
-                          <span className="size-2 rounded-full bg-rose-500 animate-ping" />
+                  )}
+
+                  {/* Consolidated SRS Filters (inside Card 1 instead of extra dark box) */}
+                  {feedMode === 'youglish' && (
+                    <div className="pt-3 border-t border-slate-100 space-y-2.5">
+                      <div className="flex items-center justify-between text-xs font-bold text-slate-500 flex-wrap gap-2">
+                        <span className="flex items-center gap-1.5 text-slate-700">
+                          <ListFilter className="w-3.5 h-3.5 text-teal-600" />
+                          Lọc sổ tay ({availableWordsWithCount.length} từ)
+                        </span>
+                        <div className="flex items-center gap-1">
+                          {(['GLOBAL', 'US', 'UK'] as AccentZone[]).map((z) => (
+                            <button
+                              key={z}
+                              onClick={() => setAccentFilter(z)}
+                              className={`px-2 py-0.5 rounded-lg text-[11px] font-bold cursor-pointer ${
+                                accentFilter === z
+                                  ? 'bg-slate-900 text-white'
+                                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                              }`}
+                            >
+                              {z === 'GLOBAL' ? 'Tất cả' : z === 'US' ? '🇺🇸 Mỹ' : '🇬🇧 Anh'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none">
+                        <button
+                          onClick={() => setSelectedWordFilter('all')}
+                          className={`shrink-0 px-3 py-1 rounded-full text-xs font-bold border transition-all cursor-pointer ${
+                            selectedWordFilter === 'all'
+                              ? 'bg-teal-600 text-white border-teal-600'
+                              : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          Tất cả ({youglishOccurrences.length})
+                        </button>
+                        {isWordRevealed || selectedWordFilter !== 'all' ? (
+                          availableWordsWithCount.map(({ word, count, isDue }) => (
+                            <button
+                              key={word}
+                              onClick={() => setSelectedWordFilter(word)}
+                              className={`shrink-0 px-3 py-1 rounded-full text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                                selectedWordFilter.toLowerCase() === word.toLowerCase()
+                                  ? 'bg-amber-500 text-white border-amber-500'
+                                  : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
+                              }`}
+                            >
+                              {isDue && <span className="size-1.5 rounded-full bg-rose-500" />}
+                              <span>{word}</span>
+                              <span className="opacity-70 text-[10px]">({count})</span>
+                            </button>
+                          ))
+                        ) : (
+                          <span className="text-[11px] text-slate-500 italic px-2">
+                            Bấm "Mở đáp án" để hiện danh sách từ lọc
+                          </span>
                         )}
-                        <span>{word}</span>
-                        <span className="opacity-60 text-[10px]">({count})</span>
-                      </button>
-                    ))
+                      </div>
+                    </div>
                   )}
                 </div>
-
-                {/* Accent and Register Pills */}
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800 text-xs font-bold text-slate-400">
-                  <div className="flex items-center gap-1">
-                    <span className="text-[11px] text-slate-500 mr-1">Giọng:</span>
-                    <button
-                      onClick={() => setAccentFilter('GLOBAL')}
-                      className={`px-2.5 py-1 rounded-lg cursor-pointer ${accentFilter === 'GLOBAL' ? 'bg-slate-700 text-white font-black' : 'hover:text-slate-200'}`}
-                    >
-                      Toàn cầu
-                    </button>
-                    <button
-                      onClick={() => setAccentFilter('US')}
-                      className={`px-2.5 py-1 rounded-lg cursor-pointer ${accentFilter === 'US' ? 'bg-slate-700 text-white font-black' : 'hover:text-slate-200'}`}
-                    >
-                      🇺🇸 Mỹ
-                    </button>
-                    <button
-                      onClick={() => setAccentFilter('UK')}
-                      className={`px-2.5 py-1 rounded-lg cursor-pointer ${accentFilter === 'UK' ? 'bg-slate-700 text-white font-black' : 'hover:text-slate-200'}`}
-                    >
-                      🇬🇧 Anh
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    <span className="text-[11px] text-slate-500 mr-1">Văn cảnh:</span>
-                    <button
-                      onClick={() => setRegisterFilter('all')}
-                      className={`px-2.5 py-1 rounded-lg cursor-pointer ${registerFilter === 'all' ? 'bg-slate-700 text-white font-black' : 'hover:text-slate-200'}`}
-                    >
-                      Mọi loại
-                    </button>
-                    <button
-                      onClick={() => setRegisterFilter('academic')}
-                      className={`px-2.5 py-1 rounded-lg cursor-pointer ${registerFilter === 'academic' ? 'bg-slate-700 text-white font-black' : 'hover:text-slate-200'}`}
-                    >
-                      Học thuật
-                    </button>
-                    <button
-                      onClick={() => setRegisterFilter('casual')}
-                      className={`px-2.5 py-1 rounded-lg cursor-pointer ${registerFilter === 'casual' ? 'bg-slate-700 text-white font-black' : 'hover:text-slate-200'}`}
-                    >
-                      Đời thường
-                    </button>
-                  </div>
-                </div>
-              </div>
+              )
             )}
 
-            {/* 3. Interactive Subtitle & Transcript Flow (Click to Jump Video) */}
-            <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 shadow-xl space-y-3">
+            {/* CARD 2: Interactive Transcript, AI Shadowing Score & High-Contrast Practice Switches */}
+            <div className="p-5 rounded-3xl bg-white border border-slate-200/90 shadow-sm space-y-4">
+              {/* AI Speech Scoring Result Banner (Inline inside Card 2) */}
+              {shadowResult && (
+                <div
+                  className={`p-3.5 rounded-2xl border space-y-1.5 animate-scale-up ${
+                    shadowResult.accuracy >= 70
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                      : 'bg-amber-50 border-amber-200 text-amber-950'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black flex items-center gap-1.5">
+                      <CheckCircle2 className={`w-4 h-4 ${shadowResult.accuracy >= 70 ? 'text-emerald-600' : 'text-amber-600'}`} />
+                      <span>AI Chấm phát âm: {shadowResult.accuracy}%</span>
+                    </span>
+                    <button
+                      onClick={() => setShadowResult(null)}
+                      className="text-slate-500 hover:text-slate-800 text-xs font-bold cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-700 italic">
+                    Bạn vừa nói: "{shadowResult.transcript || 'Không nghe rõ'}"
+                  </p>
+                  <p className="text-xs font-semibold">
+                    {shadowResult.accuracy >= 70
+                      ? `🎉 Chuẩn mượt! Đã ghi nhận luyện tập cho "${activeExpression || currentShort.targetWord}".`
+                      : '💡 Thử bấm nút Nhại lại và đọc chậm, rõ trọng âm hơn nhé.'}
+                  </p>
+                </div>
+              )}
+
               <div className="flex items-center justify-between text-xs font-bold">
-                <span className="text-slate-200 flex items-center gap-1.5">
-                  <Layers className="w-4 h-4 text-teal-400" />
-                  <span>Dòng phụ đề trích đoạn ({subtitles.length} câu):</span>
+                <span className="text-slate-800 flex items-center gap-1.5">
+                  <Layers className="w-4 h-4 text-teal-600" />
+                  <span>Kịch bản trích đoạn ({subtitles.length} câu)</span>
                 </span>
-                <span className="text-[11px] text-slate-500">
-                  Nhấp vào câu bất kỳ để tua video
+                <span className="text-[11px] font-medium text-slate-500">
+                  Nhấp vào câu để tua • Nhấp vào từ để tra
                 </span>
               </div>
 
-              <div className="max-h-[220px] overflow-y-auto space-y-2 pr-1 scrollbar-thin">
+              <div className="max-h-[240px] overflow-y-auto space-y-2 pr-1 scrollbar-thin">
                 {subtitles.map((sub, idx) => {
                   const isActive = currentSubIndex === idx;
                   return (
@@ -1919,163 +2612,93 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                       onClick={() => seekToSubtitle(idx)}
                       className={`p-3 rounded-2xl border transition-all cursor-pointer ${
                         isActive
-                          ? 'bg-teal-950/40 border-teal-400 shadow-md ring-1 ring-teal-400/30'
-                          : 'bg-slate-950/60 border-slate-800/80 hover:border-slate-700 hover:bg-slate-800/40'
+                          ? 'bg-teal-50/70 border-teal-300 shadow-xs'
+                          : 'bg-slate-50/60 border-slate-200/70 hover:border-slate-300 hover:bg-slate-50'
                       }`}
                     >
-                      <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
-                        <span className="font-mono font-bold text-teal-300">
+                      <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
+                        <span className="font-mono font-bold text-teal-700">
                           #{idx + 1} • {Math.floor(sub.start)}s - {Math.floor(sub.end)}s
                         </span>
                         {isActive && (
-                          <span className="px-2 py-0.5 rounded-full bg-teal-500 text-slate-950 font-black text-[9px] animate-pulse">
+                          <span className="px-2 py-0.5 rounded-full bg-teal-600 text-white font-bold text-[10px]">
                             Đang phát
                           </span>
                         )}
                       </div>
-                      <p className={`text-xs sm:text-sm font-semibold leading-relaxed ${isActive ? 'text-teal-200 font-bold' : 'text-slate-200'}`}>
-                        {renderWords(sub.text)}
+                      <p className={`text-sm leading-relaxed ${isActive ? 'text-slate-900 font-bold' : 'text-slate-700 font-medium'}`}>
+                        {renderWords(sub.text, 'light')}
                       </p>
-                      <p className="text-[11px] text-slate-400 mt-0.5 italic">
-                        {!isWordRevealed && (isBlindMode || feedMode === 'youglish') ? (
-                          <span className="text-amber-400/80 font-mono text-[10px] inline-flex items-center gap-1">
-                            <Lock className="w-2.5 h-2.5 text-amber-400 shrink-0" />
-                            <span>[ 🎧 Mở đáp án để xem bản dịch tiếng Việt ]</span>
-                          </span>
-                        ) : (
-                          sub.translation
-                        )}
-                      </p>
+                      {subtitleMode !== 'en_only' && (
+                        <p className="text-xs text-slate-500 mt-1">
+                          {!isWordRevealed && (isBlindMode || feedMode === 'youglish') ? (
+                            <span className="text-amber-700 font-medium text-[11px] inline-flex items-center gap-1">
+                              <Lock className="w-3 h-3 text-amber-600 shrink-0" />
+                              <span>Mở đáp án để xem bản dịch tiếng Việt</span>
+                            </span>
+                          ) : (
+                            sub.translation
+                          )}
+                        </p>
+                      )}
                     </div>
                   );
                 })}
               </div>
-            </div>
 
-            {/* 4. Learning Modes & Practice Switches */}
-            <div className="grid grid-cols-2 gap-3">
-              {/* Blind Mode */}
-              <button
-                onClick={() => setIsBlindMode(!isBlindMode)}
-                className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between text-left ${
-                  isBlindMode 
-                    ? 'bg-amber-500/20 border-amber-400/60 text-amber-300 shadow-md' 
-                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center gap-1.5 font-bold text-xs">
-                    {isBlindMode ? <EyeOff className="w-4 h-4 text-amber-400" /> : <Eye className="w-4 h-4" />}
-                    <span>Nghe Mù (Cloze)</span>
+              {/* High-Contrast WCAG Learning Switches (Footer of Card 2) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsBlindMode(!isBlindMode)}
+                  className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between text-left ${
+                    isBlindMode
+                      ? 'bg-amber-50 border-amber-300 text-amber-950 shadow-xs'
+                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center gap-1.5 font-bold text-xs">
+                      {isBlindMode ? <EyeOff className="w-4 h-4 text-amber-600" /> : <Eye className="w-4 h-4 text-slate-500" />}
+                      <span>Nghe Mù (Cloze)</span>
+                    </div>
+                    <p className={`text-[11px] mt-0.5 ${isBlindMode ? 'text-amber-800' : 'text-slate-500'}`}>
+                      Ẩn cụm khóa để luyện phản xạ
+                    </p>
                   </div>
-                  <p className="text-[10px] opacity-70 mt-0.5">Ẩn từ khóa để luyện đoán</p>
-                </div>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${isBlindMode ? 'bg-amber-400 text-slate-950' : 'bg-slate-800'}`}>
-                  {isBlindMode ? 'BẬT' : 'TẮT'}
-                </span>
-              </button>
+                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black ${
+                    isBlindMode ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-600'
+                  }`}>
+                    {isBlindMode ? 'BẬT' : 'TẮT'}
+                  </span>
+                </button>
 
-              {/* Cake Drill Mode */}
-              <button
-                onClick={() => setIsDrillMode(!isDrillMode)}
-                className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between text-left ${
-                  isDrillMode 
-                    ? 'bg-teal-500/20 border-teal-400/60 text-teal-300 shadow-md' 
-                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center gap-1.5 font-bold text-xs">
-                    <Repeat className="w-4 h-4 text-teal-400" />
-                    <span>Lặp 3x (Drill Mode)</span>
+                <button
+                  type="button"
+                  onClick={() => setIsDrillMode(!isDrillMode)}
+                  className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between text-left ${
+                    isDrillMode
+                      ? 'bg-teal-50 border-teal-300 text-teal-950 shadow-xs'
+                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center gap-1.5 font-bold text-xs">
+                      <Repeat className={`w-4 h-4 ${isDrillMode ? 'text-teal-600' : 'text-slate-500'}`} />
+                      <span>Lặp 3x (Drill)</span>
+                    </div>
+                    <p className={`text-[11px] mt-0.5 ${isDrillMode ? 'text-teal-800' : 'text-slate-500'}`}>
+                      Tự lặp lại câu hiện tại 3 lần
+                    </p>
                   </div>
-                  <p className="text-[10px] opacity-70 mt-0.5">Tự lặp câu 3 lần</p>
-                </div>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${isDrillMode ? 'bg-teal-400 text-slate-950' : 'bg-slate-800'}`}>
-                  {isDrillMode ? 'BẬT' : 'TẮT'}
-                </span>
-              </button>
+                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black ${
+                    isDrillMode ? 'bg-teal-600 text-white' : 'bg-slate-200 text-slate-600'
+                  }`}>
+                    {isDrillMode ? 'BẬT' : 'TẮT'}
+                  </span>
+                </button>
+              </div>
             </div>
-
-            {/* Subtitle Offset Bar (Drawer Mode) */}
-            {showOffsetBar && (
-              <div className="p-3.5 rounded-2xl bg-slate-900 border border-amber-400/50 shadow-xl text-white space-y-2 animate-fade-in">
-                <div className="flex items-center justify-between text-xs font-black">
-                  <span className="text-amber-300 flex items-center gap-1.5">
-                    <SlidersHorizontal className="w-4 h-4" /> 
-                    Cân chỉnh độ lệch sub: {subOffset > 0 ? `+${subOffset}s` : `${subOffset}s`}
-                  </span>
-                  <button
-                    onClick={() => handleAdjustOffset(0, true)}
-                    className="text-[11px] text-slate-400 hover:text-white underline cursor-pointer"
-                  >
-                    Về mặc định
-                  </button>
-                </div>
-                <div className="flex items-center gap-1.5 text-xs font-bold">
-                  <button
-                    onClick={() => handleAdjustOffset(-0.5)}
-                    className="flex-1 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 cursor-pointer"
-                  >
-                    -0.5s
-                  </button>
-                  <button
-                    onClick={() => handleAdjustOffset(-0.2)}
-                    className="flex-1 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 cursor-pointer"
-                  >
-                    -0.2s
-                  </button>
-                  <button
-                    onClick={() => handleAdjustOffset(+0.2)}
-                    className="flex-1 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 cursor-pointer"
-                  >
-                    +0.2s
-                  </button>
-                  <button
-                    onClick={() => handleAdjustOffset(+0.5)}
-                    className="flex-1 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 cursor-pointer"
-                  >
-                    +0.5s
-                  </button>
-                  <button
-                    onClick={() => setShowOffsetBar(false)}
-                    className="px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-black cursor-pointer"
-                  >
-                    <Check className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* AI Speech Scoring Result Card */}
-            {shadowResult && (
-              <div className="p-4 rounded-3xl bg-slate-900 border border-teal-400 shadow-2xl text-white space-y-2 animate-scale-up">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-teal-300 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" /> 
-                    AI Chấm Điểm Phát Âm: {shadowResult.accuracy}%
-                  </span>
-                  <button
-                    onClick={() => setShadowResult(null)}
-                    className="text-slate-400 hover:text-white text-xs font-bold"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <p className="text-xs text-slate-300 italic">
-                  Bạn vừa nói: "{shadowResult.transcript || 'Không nghe rõ'}"
-                </p>
-                {shadowResult.accuracy >= 70 ? (
-                  <p className="text-xs font-bold text-emerald-400">
-                    🎉 Tuyệt vời! Thẻ Anki của từ "{currentShort.targetWord}" đã được cập nhật chu kỳ ghi nhớ!
-                  </p>
-                ) : (
-                  <p className="text-xs text-amber-300">
-                    💡 Hãy thử bấm lại nút micro và phát âm chậm, tròn vành rõ chữ hơn nhé.
-                  </p>
-                )}
-              </div>
-            )}
 
           </div>
 

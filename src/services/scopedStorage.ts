@@ -5,7 +5,14 @@
  * strictly by `userId`. Guest / anonymous sessions use a dedicated clean partition.
  */
 
-import { SavedWord, VideoLesson, AnkiUserProfile } from '../types';
+import { SavedWord, VideoLesson, AnkiUserProfile, DailyReelProgress } from '../types';
+
+export function getLocalDateKey(date: Date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 import { SpeakingScenario } from '../data/speakingScenarios';
 import { ScenarioCompletionRecord } from '../utils/speakingMetrics';
 
@@ -267,6 +274,40 @@ export class ScopedStorage {
       localStorage.setItem(key, JSON.stringify(records));
     } catch (e) {
       console.warn('[ScopedStorage] Error writing completed scenarios:', e);
+    }
+  }
+
+  // --- Daily Real American Reels Micro-Habit Progress (Scoped per User) ---
+  public static getDailyReelProgress(userId?: string | null): DailyReelProgress {
+    const today = getLocalDateKey();
+    try {
+      const key = `${this.getPrefix(userId)}_daily_reel_progress`;
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<DailyReelProgress>;
+        if (parsed && parsed.date === today && Array.isArray(parsed.completedReelIds)) {
+          return {
+            date: today,
+            completedReelIds: parsed.completedReelIds.filter((id): id is string => typeof id === 'string'),
+            dailyGoal: typeof parsed.dailyGoal === 'number' && parsed.dailyGoal > 0 ? parsed.dailyGoal : 5
+          };
+        }
+      }
+    } catch {
+      // Fallback to fresh daily goal
+    }
+    return { date: today, completedReelIds: [], dailyGoal: 5 };
+  }
+
+  public static setDailyReelProgress(
+    userId: string | null | undefined,
+    progress: DailyReelProgress
+  ): void {
+    try {
+      const key = `${this.getPrefix(userId)}_daily_reel_progress`;
+      localStorage.setItem(key, JSON.stringify(progress));
+    } catch (e) {
+      console.warn('[ScopedStorage] Error writing daily reel progress:', e);
     }
   }
 
