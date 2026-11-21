@@ -327,19 +327,32 @@ export function generateFallbackScenario(topic, level = 'B1') {
 }
 
 async function callGeminiJson(apiKey, prompt, timeoutMs = 14000) {
+  // Active Gemini Flash models verified against https://aistudio.google.com/docs/models & /deprecations (Nov 2026).
+  // Note: gemini-2.0-flash was shut down June 1, 2026; gemini-2.5-flash is deprecated for new keys.
   const candidateModels = Array.from(
-    new Set([process.env.GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'].filter(Boolean))
+    new Set(
+      [
+        process.env.GEMINI_MODEL,
+        'gemini-3.5-flash-lite',
+        'gemini-3.6-flash',
+        'gemini-3.8-flash',
+        'gemini-2.5-flash-lite'
+      ].filter(Boolean)
+    )
   );
 
   let lastErr = null;
   for (const model of candidateModels) {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey
+        },
         signal: controller.signal,
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
@@ -367,7 +380,7 @@ async function callGeminiJson(apiKey, prompt, timeoutMs = 14000) {
       const parts = Array.isArray(data?.candidates?.[0]?.content?.parts)
         ? data.candidates[0].content.parts
         : [];
-      // Gemini 2.5 thinking models may put thought traces in parts[0]; pick the final non-thought text part
+      // Gemini 3.x / 2.5 thinking models may include thought parts; select the non-thought JSON part
       const answerPart =
         parts.find((p) => p && typeof p.text === 'string' && !p.thought) || parts[parts.length - 1];
       const rawText = String(answerPart?.text || '').trim();
