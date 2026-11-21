@@ -742,7 +742,8 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
 
     const seen = new Set<string>();
     const combined: VideoLesson[] = [];
-    for (const clip of [...apiVocabClips, ...minedSrsClips]) {
+    // Prioritize mined lesson clips (guaranteed synced subtitles & exact word timestamps) before live API vocab Shorts
+    for (const clip of [...minedSrsClips, ...apiVocabClips]) {
       if (!clip.id || seen.has(clip.id)) continue;
       seen.add(clip.id);
       combined.push(clip);
@@ -944,7 +945,10 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     }
   }, [feedMode, currentShort.youtubeId, currentShort.videoUrl, currentShort.subtitles.length, activeFeed, currentIndex, hydrateShortCaptions]);
 
-  const currentOccurrence = feedMode === 'youglish' ? youglishOccurrences[currentIndex] : null;
+  const currentOccurrence =
+    feedMode === 'youglish'
+      ? youglishOccurrences.find((o) => o.id === currentShort.id) || null
+      : null;
   const activeExpression = (currentShort.expression || currentShort.targetWord || '').trim();
   const isCurrentExpressionSaved = useMemo(() => {
     if (!activeExpression) return false;
@@ -3328,23 +3332,82 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                     )}
 
                     {feedMode === 'youglish' && (
-                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap">
-                        <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
-                          <ListFilter className="w-3.5 h-3.5 text-teal-600" />
-                          Sổ tay ({availableWordsWithCount.length} từ)
-                        </span>
-                        <div className="flex items-center gap-1">
-                          {(['GLOBAL', 'US', 'UK'] as AccentZone[]).map((z) => (
-                            <button
-                              key={z}
-                              onClick={() => setAccentFilter(z)}
-                              className={`px-2 py-0.5 rounded-lg text-[11px] font-bold cursor-pointer ${
-                                accentFilter === z ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                              }`}
-                            >
-                              {z === 'GLOBAL' ? 'Tất cả' : z === 'US' ? '🇺🇸 Mỹ' : '🇬🇧 Anh'}
-                            </button>
-                          ))}
+                      <div className="space-y-3 pt-2 border-t border-slate-100">
+                        {/* Action Row: PlayPhrase.me + YouGlish Inline + AI Nuance */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {(() => {
+                            const playPhraseQuery = buildPlayPhraseQuery(activeExpression, currentSub.text);
+                            return (
+                              <a
+                                href={`https://www.playphrase.me/#/search?q=${encodeURIComponent(playPhraseQuery)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="py-2 px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-800 text-xs font-bold flex items-center gap-1.5 transition-all"
+                                title={`Mở cảnh phim & sitcom Mỹ nói "${playPhraseQuery}" trên PlayPhrase.me`}
+                              >
+                                <Film className="w-3.5 h-3.5 text-teal-600" />
+                                <span>
+                                  {isWordRevealed
+                                    ? `Nghe "${playPhraseQuery}" trong phim Mỹ`
+                                    : 'Nghe trong phim Mỹ (PlayPhrase)'}
+                                </span>
+                                <ExternalLink className="w-3 h-3 opacity-60" />
+                              </a>
+                            );
+                          })()}
+
+                          <button
+                            type="button"
+                            onClick={() => setShowLiveYouglish(true)}
+                            className="py-2 px-3 rounded-xl bg-teal-50 hover:bg-teal-100 border border-teal-200 text-teal-800 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                            title="Mở widget YouGlish trực tiếp tại chỗ"
+                          >
+                            <Globe className="w-3.5 h-3.5 text-teal-600" />
+                            <span>YouGlish trực tiếp</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleAskAiNuance}
+                            disabled={isLoadingAiNuance}
+                            className="py-2 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100/80 border border-indigo-200 text-indigo-800 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-60"
+                          >
+                            {isLoadingAiNuance ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                            )}
+                            <span>AI Sắc thái</span>
+                          </button>
+                        </div>
+
+                        {aiNuanceError && <p className="text-xs text-rose-600 font-semibold">{aiNuanceError}</p>}
+
+                        {aiNuance && (
+                          <div className="p-3 rounded-2xl bg-indigo-50/60 border border-indigo-200 text-xs space-y-1.5 animate-fade-in">
+                            <p className="font-black text-indigo-950">{aiNuance.meaningVi}</p>
+                            <p className="text-slate-700 leading-relaxed">{aiNuance.nuance}</p>
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between gap-2 flex-wrap pt-1">
+                          <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
+                            <ListFilter className="w-3.5 h-3.5 text-teal-600" />
+                            Sổ tay ({Math.max(availableWordsWithCount.length, srsReviewClips.length)} mục)
+                          </span>
+                          <div className="flex items-center gap-1">
+                            {(['GLOBAL', 'US', 'UK'] as AccentZone[]).map((z) => (
+                              <button
+                                key={z}
+                                onClick={() => setAccentFilter(z)}
+                                className={`px-2 py-0.5 rounded-lg text-[11px] font-bold cursor-pointer ${
+                                  accentFilter === z ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                }`}
+                              >
+                                {z === 'GLOBAL' ? 'Tất cả' : z === 'US' ? '🇺🇸 Mỹ' : '🇬🇧 Anh'}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     )}
