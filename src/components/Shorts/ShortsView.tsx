@@ -18,10 +18,9 @@ import {
   Sparkles,
   ArrowRight,
   Play,
-  RotateCcw,
+  Pause,
   Repeat,
   Eye,
-  EyeOff,
   Target,
   Search,
   Plus,
@@ -42,7 +41,9 @@ import {
   Ear,
   Brain,
   X,
-  Settings2
+  Settings2,
+  Film,
+  ExternalLink
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { explainInContext } from '../../services/dictionaryService';
@@ -167,9 +168,6 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   // Subtitle Display Mode: Default 'bilingual' in Reels (Comprehensible Input i+1, Cambridge 2026 L2-top)
   const [subtitleMode, setSubtitleMode] = useState<SubtitleDisplayMode>('bilingual');
   const isBlindMode = subtitleMode === 'blind';
-  const setIsBlindMode = useCallback((nextBlind: boolean) => {
-    setSubtitleMode(nextBlind ? 'blind' : 'bilingual');
-  }, []);
   const [isWordRevealed, setIsWordRevealed] = useState<boolean>(false);
   const [isDrillMode, setIsDrillMode] = useState<boolean>(false);
   const [drillRepeatCount, setDrillRepeatCount] = useState<number>(1);
@@ -191,14 +189,21 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   const [shadowResult, setShadowResult] = useState<SpeechScoreResult | null>(null);
   const recognitionRef = useRef<any>(null);
 
-  // Settings drawer (consolidates Player Pool/IFrame, Subtitle Offset & YouGlish Live API)
+  // Settings drawer (consolidates Subtitle mode, Drill 3x, Player Pool/IFrame, Offset & YouGlish Live)
   const [showSettingsPanel, setShowSettingsPanel] = useState<boolean>(false);
+  const [showSearchBar, setShowSearchBar] = useState<boolean>(false);
   const [subOffset, setSubOffset] = useState<number>(0);
+
+  // Local / R2 MP4 movie reels manifest (auto-loaded from /reels/manifest.json if present)
+  const [manifestReels, setManifestReels] = useState<VideoLesson[]>([]);
 
   // Mobile companion drawer toggle
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
 
   const playerRef = useRef<any>(null);
+  const nativeVideoRef = useRef<HTMLVideoElement | null>(null);
+  const isPlayingRef = useRef<boolean>(isPlaying);
+  const userPausedRef = useRef<boolean>(false);
   const poolPlayersRef = useRef<Record<PoolSlotId, any>>({ 0: null, 1: null, 2: null });
   const poolContainersRef = useRef<Record<PoolSlotId, HTMLDivElement | null>>({ 0: null, 1: null, 2: null });
   const poolRuntimesRef = useRef<Record<PoolSlotId, PoolSlotRuntime>>({
@@ -229,10 +234,42 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     playbackRateRef.current = playbackRate;
   }, [playbackRate]);
 
-  // --- 0. Curated + Auto-Mined Real American Reels Feed (Thematic Mini-Clustering) ---
-  const curatedReels: VideoLesson[] = useMemo(() => {
-    return AMERICAN_REELS_CORPUS.map(mapCuratedReelToVideoLesson);
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
+  // Auto-load local or Cloudflare R2 MP4 Movie/Sitcom Reels manifest (0ms HTML5 <video> engine)
+  useEffect(() => {
+    let cancelled = false;
+    const manifestUrl =
+      (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_REELS_MANIFEST_URL ||
+      '/reels/manifest.json';
+
+    fetch(manifestUrl)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !Array.isArray(data)) return;
+        const valid = data.filter(
+          (item): item is VideoLesson =>
+            Boolean(item && typeof item === 'object' && item.id && typeof item.videoUrl === 'string' && item.videoUrl)
+        );
+        if (valid.length > 0) {
+          setManifestReels(valid);
+        }
+      })
+      .catch(() => {
+        // Optional manifest: silently skip when no local MP4 reels have been sliced yet
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // --- 0. Curated + Local MP4 Movie Reels + Auto-Mined Real American Reels Feed ---
+  const curatedReels: VideoLesson[] = useMemo(() => {
+    return [...manifestReels, ...AMERICAN_REELS_CORPUS.map(mapCuratedReelToVideoLesson)];
+  }, [manifestReels]);
 
   const minedReels: VideoLesson[] = useMemo(() => {
     const sourcePool = [...(initialShorts || []), ...lessons];
@@ -521,9 +558,13 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     }
   };
 
-  // Playback speed quick switcher (0.75x / 1.0x / 1.25x)
+  // Playback speed quick switcher (0.75x / 1.0x / 1.25x) — supports both HTML5 <video> & YouTube Pool
   const handleChangePlaybackRate = (rate: number) => {
     setPlaybackRate(rate);
+    if (nativeVideoRef.current && currentShort.videoUrl) {
+      nativeVideoRef.current.playbackRate = rate;
+      return;
+    }
     if (playerRef.current && typeof playerRef.current.setPlaybackRate === 'function') {
       try {
         playerRef.current.setPlaybackRate(rate);
@@ -586,8 +627,36 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     }, 2200);
   }, []);
 
-  // --- 3. TikTok-Style 3-Slot YouTube Player Pool ([N-1, N, N+1]) + Silent Pre-buffering ---
+  // --- 3. Dual Player Engine: Native HTML5 <video> MP4 (0ms) OR 3-Slot YouTube Pool ([N-1, N, N+1]) ---
   useEffect(() => {
+    userPausedRef.current = false;
+
+    if (currentShort.videoUrl) {
+      // Pause all pooled YouTube players while Native HTML5 MP4 plays
+      ([0, 1, 2] as PoolSlotId[]).forEach((sid) => {
+        try {
+          poolPlayersRef.current[sid]?.mute?.();
+          poolPlayersRef.current[sid]?.pauseVideo?.();
+        } catch {}
+      });
+      clearLoadingOverlay();
+      setPlayerError(null);
+
+      const vid = nativeVideoRef.current;
+      if (vid) {
+        vid.muted = isGlobalMutedRef.current;
+        vid.playbackRate = playbackRateRef.current;
+        vid.currentTime = currentShort.startSeconds || 0;
+        if (isActiveRef.current) {
+          vid.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+        } else {
+          vid.pause();
+          setIsPlaying(false);
+        }
+      }
+      return;
+    }
+
     if (useDirectIframe) {
       clearLoadingOverlay();
       setPlayerError(null);
@@ -911,24 +980,45 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     }
   }, [currentIndex, activeFeed]);
 
-  // --- 4. Real-time 40ms sync loop with Pre-Roll Normalization & Auto-Loop ---
+  // --- 4. Real-time 40ms sync loop (Native HTML5 <video> + YouTube Pool; respects user pause!) ---
   useEffect(() => {
     const timer = setInterval(() => {
-      if (isSeekingRef.current) return;
-      const player = playerRef.current;
-      if (!player || typeof player.getCurrentTime !== 'function') return;
+      if (isSeekingRef.current || userPausedRef.current) return;
+
+      const isNative = Boolean(currentShort.videoUrl);
+      const nativeVid = nativeVideoRef.current;
+      const ytPlayer = playerRef.current;
+
+      let rawTime: number | null = null;
+      if (isNative) {
+        if (!nativeVid || nativeVid.paused) return;
+        rawTime = nativeVid.currentTime;
+      } else {
+        if (!ytPlayer || typeof ytPlayer.getCurrentTime !== 'function') return;
+        // Skip loop/seek if YouTube player is paused (state === 2)
+        if (typeof ytPlayer.getPlayerState === 'function' && ytPlayer.getPlayerState() === 2) return;
+        rawTime = ytPlayer.getCurrentTime();
+      }
+
+      if (typeof rawTime !== 'number' || Number.isNaN(rawTime)) return;
 
       try {
-        const rawTime = player.getCurrentTime();
-        if (typeof rawTime !== 'number' || isNaN(rawTime)) return;
         setCurrentTime(rawTime);
 
         const clipStart = currentShort.startSeconds || 0;
         const clipEnd = currentShort.endSeconds;
 
-        // Auto-loop for sliced YouGlish clips
+        const seekActivePlayer = (targetSec: number) => {
+          if (isNative && nativeVid) {
+            nativeVid.currentTime = targetSec;
+          } else if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
+            ytPlayer.seekTo(targetSec, true);
+          }
+        };
+
+        // Auto-loop for sliced clips
         if (clipEnd && clipEnd > clipStart && rawTime >= clipEnd - 0.08) {
-          player.seekTo(clipStart, true);
+          seekActivePlayer(clipStart);
           setCurrentSubIndex(0);
           drillRepeatCountRef.current = 1;
           setDrillRepeatCount(1);
@@ -955,7 +1045,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
             setDrillRepeatCount(drillRepeatCountRef.current);
             isSeekingRef.current = true;
             const targetSeek = isRelativeCues ? (active.start + clipStart) : active.start;
-            player.seekTo(targetSeek, true);
+            seekActivePlayer(targetSeek);
             setTimeout(() => {
               isSeekingRef.current = false;
             }, 250);
@@ -1142,30 +1232,57 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleNext, handlePrev]);
 
-  const togglePlayPause = () => {
-    if (!playerRef.current) return;
-    if (isPlaying) {
-      playerRef.current.pauseVideo();
+  const togglePlayPause = useCallback(() => {
+    const currentlyPlaying = isPlayingRef.current;
+
+    if (currentShort.videoUrl && nativeVideoRef.current) {
+      if (currentlyPlaying) {
+        userPausedRef.current = true;
+        nativeVideoRef.current.pause();
+        isPlayingRef.current = false;
+        setIsPlaying(false);
+      } else {
+        userPausedRef.current = false;
+        nativeVideoRef.current.play().catch(() => {});
+        isPlayingRef.current = true;
+        setIsPlaying(true);
+      }
+      return;
+    }
+
+    const ytPlayer = playerRef.current;
+    if (!ytPlayer) return;
+    if (currentlyPlaying) {
+      userPausedRef.current = true;
+      ytPlayer.pauseVideo?.();
+      isPlayingRef.current = false;
       setIsPlaying(false);
     } else {
-      playerRef.current.playVideo();
+      userPausedRef.current = false;
+      ytPlayer.playVideo?.();
+      isPlayingRef.current = true;
       setIsPlaying(true);
     }
-  };
+  }, [currentShort.videoUrl]);
 
-  // Global Mute Toggle (Persistent across all shorts)
-  const toggleMute = () => {
-    const nextMuted = !isGlobalMuted;
+  // Global Mute Toggle (Persistent across all shorts — supports HTML5 <video> & YouTube)
+  const toggleMute = useCallback(() => {
+    const nextMuted = !isGlobalMutedRef.current;
+    isGlobalMutedRef.current = nextMuted;
     setIsGlobalMuted(nextMuted);
     localStorage.setItem('4you_shorts_muted', String(nextMuted));
+
+    if (nativeVideoRef.current) {
+      nativeVideoRef.current.muted = nextMuted;
+    }
     if (playerRef.current) {
       if (nextMuted) {
-        playerRef.current.mute();
+        playerRef.current.mute?.();
       } else {
-        playerRef.current.unMute();
+        playerRef.current.unMute?.();
       }
     }
-  };
+  }, []);
 
   // TikTok Double-Tap to Like with Particle Physics + First-Tap Auto-Unmute (PLOS ONE 2024)
   const handleCardTap = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -1235,7 +1352,10 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
       return;
     }
 
-    if (playerRef.current) playerRef.current.pauseVideo();
+    userPausedRef.current = true;
+    if (nativeVideoRef.current) nativeVideoRef.current.pause();
+    if (playerRef.current) playerRef.current.pauseVideo?.();
+    isPlayingRef.current = false;
     setIsPlaying(false);
     setIsShadowing(true);
     setShadowResult(null);
@@ -1291,35 +1411,50 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     const isRelativeCues = hasStartOffset && subtitles[0].start < clipStart - 1.5;
     const targetSeek = isRelativeCues ? (subtitles[index].start + clipStart) : subtitles[index].start;
 
-    if (playerRef.current && typeof playerRef.current.seekTo === 'function') {
+    userPausedRef.current = false;
+    if (currentShort.videoUrl && nativeVideoRef.current) {
+      nativeVideoRef.current.currentTime = targetSeek;
+      nativeVideoRef.current.play().catch(() => {});
+      isPlayingRef.current = true;
+      setIsPlaying(true);
+    } else if (playerRef.current && typeof playerRef.current.seekTo === 'function') {
       playerRef.current.seekTo(targetSeek, true);
       playerRef.current.playVideo();
+      isPlayingRef.current = true;
       setIsPlaying(true);
     }
     setTimeout(() => {
       isSeekingRef.current = false;
     }, 350);
-  }, [subtitles, currentShort.startSeconds]);
+  }, [subtitles, currentShort.startSeconds, currentShort.videoUrl]);
 
   const replayCurrentSubtitle = useCallback(() => {
-    if (currentSub && playerRef.current && typeof playerRef.current.seekTo === 'function') {
-      isSeekingRef.current = true;
-      drillRepeatCountRef.current = 1;
-      setDrillRepeatCount(1);
+    if (!currentSub) return;
+    isSeekingRef.current = true;
+    userPausedRef.current = false;
+    drillRepeatCountRef.current = 1;
+    setDrillRepeatCount(1);
 
-      const clipStart = currentShort.startSeconds || 0;
-      const hasStartOffset = clipStart > 2;
-      const isRelativeCues = hasStartOffset && subtitles[0]?.start < clipStart - 1.5;
-      const targetSeek = isRelativeCues ? (currentSub.start + clipStart) : currentSub.start;
+    const clipStart = currentShort.startSeconds || 0;
+    const hasStartOffset = clipStart > 2;
+    const isRelativeCues = hasStartOffset && subtitles[0]?.start < clipStart - 1.5;
+    const targetSeek = isRelativeCues ? (currentSub.start + clipStart) : currentSub.start;
 
+    if (currentShort.videoUrl && nativeVideoRef.current) {
+      nativeVideoRef.current.currentTime = targetSeek;
+      nativeVideoRef.current.play().catch(() => {});
+      isPlayingRef.current = true;
+      setIsPlaying(true);
+    } else if (playerRef.current && typeof playerRef.current.seekTo === 'function') {
       playerRef.current.seekTo(targetSeek, true);
       playerRef.current.playVideo();
+      isPlayingRef.current = true;
       setIsPlaying(true);
-      setTimeout(() => {
-        isSeekingRef.current = false;
-      }, 350);
     }
-  }, [currentSub, currentShort.startSeconds, subtitles]);
+    setTimeout(() => {
+      isSeekingRef.current = false;
+    }, 350);
+  }, [currentSub, currentShort.startSeconds, currentShort.videoUrl, subtitles]);
 
   // Tokenize subtitle and render smooth natural text (no cluttered per-word boxes)
   const renderWords = (text: string, surface: 'video' | 'light' = 'video') => {
@@ -1467,124 +1602,158 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   const cueProgress = Math.min(100, Math.max(0, ((currentTime - cueStartNormalized) / cueDuration) * 100));
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-2 sm:px-4 py-2 font-['Plus_Jakarta_Sans',sans-serif] space-y-4">
-      {/* 1. Clean Light Studio Top Bar */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-2 sm:p-2.5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-2.5">
-        {/* Segmented Mode Tabs */}
-        <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-xl overflow-x-auto scrollbar-none">
-          <button
-            onClick={() => setFeedMode('reels')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0 ${
-              feedMode === 'reels'
-                ? 'bg-teal-600 text-white shadow-xs font-black'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
-            }`}
-          >
-            <Flame className="w-3.5 h-3.5" />
-            <span>🇺🇸 Real American Reels</span>
-            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-              feedMode === 'reels' ? 'bg-white/20 text-white' : 'bg-slate-200/80 text-slate-600'
-            }`}>
-              {allReelsPool.length}
-            </span>
-          </button>
+    <div className="w-full max-w-6xl mx-auto px-2 sm:px-4 py-2 font-['Plus_Jakarta_Sans',sans-serif] space-y-3.5">
+      {/* REGION 1: Single Slim Unified Bar (Replaces 2 stacked bars & duplicate buttons) */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl px-2.5 py-2 shadow-xs flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
+          {([
+            { mode: 'reels' as ShortsFeedMode, filter: 'all' as ReelTopicFilter, label: 'Tất cả', count: reelsCategoryCounts.all },
+            { mode: 'reels' as ShortsFeedMode, filter: 'daily_life' as ReelTopicFilter, label: '☕ Đời sống Mỹ', count: reelsCategoryCounts.daily_life },
+            { mode: 'reels' as ShortsFeedMode, filter: 'work_talk' as ReelTopicFilter, label: '💼 Công sở', count: reelsCategoryCounts.work_talk },
+            { mode: 'reels' as ShortsFeedMode, filter: 'my_videos' as ReelTopicFilter, label: '🎬 Kho phim', count: reelsCategoryCounts.my_videos }
+          ]).map((tab) => {
+            const isTabActive = feedMode === 'reels' && reelTopicFilter === tab.filter;
+            return (
+              <button
+                key={tab.filter}
+                type="button"
+                onClick={() => {
+                  setFeedMode(tab.mode);
+                  setReelTopicFilter(tab.filter);
+                  setShowSearchBar(false);
+                }}
+                className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  isTabActive
+                    ? 'bg-teal-600 text-white shadow-xs font-black'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <span>{tab.label}</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                  isTabActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
+                }`}>
+                  {tab.count}
+                </span>
+              </button>
+            );
+          })}
 
           <button
-            onClick={() => setFeedMode('youglish')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0 ${
+            type="button"
+            onClick={() => {
+              setFeedMode('youglish');
+              setShowSearchBar(false);
+            }}
+            className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
               feedMode === 'youglish'
                 ? 'bg-teal-600 text-white shadow-xs font-black'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
             }`}
           >
             <Target className="w-3.5 h-3.5" />
-            <span>Ôn từ SRS</span>
+            <span>Ôn SRS</span>
             {youglishOccurrences.length > 0 && (
-              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                feedMode === 'youglish' ? 'bg-white/20 text-white' : 'bg-slate-200/80 text-slate-600'
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                feedMode === 'youglish' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
               }`}>
                 {youglishOccurrences.length}
               </span>
             )}
           </button>
-
-          <button
-            onClick={() => setFeedMode('search')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0 ${
-              feedMode === 'search'
-                ? 'bg-teal-600 text-white shadow-xs font-black'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
-            }`}
-          >
-            <Search className="w-3.5 h-3.5" />
-            <span>Tra cứu</span>
-          </button>
         </div>
 
-        {/* Right Controls: Daily Goal + Add Video + Consolidated Settings */}
-        <div className="flex items-center justify-between md:justify-end gap-2">
+        <div className="flex items-center gap-1.5 shrink-0">
           <div
-            className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-2 shrink-0 ${
+            className={`px-2.5 py-1 rounded-xl border text-xs font-bold flex items-center gap-1.5 ${
               completedTodayIds.length >= effectiveDailyGoal
                 ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                 : 'bg-amber-50 border-amber-200 text-amber-800'
             }`}
-            title="Mục tiêu micro-habit mỗi ngày: xem thấm hoặc nhại lại 5 cụm tiếng Mỹ thực tế"
+            title="Mục tiêu micro-habit mỗi ngày: 5 cụm tiếng Mỹ thực tế"
           >
             <Flame className={`w-3.5 h-3.5 ${completedTodayIds.length >= effectiveDailyGoal ? 'text-emerald-600' : 'text-amber-500'}`} />
-            <span>
-              Hôm nay: <strong>{Math.min(completedTodayIds.length, effectiveDailyGoal)}/{effectiveDailyGoal}</strong> cụm
-            </span>
-            <div className="w-10 h-1.5 rounded-full bg-amber-200/70 overflow-hidden hidden sm:block">
-              <div
-                className={`h-full transition-all duration-300 ${
-                  completedTodayIds.length >= effectiveDailyGoal ? 'bg-emerald-500' : 'bg-amber-500'
-                }`}
-                style={{ width: `${Math.min(100, (completedTodayIds.length / effectiveDailyGoal) * 100)}%` }}
-              />
-            </div>
+            <span>{Math.min(completedTodayIds.length, effectiveDailyGoal)}/{effectiveDailyGoal}</span>
           </div>
 
-          {onImportShortClick && (
-            <button
-              onClick={onImportShortClick}
-              className="px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs shrink-0"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Thêm video</span>
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => {
+              const next = !showSearchBar;
+              setShowSearchBar(next);
+              if (next) setFeedMode('search');
+              else if (feedMode === 'search') setFeedMode('reels');
+            }}
+            className={`p-2 rounded-xl border transition-all cursor-pointer ${
+              showSearchBar || feedMode === 'search'
+                ? 'bg-teal-600 text-white border-teal-600'
+                : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200'
+            }`}
+            title="Tìm trích đoạn theo cụm từ"
+          >
+            <Search className="w-4 h-4" />
+          </button>
 
           <button
             type="button"
             onClick={() => setShowSettingsPanel(!showSettingsPanel)}
-            className={`p-2 rounded-xl border transition-all cursor-pointer shrink-0 flex items-center gap-1.5 text-xs font-bold ${
-              showSettingsPanel || subOffset !== 0 || showLiveYouglish
+            className={`p-2 rounded-xl border transition-all cursor-pointer ${
+              showSettingsPanel || isBlindMode || isDrillMode || subOffset !== 0 || showLiveYouglish
                 ? 'bg-slate-900 text-white border-slate-900'
                 : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200'
             }`}
-            title="Cài đặt phát video, chỉnh lệch phụ đề & YouGlish Live API"
+            title="Cài đặt phụ đề, Nghe mù, Lặp 3x, Lệch sub & YouGlish Live"
           >
             <Settings2 className="w-4 h-4" />
-            <span className="hidden xl:inline">Tùy chỉnh</span>
           </button>
 
-          {/* Mobile Companion Drawer Trigger */}
           <button
+            type="button"
             onClick={() => setIsMobileDrawerOpen(!isMobileDrawerOpen)}
-            className="lg:hidden px-3 py-1.5 rounded-xl bg-teal-50 text-teal-700 border border-teal-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0"
+            className="lg:hidden px-2.5 py-1.5 rounded-xl bg-teal-50 text-teal-700 border border-teal-200 text-xs font-bold flex items-center gap-1 cursor-pointer"
           >
             <GraduationCap className="w-3.5 h-3.5" />
-            <span>Học chi tiết</span>
+            <span>Học</span>
           </button>
         </div>
       </div>
 
-      {/* Consolidated Settings Bar (Hidden by default — Zero UI Clutter) */}
+      {/* Consolidated Settings Drawer (Hidden by default — Zero UI Clutter) */}
       {showSettingsPanel && (
-        <div className="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-3 animate-fade-in">
+        <div className="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-sm flex flex-wrap items-center justify-between gap-3 animate-fade-in">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-bold text-slate-500">Trình phát:</span>
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+              <span className="text-[11px] font-bold text-slate-500 px-1.5">Phụ đề:</span>
+              {([
+                { id: 'bilingual' as SubtitleDisplayMode, label: 'EN + VI' },
+                { id: 'en_only' as SubtitleDisplayMode, label: 'Chỉ EN' },
+                { id: 'blind' as SubtitleDisplayMode, label: 'Nghe mù' }
+              ]).map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  onClick={() => setSubtitleMode(mode.id)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${
+                    subtitleMode === mode.id ? 'bg-white text-slate-900 shadow-xs font-black' : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setIsDrillMode(!isDrillMode)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                isDrillMode
+                  ? 'bg-teal-50 text-teal-800 border-teal-300'
+                  : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+              }`}
+            >
+              <Repeat className="w-3.5 h-3.5 text-teal-600" />
+              <span>Lặp 3x: {isDrillMode ? 'BẬT' : 'TẮT'}</span>
+            </button>
+
             <button
               type="button"
               onClick={() => setUseDirectIframe(!useDirectIframe)}
@@ -1595,7 +1764,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
               }`}
             >
               <Zap className="w-3.5 h-3.5 text-teal-600" />
-              <span>{useDirectIframe ? 'IFrame Siêu tốc (Đang bật)' : '3-Slot Pool mượt (Mặc định)'}</span>
+              <span>{useDirectIframe ? 'IFrame' : '3-Slot Pool'}</span>
             </button>
 
             <button
@@ -1608,12 +1777,12 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
               }`}
             >
               <Globe className="w-3.5 h-3.5" />
-              <span>{showLiveYouglish ? 'Đóng YouGlish Live' : 'Mở YouGlish Live (100M+)'}</span>
+              <span>YouGlish Live</span>
             </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-xs font-bold text-slate-500 flex items-center gap-1 mr-1">
+            <span className="text-xs font-bold text-slate-500 flex items-center gap-1">
               <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400" />
               Lệch sub ({subOffset > 0 ? `+${subOffset}s` : `${subOffset}s`}):
             </span>
@@ -1622,7 +1791,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                 key={delta}
                 type="button"
                 onClick={() => handleAdjustOffset(delta)}
-                className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+                className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
               >
                 {delta > 0 ? `+${delta}s` : `${delta}s`}
               </button>
@@ -1636,58 +1805,6 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                 Reset
               </button>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* Topic / Vibe Filter Pills & 3-Mode Subtitle Switcher (Real American Reels Mode) */}
-      {feedMode === 'reels' && (
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 px-1">
-          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
-            {([
-              { id: 'all' as ReelTopicFilter, label: '🔥 Tất cả', count: reelsCategoryCounts.all },
-              { id: 'daily_life' as ReelTopicFilter, label: '☕ Đời sống Mỹ', count: reelsCategoryCounts.daily_life },
-              { id: 'work_talk' as ReelTopicFilter, label: '💼 Công sở & Giao tiếp', count: reelsCategoryCounts.work_talk },
-              { id: 'my_videos' as ReelTopicFilter, label: '🎬 Video của tôi', count: reelsCategoryCounts.my_videos }
-            ]).map((pill) => (
-              <button
-                key={pill.id}
-                onClick={() => setReelTopicFilter(pill.id)}
-                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
-                  reelTopicFilter === pill.id
-                    ? 'bg-teal-600 text-white border-teal-600 shadow-xs'
-                    : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:text-slate-900'
-                }`}
-              >
-                <span>{pill.label}</span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                  reelTopicFilter === pill.id ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
-                }`}>
-                  {pill.count}
-                </span>
-              </button>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/80 self-start md:self-auto shrink-0">
-            <span className="text-[11px] font-bold text-slate-500 px-2">Phụ đề:</span>
-            {([
-              { id: 'bilingual' as SubtitleDisplayMode, label: 'EN + VI' },
-              { id: 'en_only' as SubtitleDisplayMode, label: 'Chỉ EN' },
-              { id: 'blind' as SubtitleDisplayMode, label: 'Nghe mù' }
-            ]).map((mode) => (
-              <button
-                key={mode.id}
-                onClick={() => setSubtitleMode(mode.id)}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                  subtitleMode === mode.id
-                    ? 'bg-white text-slate-900 shadow-xs font-black'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                {mode.label}
-              </button>
-            ))}
           </div>
         </div>
       )}
@@ -1706,11 +1823,12 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
         </div>
       )}
 
-      {/* Search Input Bar (When in Search Mode) */}
-      {feedMode === 'search' && (
+      {/* Search Input Bar (Shown only when Search icon is toggled) */}
+      {(showSearchBar || feedMode === 'search') && (
         <form
           onSubmit={(e) => {
             e.preventDefault();
+            setFeedMode('search');
             setSearchQuery(searchInput);
           }}
           className="flex items-center gap-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-xs max-w-2xl mx-auto"
@@ -1727,7 +1845,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
             type="submit"
             className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs"
           >
-            Tìm trích đoạn
+            Tìm
           </button>
         </form>
       )}
@@ -1817,7 +1935,46 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                     aria-hidden="true"
                     className="absolute inset-0 w-full h-full object-cover opacity-30 blur-md scale-110 pointer-events-none"
                   />
-                  {useDirectIframe ? (
+                  {currentShort.videoUrl ? (
+                    <>
+                      <video
+                        ref={nativeVideoRef}
+                        key={currentShort.videoUrl}
+                        src={currentShort.videoUrl}
+                        playsInline
+                        autoPlay
+                        muted={isGlobalMuted}
+                        preload="auto"
+                        onPlay={() => {
+                          isPlayingRef.current = true;
+                          setIsPlaying(true);
+                          clearLoadingOverlay();
+                        }}
+                        onPause={() => {
+                          isPlayingRef.current = false;
+                          setIsPlaying(false);
+                        }}
+                        onEnded={() => {
+                          const vid = nativeVideoRef.current;
+                          if (vid && !userPausedRef.current) {
+                            vid.currentTime = currentShort.startSeconds || 0;
+                            vid.play().catch(() => {});
+                          }
+                        }}
+                        className="relative z-[2] w-full h-full object-cover pointer-events-none"
+                      />
+                      {/* Silent 0ms preload for next MP4 reel */}
+                      {activeFeed[currentIndex + 1]?.videoUrl && (
+                        <video
+                          src={activeFeed[currentIndex + 1].videoUrl}
+                          preload="auto"
+                          muted
+                          className="hidden"
+                          aria-hidden="true"
+                        />
+                      )}
+                    </>
+                  ) : useDirectIframe ? (
                     <iframe
                       key={`direct-iframe-${currentShort.youtubeId}-${currentIndex}`}
                       src={`https://www.youtube-nocookie.com/embed/${currentShort.youtubeId}?autoplay=1&mute=${isGlobalMuted ? 1 : 0}&start=${Math.floor(clipStart)}&controls=0&rel=0&modestbranding=1&enablejsapi=1&origin=${encodeURIComponent(typeof window !== 'undefined' ? window.location.origin : '')}`}
@@ -1827,7 +1984,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                       allowFullScreen
                     />
                   ) : (
-                    <div className="relative w-full h-full">
+                    <div className="relative w-full h-full pointer-events-none">
                       {([0, 1, 2] as PoolSlotId[]).map((slotId) => {
                         const isSlotActive = slotId === activeSlotId;
                         return (
@@ -1836,8 +1993,8 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                             ref={(el) => {
                               poolContainersRef.current[slotId] = el;
                             }}
-                            className={`absolute inset-0 w-full h-full transition-opacity duration-150 ${
-                              isSlotActive ? 'opacity-100 z-[2]' : 'opacity-0 z-[0] pointer-events-none'
+                            className={`absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-150 ${
+                              isSlotActive ? 'opacity-100 z-[2]' : 'opacity-0 z-[0]'
                             }`}
                           />
                         );
@@ -2025,14 +2182,14 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                     </div>
                   )}
 
-                  {/* Tap-to-Play/Pause Controller Click Area */}
-                  <div 
-                    onClick={handleCardTap} 
-                    className="absolute inset-0 z-0 cursor-pointer flex items-center justify-center"
-                    title="Chạm 1 lần để dừng/phát • Chạm 2 lần để thả tim • Nhấn giữ để tăng tốc 2x"
+                  {/* Tap-to-Play/Pause Controller Click Area (z-[5] ABOVE player iframe z-[2], BELOW top/bottom UI z-10) */}
+                  <div
+                    onClick={handleCardTap}
+                    className="absolute inset-0 z-[5] cursor-pointer flex items-center justify-center"
+                    title="Chạm 1 lần để Dừng/Phát • Chạm 2 lần để thả tim • Nhấn giữ để tăng tốc 2x"
                   >
-                    {!isPlaying && !isVideoLoading && !playerError && (
-                      <div className="w-16 h-16 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white shadow-2xl animate-scale-up">
+                    {!isPlaying && !isVideoLoading && !playerError && !activeMicroQuiz && (
+                      <div className="w-16 h-16 rounded-full bg-black/65 backdrop-blur-md flex items-center justify-center text-white shadow-2xl border border-white/25 animate-scale-up">
                         <Play className="w-8 h-8 fill-white ml-1" />
                       </div>
                     )}
@@ -2083,8 +2240,8 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                   </div>
                 </div>
 
-                {/* 3. Bottom Clean Karaoke Subtitle Box (L2-Top Hierarchy per Cambridge 2026 + Connected Speech Chips) */}
-                <div className="relative z-10 p-4 bg-gradient-to-t from-black/95 via-black/85 to-transparent space-y-2">
+                {/* 3. Bottom Clean Karaoke Subtitle Box (Unobstructed Speaker Face + L2-Top + Connected Speech) */}
+                <div className="relative z-10 p-4 bg-gradient-to-t from-black/95 via-black/80 to-transparent space-y-2">
                   {/* Real-time Subtitle Progress Line */}
                   <div className="w-full h-1 bg-white/20 rounded-full overflow-hidden">
                     <div
@@ -2093,30 +2250,10 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                     />
                   </div>
 
-                  {/* Key American Expression Banner (Reels mode, non-blind) */}
-                  {feedMode === 'reels' && activeExpression && !isBlindMode && (
-                    <div className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-amber-400/20 border border-amber-400/40 backdrop-blur-md">
-                      <div className="min-w-0 flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-                        <span className="text-xs font-black text-amber-300 truncate">
-                          {activeExpression}
-                        </span>
-                        {currentShort.expressionMeaningVi && (
-                          <span className="text-[11px] text-white/90 truncate">
-                            — {currentShort.expressionMeaningVi}
-                          </span>
-                        )}
-                      </div>
-                      <span className="shrink-0 px-1.5 py-0.5 rounded-md bg-black/50 text-[10px] font-bold text-teal-300">
-                        {currentShort.register === 'workplace_us' ? '💼 Công sở' : '☕ Đời sống Mỹ'}
-                      </span>
-                    </div>
-                  )}
-
                   {/* Subtitle Card (L2 English Top -> L1 Vietnamese Subtle Bottom) */}
                   <div
                     onClick={replayCurrentSubtitle}
-                    className="p-3 rounded-2xl bg-black/75 backdrop-blur-md border border-white/20 shadow-xl cursor-pointer hover:border-teal-400/50 transition-colors"
+                    className="p-3 rounded-2xl bg-black/75 backdrop-blur-md border border-white/15 shadow-xl cursor-pointer hover:border-teal-400/50 transition-colors"
                     title="Bấm vào thẻ để nghe lại câu này"
                   >
                     <p className="text-sm sm:text-base font-black text-white leading-relaxed">
@@ -2182,10 +2319,30 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                 </div>
               </div>
 
-              {/* Clean Light Studio Flanking Dock (4 Core Learning Actions + Prev/Next) */}
+              {/* Clean Light Studio Flanking Dock (Play/Pause + Save SRS + Shadow + Prev/Next) */}
               <div className="flex flex-col items-center gap-2.5 shrink-0">
+                {/* Explicit Pause / Play Button (Always works cleanly on both MP4 & YouTube) */}
+                <button
+                  type="button"
+                  onClick={togglePlayPause}
+                  className="flex flex-col items-center gap-1 cursor-pointer group"
+                  title={isPlaying ? 'Tạm dừng video (Phím Space)' : 'Tiếp tục phát (Phím Space)'}
+                >
+                  <div className={`p-3 rounded-2xl border transition-all shadow-xs ${
+                    !isPlaying
+                      ? 'bg-slate-900 border-slate-900 text-white'
+                      : 'bg-white border-slate-200 text-slate-700 hover:border-teal-300 hover:text-teal-700'
+                  }`}>
+                    {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 fill-current" />}
+                  </div>
+                  <span className="text-[10px] font-bold text-slate-500">
+                    {isPlaying ? 'Dừng' : 'Phát'}
+                  </span>
+                </button>
+
                 {/* 1-Tap Save Expression to FSRS-6 */}
                 <button
+                  type="button"
                   onClick={handleSaveCurrentExpression}
                   className="flex flex-col items-center gap-1 cursor-pointer group"
                   title={isCurrentExpressionSaved ? 'Cụm này đã có trong Kho FSRS-6' : 'Lưu nhanh cụm này vào FSRS-6'}
@@ -2204,6 +2361,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
 
                 {/* 1-Tap Shadowing Mic Button */}
                 <button
+                  type="button"
                   onClick={handleStartShadowing}
                   className="flex flex-col items-center gap-1 cursor-pointer group"
                   title="Nhại giọng câu này (1-Tap Shadowing AI)"
@@ -2220,21 +2378,10 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                   </span>
                 </button>
 
-                {/* Replay Current Subtitle */}
-                <button
-                  onClick={replayCurrentSubtitle}
-                  className="flex flex-col items-center gap-1 cursor-pointer group"
-                  title="Phát lại câu phụ đề này (Phím R)"
-                >
-                  <div className="p-3 rounded-2xl bg-white border border-slate-200 hover:border-teal-300 text-slate-600 hover:text-teal-700 shadow-xs transition-all">
-                    <RotateCcw className="w-5 h-5" />
-                  </div>
-                  <span className="text-[10px] font-bold text-slate-500">Nghe lại</span>
-                </button>
-
                 {/* Up / Down Navigation Buttons */}
                 <div className="flex flex-col gap-1.5 pt-2.5 border-t border-slate-200">
                   <button
+                    type="button"
                     disabled={currentIndex === 0}
                     onClick={handlePrev}
                     className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 disabled:opacity-30 transition-all cursor-pointer shadow-xs"
@@ -2243,6 +2390,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                     <ChevronUp className="w-5 h-5" />
                   </button>
                   <button
+                    type="button"
                     disabled={currentIndex === activeFeed.length - 1}
                     onClick={handleNext}
                     className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 disabled:opacity-30 transition-all cursor-pointer shadow-xs"
@@ -2255,115 +2403,109 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
             </div>
           </div>
 
-          {/* ================= COLUMN 2: CLEAN STUDIO LIGHT STUDY COMPANION ================= */}
-          <div className={`lg:col-span-6 xl:col-span-7 flex flex-col gap-4 w-full ${isMobileDrawerOpen ? 'block' : 'hidden lg:flex'}`}>
-
-            {/* CARD 1: Primary Learning Card (American Expression Spotlight OR SRS Active Recall) */}
-            {activeExpression && (
-              feedMode === 'reels' ? (
-                <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200/90 shadow-sm space-y-4">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div className="min-w-0 space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                          🇺🇸 Cụm tiếng Mỹ đời thực
-                        </span>
-                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-teal-50 text-teal-800 border border-teal-200">
-                          {currentShort.register === 'workplace_us'
-                            ? '💼 Công sở Mỹ'
-                            : currentShort.register === 'casual_us'
-                              ? '☕ Casual Mỹ'
-                              : '🗣️ Giao tiếp hàng ngày'}
-                        </span>
+          {/* ================= REGION 3: SINGLE CLEAN STUDY CARD (ZERO CLUTTER) ================= */}
+          <div className={`lg:col-span-6 xl:col-span-7 w-full ${isMobileDrawerOpen ? 'block' : 'hidden lg:flex lg:flex-col'}`}>
+            <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200/90 shadow-sm space-y-5">
+              {/* Top Section: American Expression OR SRS Active Recall */}
+              {activeExpression && (
+                feedMode === 'reels' ? (
+                  <div className="space-y-4">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-teal-50 text-teal-800 border border-teal-200">
+                            {currentShort.register === 'workplace_us'
+                              ? '💼 Công sở Mỹ'
+                              : currentShort.register === 'casual_us'
+                                ? '☕ Đời sống Mỹ'
+                                : '🗣️ Giao tiếp hàng ngày'}
+                          </span>
+                          {currentShort.videoUrl && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              ⚡ MP4 0ms
+                            </span>
+                          )}
+                        </div>
+                        <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight pt-0.5">
+                          "{activeExpression}"
+                        </h2>
+                        {currentShort.expressionMeaningVi && (
+                          <p className="text-sm sm:text-base font-bold text-teal-700">
+                            {currentShort.expressionMeaningVi}
+                          </p>
+                        )}
                       </div>
-                      <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight pt-1">
-                        "{activeExpression}"
-                      </h2>
-                      {currentShort.expressionMeaningVi && (
-                        <p className="text-sm sm:text-base font-bold text-teal-700">
-                          {currentShort.expressionMeaningVi}
-                        </p>
-                      )}
+
+                      <button
+                        type="button"
+                        onClick={handleSaveCurrentExpression}
+                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer flex items-center gap-1.5 shrink-0 border ${
+                          isCurrentExpressionSaved
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                            : 'bg-teal-600 hover:bg-teal-700 text-white border-teal-600 shadow-xs'
+                        }`}
+                      >
+                        {isCurrentExpressionSaved ? <BookmarkCheck className="w-4 h-4" /> : <Bookmark className="w-4 h-4" />}
+                        <span>{isCurrentExpressionSaved ? 'Đã lưu FSRS-6' : '+ Lưu FSRS-6'}</span>
+                      </button>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={handleSaveCurrentExpression}
-                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer flex items-center gap-1.5 shrink-0 border ${
-                        isCurrentExpressionSaved
-                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                          : 'bg-teal-600 hover:bg-teal-700 text-white border-teal-600 shadow-xs'
-                      }`}
-                    >
-                      {isCurrentExpressionSaved ? <BookmarkCheck className="w-4 h-4" /> : <Bookmark className="w-4 h-4" />}
-                      <span>{isCurrentExpressionSaved ? 'Đã lưu FSRS-6' : '+ Lưu vào FSRS-6'}</span>
-                    </button>
-                  </div>
-
-                  {/* When Americans use this expression */}
-                  {currentShort.americanUsageNote && (
-                    <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-xs sm:text-sm text-slate-700 leading-relaxed space-y-1">
-                      <div className="flex items-center gap-1.5 font-bold text-slate-900 text-xs">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                        <span>Người Mỹ dùng khi nào?</span>
-                      </div>
-                      <p>{currentShort.americanUsageNote}</p>
-                    </div>
-                  )}
-
-                  {/* Receptive-First Connected Speech Breakdown (0ms / 0đ) */}
-                  {connectedSpeechHints.length > 0 && (
-                    <div className="p-3.5 rounded-2xl bg-teal-50/70 border border-teal-200/80 space-y-2">
-                      <div className="flex items-center justify-between text-xs font-bold text-teal-900">
-                        <span className="flex items-center gap-1.5">
-                          <Ear className="w-4 h-4 text-teal-600" />
-                          <span>Giải mã nối âm (Để nghe ra người Mỹ)</span>
-                        </span>
-                        <span className="text-[10px] font-semibold text-teal-700 bg-white px-2 py-0.5 rounded-full border border-teal-200">
-                          Nghe hiểu
-                        </span>
-                      </div>
-                      <div className="space-y-1.5">
-                        {connectedSpeechHints.map((hint) => (
-                          <div key={hint.id} className="text-xs bg-white rounded-xl p-2.5 border border-teal-100">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-semibold text-slate-600">"{hint.written}"</span>
-                              <span className="text-slate-400">→</span>
-                              <span className="font-black text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                                👂 Nghe như: "{hint.spoken}"
-                              </span>
-                              <span className="font-mono text-[11px] text-teal-700">{hint.ipaLike}</span>
-                            </div>
-                            <p className="text-[11px] text-slate-600 mt-1">{hint.noteVi}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 1-Click AI American Nuance Decoder */}
-                  <div className="space-y-2.5 pt-1">
-                    <button
-                      type="button"
-                      onClick={handleAskAiNuance}
-                      disabled={isLoadingAiNuance}
-                      className="w-full py-2.5 px-4 rounded-xl bg-indigo-50 hover:bg-indigo-100/80 border border-indigo-200 text-indigo-800 text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-60"
-                    >
-                      {isLoadingAiNuance ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Sparkles className="w-4 h-4 text-indigo-600" />
-                      )}
-                      <span>
-                        {currentUser
-                          ? '✨ AI Giải mã sắc thái & Câu thay thế tự nhiên kiểu Mỹ'
-                          : 'Đăng nhập để dùng AI Giải mã sắc thái kiểu Mỹ'}
-                      </span>
-                    </button>
-
-                    {aiNuanceError && (
-                      <p className="text-xs text-rose-600 font-semibold">{aiNuanceError}</p>
+                    {currentShort.americanUsageNote && (
+                      <p className="text-xs sm:text-sm text-slate-600 leading-relaxed bg-slate-50 border border-slate-200/70 rounded-2xl p-3.5">
+                        <strong className="text-slate-900">🇺🇸 Người Mỹ dùng khi nào:</strong> {currentShort.americanUsageNote}
+                      </p>
                     )}
+
+                    {/* Receptive Connected Speech Chips (Only when sentence has real reductions/linking) */}
+                    {connectedSpeechHints.length > 0 && (
+                      <div className="p-3 rounded-2xl bg-teal-50/70 border border-teal-200/80 space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-teal-900">
+                          <Ear className="w-3.5 h-3.5 text-teal-600" />
+                          <span>Nối âm thực tế (để nghe ra người Mỹ):</span>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {connectedSpeechHints.map((hint) => (
+                            <span
+                              key={hint.id}
+                              title={hint.noteVi}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white border border-teal-100 text-xs"
+                            >
+                              <span className="text-slate-600 font-medium">"{hint.written}"</span>
+                              <span className="text-slate-400">→</span>
+                              <span className="font-black text-amber-800">"{hint.spoken}"</span>
+                              <span className="font-mono text-[11px] text-teal-700">{hint.ipaLike}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Clean 2-Button Action Row: AI Nuance + Watch Real Movie Scenes on PlayPhrase */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleAskAiNuance}
+                        disabled={isLoadingAiNuance}
+                        className="flex-1 min-w-[200px] py-2 px-3.5 rounded-xl bg-indigo-50 hover:bg-indigo-100/80 border border-indigo-200 text-indigo-800 text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-60"
+                      >
+                        {isLoadingAiNuance ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-indigo-600" />}
+                        <span>{currentUser ? 'AI Giải mã sắc thái Mỹ' : 'Đăng nhập dùng AI Sắc thái'}</span>
+                      </button>
+
+                      <a
+                        href={`https://www.playphrase.me/#/search?q=${encodeURIComponent(activeExpression)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="py-2 px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-all"
+                        title={`Mở cảnh phim & sitcom Mỹ nói "${activeExpression}" trên PlayPhrase.me`}
+                      >
+                        <Film className="w-3.5 h-3.5 text-slate-600" />
+                        <span>Nghe trong phim Mỹ</span>
+                        <ExternalLink className="w-3 h-3 opacity-60" />
+                      </a>
+                    </div>
+
+                    {aiNuanceError && <p className="text-xs text-rose-600 font-semibold">{aiNuanceError}</p>}
 
                     {aiNuance && (
                       <div className="p-3.5 rounded-2xl bg-indigo-50/60 border border-indigo-200 text-xs space-y-2 animate-fade-in">
@@ -2375,7 +2517,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                           </p>
                         )}
                         {Array.isArray(aiNuance.examples) && aiNuance.examples.length > 0 && (
-                          <div className="space-y-1.5 pt-1.5 border-t border-indigo-200/70">
+                          <div className="space-y-1 pt-1.5 border-t border-indigo-200/70">
                             {aiNuance.examples.slice(0, 2).map((ex, i) => (
                               <div key={i} className="text-[11px]">
                                 <p className="text-slate-900 font-semibold">• {ex.en}</p>
@@ -2387,121 +2529,80 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                       </div>
                     )}
                   </div>
-                </div>
-              ) : (
-                <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200/90 shadow-sm space-y-4">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-black uppercase tracking-wider text-teal-700">
-                          {!isWordRevealed ? '🎯 Thử thách ôn tập FSRS-6' : '🎯 Từ mục tiêu'}
-                        </span>
-                        {currentOccurrence?.isDueToday && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-50 text-rose-700 border border-rose-200 font-bold">
-                            Cần ôn hôm nay
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-black uppercase tracking-wider text-teal-700">
+                            {!isWordRevealed ? '🎯 Ôn tập FSRS-6' : '🎯 Từ mục tiêu'}
                           </span>
+                          {currentOccurrence?.isDueToday && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-50 text-rose-700 border border-rose-200 font-bold">
+                              Cần ôn hôm nay
+                            </span>
+                          )}
+                        </div>
+
+                        {!isWordRevealed ? (
+                          <div className="flex items-center gap-2.5 pt-1">
+                            <div className="px-3.5 py-1.5 rounded-xl bg-amber-50 border border-dashed border-amber-300 text-amber-900 font-mono font-black text-base tracking-widest flex items-center gap-2">
+                              <span>• • • • • •</span>
+                              <span className="text-[11px] font-sans text-amber-800 font-bold bg-amber-100 px-1.5 py-0.5 rounded">
+                                {activeExpression.length} ký tự
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => setIsWordRevealed(true)}
+                              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-xs flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>Mở đáp án</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <h2 className="text-2xl font-black text-slate-900 pt-0.5 tracking-tight">
+                            "{activeExpression}"
+                          </h2>
                         )}
                       </div>
 
-                      {!isWordRevealed ? (
-                        <div className="flex items-center gap-2.5 pt-1">
-                          <div className="px-3.5 py-1.5 rounded-xl bg-amber-50 border border-dashed border-amber-300 text-amber-900 font-mono font-black text-base tracking-widest flex items-center gap-2">
-                            <span>• • • • • •</span>
-                            <span className="text-[11px] font-sans text-amber-800 font-bold bg-amber-100 px-1.5 py-0.5 rounded">
-                              {activeExpression.length} ký tự
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => setIsWordRevealed(true)}
-                            className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>Mở đáp án</span>
-                          </button>
-                        </div>
-                      ) : (
-                        <h2 className="text-2xl font-black text-slate-900 pt-0.5 tracking-tight">
-                          "{activeExpression}"
-                        </h2>
+                      {isWordRevealed && (
+                        <button
+                          onClick={() => onSelectWord(activeExpression, currentShort.targetContext || '')}
+                          className="px-3.5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1.5"
+                        >
+                          <BookOpen className="w-3.5 h-3.5" />
+                          <span>Tra chi tiết</span>
+                        </button>
                       )}
                     </div>
 
                     {isWordRevealed && (
-                      <button
-                        onClick={() => onSelectWord(activeExpression, currentShort.targetContext || '')}
-                        className="px-3.5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
-                      >
-                        <BookOpen className="w-3.5 h-3.5" />
-                        <span>Tra chi tiết</span>
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Collocation Hint */}
-                  {currentOccurrence?.collocation && (
-                    <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 text-xs space-y-1">
-                      <div className="flex items-center gap-1.5 font-bold text-slate-700">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                        <span>Cụm từ tự nhiên (Collocation)</span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-bold text-slate-600 mr-1">Chấm FSRS-6:</span>
+                        {([
+                          { r: 1 as AnkiRating, label: 'Quên', cls: 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-600 hover:text-white' },
+                          { r: 2 as AnkiRating, label: 'Khó', cls: 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-500 hover:text-white' },
+                          { r: 3 as AnkiRating, label: 'Tốt', cls: 'bg-teal-50 text-teal-800 border-teal-200 hover:bg-teal-600 hover:text-white' },
+                          { r: 4 as AnkiRating, label: 'Dễ', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-600 hover:text-white' }
+                        ]).map((btn) => (
+                          <button
+                            key={btn.r}
+                            onClick={() => handleRateCard(btn.r)}
+                            className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-colors cursor-pointer ${btn.cls}`}
+                          >
+                            {btn.label}
+                          </button>
+                        ))}
                       </div>
-                      {!isWordRevealed ? (
-                        <p className="font-mono text-amber-800 text-xs flex items-center gap-1.5">
-                          <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                          <span>
-                            {activeExpression
-                              ? currentOccurrence.collocation.replace(new RegExp(`\\b${activeExpression}\\b`, 'gi'), '[ •••••• ]')
-                              : '[ •••••• ]'}
-                          </span>
-                        </p>
-                      ) : (
-                        <>
-                          <p className="font-bold text-slate-900 text-sm">{currentOccurrence.collocation}</p>
-                          {currentOccurrence.collocationTip && (
-                            <p className="text-slate-600 text-[11px]">{currentOccurrence.collocationTip}</p>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  )}
+                    )}
 
-                  {/* FSRS-6 Flashcard Quick Rating */}
-                  {isWordRevealed && (
-                    <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-2 animate-fade-in">
-                      <span className="text-xs font-bold text-slate-600 mr-1">Chấm FSRS-6:</span>
-                      <button
-                        onClick={() => handleRateCard(1)}
-                        className="px-3 py-1.5 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold hover:bg-rose-600 hover:text-white transition-colors cursor-pointer"
-                      >
-                        Quên
-                      </button>
-                      <button
-                        onClick={() => handleRateCard(2)}
-                        className="px-3 py-1.5 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 text-xs font-bold hover:bg-amber-500 hover:text-white transition-colors cursor-pointer"
-                      >
-                        Khó
-                      </button>
-                      <button
-                        onClick={() => handleRateCard(3)}
-                        className="px-3 py-1.5 rounded-xl bg-teal-50 text-teal-800 border border-teal-200 text-xs font-bold hover:bg-teal-600 hover:text-white transition-colors cursor-pointer"
-                      >
-                        Tốt
-                      </button>
-                      <button
-                        onClick={() => handleRateCard(4)}
-                        className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold hover:bg-emerald-600 hover:text-white transition-colors cursor-pointer"
-                      >
-                        Dễ
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Consolidated SRS Filters (inside Card 1 instead of extra dark box) */}
-                  {feedMode === 'youglish' && (
-                    <div className="pt-3 border-t border-slate-100 space-y-2.5">
-                      <div className="flex items-center justify-between text-xs font-bold text-slate-500 flex-wrap gap-2">
-                        <span className="flex items-center gap-1.5 text-slate-700">
+                    {feedMode === 'youglish' && (
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
                           <ListFilter className="w-3.5 h-3.5 text-teal-600" />
-                          Lọc sổ tay ({availableWordsWithCount.length} từ)
+                          Sổ tay ({availableWordsWithCount.length} từ)
                         </span>
                         <div className="flex items-center gap-1">
                           {(['GLOBAL', 'US', 'UK'] as AccentZone[]).map((z) => (
@@ -2509,9 +2610,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                               key={z}
                               onClick={() => setAccentFilter(z)}
                               className={`px-2 py-0.5 rounded-lg text-[11px] font-bold cursor-pointer ${
-                                accentFilter === z
-                                  ? 'bg-slate-900 text-white'
-                                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                accentFilter === z ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                               }`}
                             >
                               {z === 'GLOBAL' ? 'Tất cả' : z === 'US' ? '🇺🇸 Mỹ' : '🇬🇧 Anh'}
@@ -2519,52 +2618,15 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                           ))}
                         </div>
                       </div>
+                    )}
+                  </div>
+                )
+              )}
 
-                      <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none">
-                        <button
-                          onClick={() => setSelectedWordFilter('all')}
-                          className={`shrink-0 px-3 py-1 rounded-full text-xs font-bold border transition-all cursor-pointer ${
-                            selectedWordFilter === 'all'
-                              ? 'bg-teal-600 text-white border-teal-600'
-                              : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-                          }`}
-                        >
-                          Tất cả ({youglishOccurrences.length})
-                        </button>
-                        {isWordRevealed || selectedWordFilter !== 'all' ? (
-                          availableWordsWithCount.map(({ word, count, isDue }) => (
-                            <button
-                              key={word}
-                              onClick={() => setSelectedWordFilter(word)}
-                              className={`shrink-0 px-3 py-1 rounded-full text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
-                                selectedWordFilter.toLowerCase() === word.toLowerCase()
-                                  ? 'bg-amber-500 text-white border-amber-500'
-                                  : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
-                              }`}
-                            >
-                              {isDue && <span className="size-1.5 rounded-full bg-rose-500" />}
-                              <span>{word}</span>
-                              <span className="opacity-70 text-[10px]">({count})</span>
-                            </button>
-                          ))
-                        ) : (
-                          <span className="text-[11px] text-slate-500 italic px-2">
-                            Bấm "Mở đáp án" để hiện danh sách từ lọc
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            )}
-
-            {/* CARD 2: Interactive Transcript, AI Shadowing Score & High-Contrast Practice Switches */}
-            <div className="p-5 rounded-3xl bg-white border border-slate-200/90 shadow-sm space-y-4">
-              {/* AI Speech Scoring Result Banner (Inline inside Card 2) */}
+              {/* Inline Shadowing Result (Only shown right after mic attempt) */}
               {shadowResult && (
                 <div
-                  className={`p-3.5 rounded-2xl border space-y-1.5 animate-scale-up ${
+                  className={`p-3 rounded-2xl border space-y-1 animate-scale-up ${
                     shadowResult.accuracy >= 70
                       ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
                       : 'bg-amber-50 border-amber-200 text-amber-950'
@@ -2573,133 +2635,64 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-black flex items-center gap-1.5">
                       <CheckCircle2 className={`w-4 h-4 ${shadowResult.accuracy >= 70 ? 'text-emerald-600' : 'text-amber-600'}`} />
-                      <span>AI Chấm phát âm: {shadowResult.accuracy}%</span>
+                      <span>Phát âm: {shadowResult.accuracy}%</span>
                     </span>
-                    <button
-                      onClick={() => setShadowResult(null)}
-                      className="text-slate-500 hover:text-slate-800 text-xs font-bold cursor-pointer"
-                    >
+                    <button onClick={() => setShadowResult(null)} className="text-slate-500 hover:text-slate-800 text-xs font-bold cursor-pointer">
                       ✕
                     </button>
                   </div>
-                  <p className="text-xs text-slate-700 italic">
-                    Bạn vừa nói: "{shadowResult.transcript || 'Không nghe rõ'}"
-                  </p>
-                  <p className="text-xs font-semibold">
-                    {shadowResult.accuracy >= 70
-                      ? `🎉 Chuẩn mượt! Đã ghi nhận luyện tập cho "${activeExpression || currentShort.targetWord}".`
-                      : '💡 Thử bấm nút Nhại lại và đọc chậm, rõ trọng âm hơn nhé.'}
-                  </p>
+                  <p className="text-xs text-slate-700 italic">"{shadowResult.transcript || 'Không nghe rõ'}"</p>
                 </div>
               )}
 
-              <div className="flex items-center justify-between text-xs font-bold">
-                <span className="text-slate-800 flex items-center gap-1.5">
-                  <Layers className="w-4 h-4 text-teal-600" />
-                  <span>Kịch bản trích đoạn ({subtitles.length} câu)</span>
-                </span>
-                <span className="text-[11px] font-medium text-slate-500">
-                  Nhấp vào câu để tua • Nhấp vào từ để tra
-                </span>
-              </div>
+              {/* Bottom Section inside SAME Single Card: Compact Transcript (Click any line to seek) */}
+              <div className="pt-4 border-t border-slate-100 space-y-2.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-slate-700 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-teal-600" />
+                    <span>Kịch bản ({subtitles.length} câu)</span>
+                  </span>
+                  <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                    {isBlindMode && <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-bold">Nghe mù</span>}
+                    {isDrillMode && <span className="px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200 font-bold">Lặp 3x</span>}
+                    <span>Nhấp câu để tua</span>
+                  </div>
+                </div>
 
-              <div className="max-h-[240px] overflow-y-auto space-y-2 pr-1 scrollbar-thin">
-                {subtitles.map((sub, idx) => {
-                  const isActive = currentSubIndex === idx;
-                  return (
-                    <div
-                      key={sub.id || idx}
-                      onClick={() => seekToSubtitle(idx)}
-                      className={`p-3 rounded-2xl border transition-all cursor-pointer ${
-                        isActive
-                          ? 'bg-teal-50/70 border-teal-300 shadow-xs'
-                          : 'bg-slate-50/60 border-slate-200/70 hover:border-slate-300 hover:bg-slate-50'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
-                        <span className="font-mono font-bold text-teal-700">
-                          #{idx + 1} • {Math.floor(sub.start)}s - {Math.floor(sub.end)}s
-                        </span>
-                        {isActive && (
-                          <span className="px-2 py-0.5 rounded-full bg-teal-600 text-white font-bold text-[10px]">
-                            Đang phát
-                          </span>
+                <div className="max-h-[250px] overflow-y-auto space-y-1.5 pr-1 scrollbar-thin">
+                  {subtitles.map((sub, idx) => {
+                    const isActive = currentSubIndex === idx;
+                    return (
+                      <div
+                        key={sub.id || idx}
+                        onClick={() => seekToSubtitle(idx)}
+                        className={`px-3 py-2.5 rounded-2xl border transition-all cursor-pointer ${
+                          isActive
+                            ? 'bg-teal-50/70 border-teal-300'
+                            : 'bg-slate-50/50 border-transparent hover:border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <p className={`text-sm leading-relaxed ${isActive ? 'text-slate-900 font-bold' : 'text-slate-700 font-medium'}`}>
+                          {renderWords(sub.text, 'light')}
+                        </p>
+                        {subtitleMode !== 'en_only' && sub.translation && (
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {!isWordRevealed && (isBlindMode || feedMode === 'youglish') ? (
+                              <span className="text-amber-700 text-[11px] inline-flex items-center gap-1">
+                                <Lock className="w-3 h-3 text-amber-600 shrink-0" />
+                                <span>Mở đáp án để xem dịch</span>
+                              </span>
+                            ) : (
+                              sub.translation
+                            )}
+                          </p>
                         )}
                       </div>
-                      <p className={`text-sm leading-relaxed ${isActive ? 'text-slate-900 font-bold' : 'text-slate-700 font-medium'}`}>
-                        {renderWords(sub.text, 'light')}
-                      </p>
-                      {subtitleMode !== 'en_only' && (
-                        <p className="text-xs text-slate-500 mt-1">
-                          {!isWordRevealed && (isBlindMode || feedMode === 'youglish') ? (
-                            <span className="text-amber-700 font-medium text-[11px] inline-flex items-center gap-1">
-                              <Lock className="w-3 h-3 text-amber-600 shrink-0" />
-                              <span>Mở đáp án để xem bản dịch tiếng Việt</span>
-                            </span>
-                          ) : (
-                            sub.translation
-                          )}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* High-Contrast WCAG Learning Switches (Footer of Card 2) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsBlindMode(!isBlindMode)}
-                  className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between text-left ${
-                    isBlindMode
-                      ? 'bg-amber-50 border-amber-300 text-amber-950 shadow-xs'
-                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center gap-1.5 font-bold text-xs">
-                      {isBlindMode ? <EyeOff className="w-4 h-4 text-amber-600" /> : <Eye className="w-4 h-4 text-slate-500" />}
-                      <span>Nghe Mù (Cloze)</span>
-                    </div>
-                    <p className={`text-[11px] mt-0.5 ${isBlindMode ? 'text-amber-800' : 'text-slate-500'}`}>
-                      Ẩn cụm khóa để luyện phản xạ
-                    </p>
-                  </div>
-                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black ${
-                    isBlindMode ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-600'
-                  }`}>
-                    {isBlindMode ? 'BẬT' : 'TẮT'}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setIsDrillMode(!isDrillMode)}
-                  className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between text-left ${
-                    isDrillMode
-                      ? 'bg-teal-50 border-teal-300 text-teal-950 shadow-xs'
-                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center gap-1.5 font-bold text-xs">
-                      <Repeat className={`w-4 h-4 ${isDrillMode ? 'text-teal-600' : 'text-slate-500'}`} />
-                      <span>Lặp 3x (Drill)</span>
-                    </div>
-                    <p className={`text-[11px] mt-0.5 ${isDrillMode ? 'text-teal-800' : 'text-slate-500'}`}>
-                      Tự lặp lại câu hiện tại 3 lần
-                    </p>
-                  </div>
-                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black ${
-                    isDrillMode ? 'bg-teal-600 text-white' : 'bg-slate-200 text-slate-600'
-                  }`}>
-                    {isDrillMode ? 'BẬT' : 'TẮT'}
-                  </span>
-                </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
-
           </div>
 
         </div>

@@ -17,6 +17,7 @@ export interface QuizQuestion {
 export interface VideoLesson {
   id: string;
   youtubeId: string;
+  videoUrl?: string; // Optional direct MP4 URL (local public/reels/ or Cloudflare R2) for 0ms HTML5 <video> playback
   title: string;
   channel: string;
   channelAvatar?: string;
