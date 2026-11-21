@@ -96,6 +96,23 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
   if (!isOpen || !definition) return null;
 
   const isMultiWordPhrase = definition.word.trim().includes(' ');
+  const aiRealMeaning =
+    aiExplanation?.meaningVi &&
+    !/^cách diễn đạt "/i.test(aiExplanation.meaningVi.trim()) &&
+    aiExplanation.meaningVi.trim().toLowerCase() !== definition.word.trim().toLowerCase()
+      ? aiExplanation.meaningVi.trim()
+      : '';
+  const dictRealMeaning =
+    definition.translation &&
+    definition.translation.trim().toLowerCase() !== definition.word.trim().toLowerCase()
+      ? definition.translation.trim()
+      : '';
+  const resolvedMeaningVi = (!aiExplanation?.isFallback && aiRealMeaning) || dictRealMeaning || aiRealMeaning;
+  const hasRealEnglishDef =
+    Boolean(definition.definitionEn?.trim()) &&
+    !/^(?:từ vựng tiếng anh:|cụm từ tiếng anh:|meaning of "|expression\/phrase ")/i.test(
+      definition.definitionEn.trim()
+    );
 
   return (
     <div
@@ -150,19 +167,25 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
         {/* Translation Banner */}
         <div className="mt-4 p-3.5 rounded-2xl bg-teal-50/80 border border-teal-100/80">
           <p className="text-xs font-bold uppercase tracking-wider text-teal-700">Ý nghĩa tiếng Việt</p>
-          <p className="text-lg font-bold text-teal-950 mt-0.5">
-            {aiExplanation?.meaningVi || definition.translation}
-          </p>
+          {resolvedMeaningVi ? (
+            <p className="text-lg font-bold text-teal-950 mt-0.5">{resolvedMeaningVi}</p>
+          ) : (
+            <p className="text-sm font-medium text-amber-800 mt-1">
+              Chưa dịch được tự động — bấm nút AI bên dưới để dịch theo ngữ cảnh câu.
+            </p>
+          )}
         </div>
 
-        {/* Definition EN */}
+        {/* Definition EN (Only render when a real dictionary definition exists) */}
         <div className="mt-4 space-y-2">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Định nghĩa tiếng Anh</p>
-            <p className="text-sm text-slate-700 mt-0.5 leading-relaxed">
-              {definition.definitionEn}
-            </p>
-          </div>
+          {hasRealEnglishDef && (
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Định nghĩa tiếng Anh</p>
+              <p className="text-sm text-slate-700 mt-0.5 leading-relaxed">
+                {definition.definitionEn}
+              </p>
+            </div>
+          )}
 
           {/* Context / Example */}
           {(contextSentence || definition.exampleEn) && (
@@ -206,15 +229,29 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
               <div className="p-3.5 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 space-y-2 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="font-black text-indigo-900 flex items-center gap-1">
-                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" /> Phân tích AI theo ngữ cảnh
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" /> Phân tích theo ngữ cảnh
                   </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white text-indigo-700 border border-indigo-200">
-                    {aiExplanation.isFallback ? 'Offline Guide' : 'Live Gemini'}
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      aiExplanation.isFallback
+                        ? 'bg-amber-50 text-amber-800 border-amber-200'
+                        : 'bg-white text-indigo-700 border-indigo-200'
+                    }`}
+                  >
+                    {aiExplanation.isFallback ? 'Dịch trực tiếp' : 'Live Gemini'}
                   </span>
                 </div>
+                {aiExplanation.sentenceVi && (
+                  <p className="text-slate-800 bg-white/80 rounded-lg p-2 border border-indigo-100 leading-relaxed">
+                    <strong className="text-teal-800">Dịch cả câu:</strong> {aiExplanation.sentenceVi}
+                  </p>
+                )}
                 {aiExplanation.nuance && (
                   <p className="text-slate-700 leading-relaxed">
-                    <strong className="text-indigo-900">Sắc thái:</strong> {aiExplanation.nuance}
+                    <strong className="text-indigo-900">
+                      {aiExplanation.isFallback ? 'Ghi chú:' : 'Sắc thái:'}
+                    </strong>{' '}
+                    {aiExplanation.nuance}
                   </p>
                 )}
                 {aiExplanation.grammarNote && (
@@ -296,9 +333,11 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
         <div className="mt-5 pt-1">
           <button
             onClick={() => {
-              const enrichedDef: WordDefinition = aiExplanation?.meaningVi
-                ? { ...definition, translation: aiExplanation.meaningVi }
-                : definition;
+              const enrichedDef: WordDefinition = {
+                ...definition,
+                translation: resolvedMeaningVi || definition.translation || definition.word,
+                definitionEn: hasRealEnglishDef ? definition.definitionEn : ''
+              };
               onSaveWord(enrichedDef);
               if (currentStatus === 0) {
                 handleSetStatus(1);

@@ -73,11 +73,13 @@ export interface WordDefinition {
 export interface ContextExplanation {
   phrase: string;
   meaningVi: string;
+  sentenceVi?: string;
   nuance: string;
   grammarNote: string;
   examples: Array<{ en: string; vi: string }>;
   source?: string;
   isFallback?: boolean;
+  fallbackReason?: 'missing_gemini_key' | 'gemini_error' | string;
   quota?: {
     used: number;
     limit: number | null;

@@ -161,16 +161,29 @@ export async function lookupWord(rawWord: string): Promise<WordDefinition> {
     if (res.ok) {
       const data = await res.json();
       if (data && data.word) {
+        const rawTrans = typeof data.translation === 'string' ? data.translation.trim() : '';
+        const hasRealTranslation =
+          Boolean(rawTrans) && rawTrans.toLowerCase() !== cleanWord.toLowerCase();
+        const rawDef = typeof data.definitionEn === 'string' ? data.definitionEn.trim() : '';
+        const isPlaceholderDef =
+          !rawDef ||
+          /^từ vựng tiếng anh:/i.test(rawDef) ||
+          /^cụm từ tiếng anh:/i.test(rawDef) ||
+          /^meaning of "/i.test(rawDef) ||
+          /^expression\/phrase "/i.test(rawDef);
+
         const entry: WordDefinition = {
           word: data.word,
           phonetic: data.phonetic || (isMultiWord ? '' : `/${cleanWord}/`),
-          partOfSpeech: data.partOfSpeech || (isMultiWord ? 'phrase' : 'vocabulary'),
-          translation: data.translation || cleanWord,
-          definitionEn: data.definitionEn || `Meaning of "${cleanWord}"`,
+          partOfSpeech: data.partOfSpeech || (isMultiWord ? 'cụm từ (phrase)' : 'vocabulary'),
+          translation: hasRealTranslation ? rawTrans : '',
+          definitionEn: isPlaceholderDef ? '' : rawDef,
           exampleEn: data.exampleEn || '',
           synonyms: Array.isArray(data.synonyms) && data.synonyms.length > 0 ? data.synonyms : undefined
         };
-        clientWordCache.set(cleanWord, entry);
+        if (hasRealTranslation) {
+          clientWordCache.set(cleanWord, entry);
+        }
         return entry;
       }
     }
@@ -178,16 +191,14 @@ export async function lookupWord(rawWord: string): Promise<WordDefinition> {
     console.warn('[Dictionary] Backend lookup unavailable, falling back to offline entry:', err);
   }
 
-  // Fallback if network offline
+  // Honest offline fallback (never pretend English word is its own Vietnamese translation)
   return {
     word: cleanWord,
     phonetic: isMultiWord ? '' : `/${cleanWord}/`,
-    partOfSpeech: isMultiWord ? 'phrase' : 'từ vựng (vocabulary)',
-    translation: cleanWord,
-    definitionEn: isMultiWord
-      ? `Cụm từ tiếng Anh: "${cleanWord}"`
-      : `Từ vựng tiếng Anh: "${cleanWord}"`,
-    exampleEn: `Tra từ điển trực tiếp trong bài học.`
+    partOfSpeech: isMultiWord ? 'cụm từ (phrase)' : 'từ vựng (vocabulary)',
+    translation: '',
+    definitionEn: '',
+    exampleEn: ''
   };
 }
 

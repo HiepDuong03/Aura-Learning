@@ -127,28 +127,36 @@ function generateFallbackRoleplay(personaId, userMessage) {
   };
 }
 
-function generateFallbackExplanation({ phrase, sentence, cachedTranslation }) {
-  const isPhrase = phrase.includes(' ');
-  const meaningVi = cachedTranslation || `Cách diễn đạt "${phrase}" trong câu ngữ cảnh`;
+export function isUsableViTranslation(sourceEn, candidateVi) {
+  const src = String(sourceEn || '').trim().toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ');
+  const dst = String(candidateVi || '').trim();
+  if (!dst) return false;
+  const dstNorm = dst.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ');
+  if (src && dstNorm === src) return false;
+  return true;
+}
+
+function generateFallbackExplanation({ phrase, sentence, cachedTranslation, sentenceTranslation, fallbackReason }) {
+  const cleanMeaning = isUsableViTranslation(phrase, cachedTranslation) ? String(cachedTranslation).trim() : '';
+  const cleanSentenceVi = isUsableViTranslation(sentence, sentenceTranslation)
+    ? String(sentenceTranslation).trim()
+    : '';
+  const reasonNote =
+    fallbackReason === 'missing_gemini_key'
+      ? 'Máy chủ chưa gắn GEMINI_API_KEY nên chưa phân tích được sắc thái sâu — đang hiển thị bản dịch trực tiếp.'
+      : 'Dịch vụ AI Gemini tạm thời bận — đang hiển thị bản dịch trực tiếp theo câu.';
+
   return {
     phrase,
-    meaningVi,
-    nuance: isPhrase
-      ? `Đây là cụm từ/diễn đạt nhiều từ trong tiếng Anh. Hãy ghi nhớ trọn cụm "${phrase}" thay vì dịch từng từ đơn lẻ.`
-      : `Từ "${phrase}" xuất hiện trong ngữ cảnh "${sentence || 'bài học'}". Hãy chú ý từ loại và cách kết hợp với các từ xung quanh.`,
-    grammarNote: isPhrase
-      ? `Thường dùng nguyên cụm "${phrase}" trong hội thoại tự nhiên.`
-      : `Hãy đọc lại cả câu để nhớ giới từ hoặc thì đi kèm với "${phrase}".`,
-    examples: [
-      {
-        en: sentence || `We often use "${phrase}" in everyday English.`,
-        vi: `Ngữ cảnh xuất hiện thực tế trong bài học.`
-      },
-      {
-        en: `Try practicing "${phrase}" aloud three times to lock it into memory.`,
-        vi: `Hãy đọc to "${phrase}" 3 lần để ghi nhớ vào trí nhớ dài hạn.`
-      }
-    ]
+    meaningVi: cleanMeaning,
+    sentenceVi: cleanSentenceVi,
+    nuance: reasonNote,
+    grammarNote: '',
+    examples:
+      sentence && cleanSentenceVi
+        ? [{ en: sentence, vi: cleanSentenceVi }]
+        : [],
+    fallbackReason: fallbackReason || 'gemini_error'
   };
 }
 
@@ -311,47 +319,120 @@ export function generateFallbackScenario(topic, level = 'B1') {
 }
 
 async function callGeminiJson(apiKey, prompt, timeoutMs = 14000) {
-  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const candidateModels = Array.from(
+    new Set([process.env.GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-2.0-flash'].filter(Boolean))
+  );
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.65
+  let lastErr = null;
+  for (const model of candidateModels) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.45
+          }
+        })
+      });
+      if (!res.ok) {
+        lastErr = new Error(`Gemini (${model}) HTTP ${res.status}`);
+        // Retry next model only on 404/429/503
+        if (res.status === 404 || res.status === 429 || res.status === 503) {
+          continue;
         }
-      })
-    });
-    if (!res.ok) {
-      throw new Error(`Gemini HTTP ${res.status}`);
+        throw lastErr;
+      }
+      const data = await res.json();
+      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      return JSON.parse(rawText);
+    } catch (err) {
+      lastErr = err;
+    } finally {
+      clearTimeout(timeout);
     }
-    const data = await res.json();
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    return JSON.parse(rawText);
-  } finally {
-    clearTimeout(timeout);
   }
+  throw lastErr || new Error('Gemini unavailable');
+}
+
+export async function translateEnToVi(text, { fetchImpl = fetch, timeoutMs = 4500 } = {}) {
+  const clean = String(text || '').trim();
+  if (!clean) return { translation: '', partOfSpeech: '', synonyms: [], provider: 'none' };
+
+  // Provider 1: Google Translate gtx endpoint
+  const ctrl1 = new AbortController();
+  const t1 = setTimeout(() => ctrl1.abort(), timeoutMs);
+  try {
+    const res = await fetchImpl(
+      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=vi&dt=t&dt=bd&q=${encodeURIComponent(clean)}`,
+      { signal: ctrl1.signal }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      const translation = Array.isArray(data?.[0]) ? data[0].map((item) => item?.[0] || '').join('').trim() : '';
+      let partOfSpeech = '';
+      const synonyms = [];
+      if (Array.isArray(data?.[1]) && data[1].length > 0) {
+        partOfSpeech = data[1][0]?.[0] || '';
+        if (Array.isArray(data[1][0]?.[1])) {
+          synonyms.push(...data[1][0][1].slice(0, 5));
+        }
+      }
+      if (isUsableViTranslation(clean, translation)) {
+        return { translation, partOfSpeech, synonyms, provider: 'google_gtx' };
+      }
+    }
+  } catch {
+    // fall through to Provider 2
+  } finally {
+    clearTimeout(t1);
+  }
+
+  // Provider 2: MyMemory Free Translation API (reliable from cloud datacenter IPs)
+  const ctrl2 = new AbortController();
+  const t2 = setTimeout(() => ctrl2.abort(), timeoutMs);
+  try {
+    const res = await fetchImpl(
+      `https://api.mymemory.translated.net/get?q=${encodeURIComponent(clean)}&langpair=en|vi`,
+      { signal: ctrl2.signal }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      const translatedText = String(data?.responseData?.translatedText || '').trim();
+      if (
+        translatedText &&
+        !/MYMEMORY WARNING/i.test(translatedText) &&
+        isUsableViTranslation(clean, translatedText)
+      ) {
+        return { translation: translatedText, partOfSpeech: '', synonyms: [], provider: 'mymemory' };
+      }
+    }
+  } catch {
+    // fall through
+  } finally {
+    clearTimeout(t2);
+  }
+
+  return { translation: '', partOfSpeech: '', synonyms: [], provider: 'none' };
 }
 
 async function defaultFetchDictionaryEntry(cleanQuery) {
   const isPhrase = cleanQuery.includes(' ');
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3500);
+  const timeout = setTimeout(() => controller.abort(), 5000);
   try {
-    const translatePromise = fetch(
-      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=vi&dt=t&dt=bd&q=${encodeURIComponent(cleanQuery)}`,
-      { signal: controller.signal }
-    );
+    const translatePromise = translateEnToVi(cleanQuery, { timeoutMs: 4000 });
     const dictPromise = isPhrase
       ? Promise.resolve(null)
-      : fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(cleanQuery)}`, { signal: controller.signal });
+      : fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(cleanQuery)}`, {
+          signal: controller.signal
+        });
 
     const [translateRes, dictRes] = await Promise.allSettled([translatePromise, dictPromise]);
 
@@ -359,14 +440,13 @@ async function defaultFetchDictionaryEntry(cleanQuery) {
     let partOfSpeech = isPhrase ? 'cụm từ (phrase)' : 'vocabulary';
     const synonyms = [];
 
-    if (translateRes.status === 'fulfilled' && translateRes.value?.ok) {
-      const data = await translateRes.value.json();
-      translation = Array.isArray(data?.[0]) ? data[0].map(item => item?.[0] || '').join('').trim() : '';
-      if (!isPhrase && Array.isArray(data?.[1]) && data[1].length > 0) {
-        partOfSpeech = data[1][0]?.[0] || 'vocabulary';
-        if (Array.isArray(data[1][0]?.[1])) {
-          synonyms.push(...data[1][0][1].slice(0, 5));
-        }
+    if (translateRes.status === 'fulfilled' && translateRes.value?.translation) {
+      translation = translateRes.value.translation;
+      if (!isPhrase && translateRes.value.partOfSpeech) {
+        partOfSpeech = translateRes.value.partOfSpeech;
+      }
+      if (!isPhrase && Array.isArray(translateRes.value.synonyms)) {
+        synonyms.push(...translateRes.value.synonyms);
       }
     }
 
@@ -378,7 +458,7 @@ async function defaultFetchDictionaryEntry(cleanQuery) {
       const dictJson = await dictRes.value.json();
       const first = Array.isArray(dictJson) ? dictJson[0] : null;
       if (first) {
-        phonetic = first.phonetic || first.phonetics?.find(p => p.text)?.text || phonetic;
+        phonetic = first.phonetic || first.phonetics?.find((p) => p.text)?.text || phonetic;
         const firstMeaning = first.meanings?.[0];
         if (firstMeaning) {
           if (partOfSpeech === 'vocabulary' && firstMeaning.partOfSpeech) {
@@ -393,15 +473,15 @@ async function defaultFetchDictionaryEntry(cleanQuery) {
       }
     }
 
-    if (!translation) return null;
+    if (!translation && !definitionEn) return null;
 
     return {
       word: cleanQuery,
       phonetic,
       partOfSpeech: POS_DISPLAY_MAP[partOfSpeech] || partOfSpeech,
-      translation,
-      definitionEn: definitionEn || (isPhrase ? `Expression/Phrase "${cleanQuery}": ${translation}` : `Meaning of "${cleanQuery}": ${translation}`),
-      exampleEn: exampleEn || (synonyms.length > 0 ? `Synonyms: ${synonyms.join(', ')}` : `Vocabulary from lesson.`),
+      translation: translation || cleanQuery,
+      definitionEn: definitionEn || '',
+      exampleEn: exampleEn || '',
       synonyms
     };
   } finally {
@@ -479,13 +559,13 @@ export async function handlePublicDictRoutes({ req, res, pathname, db, parseJson
       }
 
       const cached = await db.findMasterWord(normalized);
-      if (cached && cached.defaultTranslationVi) {
+      if (cached && isUsableViTranslation(normalized, cached.defaultTranslationVi)) {
         sendJson(req, res, 200, {
           word: cached.lemma,
           phonetic: cached.phonetic || (normalized.includes(' ') ? '' : `/${cached.lemma}/`),
           partOfSpeech: cached.partOfSpeech || (normalized.includes(' ') ? 'cụm từ (phrase)' : 'vocabulary'),
           translation: cached.defaultTranslationVi,
-          definitionEn: cached.definitionEn || `Meaning of "${cached.lemma}": ${cached.defaultTranslationVi}`,
+          definitionEn: cached.definitionEn || '',
           exampleEn: cached.exampleEn || '',
           synonyms: cached.synonyms && cached.synonyms.length > 0 ? cached.synonyms : undefined,
           source: 'db_cache'
@@ -499,15 +579,17 @@ export async function handlePublicDictRoutes({ req, res, pathname, db, parseJson
           word: normalized,
           phonetic: normalized.includes(' ') ? '' : `/${normalized}/`,
           partOfSpeech: normalized.includes(' ') ? 'cụm từ (phrase)' : 'từ vựng (vocabulary)',
-          translation: normalized,
-          definitionEn: `Từ vựng tiếng Anh: "${normalized}"`,
+          translation: '',
+          definitionEn: '',
           exampleEn: '',
           source: 'fallback'
         });
         return true;
       }
 
-      await db.upsertMasterWord(fetched);
+      if (isUsableViTranslation(normalized, fetched.translation)) {
+        await db.upsertMasterWord(fetched);
+      }
       sendJson(req, res, 200, { ...fetched, source: 'upstream' });
       return true;
     } catch (err) {
@@ -659,14 +741,40 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
         return true;
       }
 
-      const quota = await consumeAiQuota({ db, currentUser, req, res, sendJson });
-      if (!quota) return true;
+      // Check quota without charging yet (never burn user's daily quota when falling back!)
+      const role = currentUser.role || 'user';
+      if (role === 'guest') {
+        sendJson(req, res, 403, { error: 'Vui lòng đăng nhập để sử dụng tính năng AI.' });
+        return true;
+      }
+      const dateKey = new Date().toISOString().slice(0, 10);
+      const isUnlimited = role === 'pro' || role === 'admin';
+      const usedBefore = await db.getAiUsageCount(currentUser.id, dateKey);
+      if (!isUnlimited && usedBefore >= MAX_USER_DAILY_AI_TURNS) {
+        sendJson(req, res, 429, {
+          error: `Bạn đã dùng hết ${MAX_USER_DAILY_AI_TURNS} lượt AI miễn phí hôm nay. Nâng cấp Pro để sử dụng không giới hạn!`,
+          quota: { used: usedBefore, limit: MAX_USER_DAILY_AI_TURNS, unlimited: false }
+        });
+        return true;
+      }
+
+      const chargeQuota = async () => {
+        const usedAfter = await db.incrementAiUsage(currentUser.id, dateKey);
+        return {
+          used: usedAfter,
+          limit: isUnlimited ? null : MAX_USER_DAILY_AI_TURNS,
+          unlimited: isUnlimited
+        };
+      };
 
       if (options.aiExplainResponder) {
         const result = await options.aiExplainResponder({ phrase, sentence, videoTitle });
+        const quota = await chargeQuota();
         sendJson(req, res, 200, { phrase, ...result, source: 'gemini', isFallback: false, quota });
         return true;
       }
+
+      let fallbackReason = apiKey ? 'gemini_error' : 'missing_gemini_key';
 
       if (apiKey) {
         try {
@@ -683,8 +791,9 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
           ].filter(Boolean).join('\n');
           const parsed = await callGeminiJson(apiKey, prompt);
           const examples = Array.isArray(parsed.examples)
-            ? parsed.examples.slice(0, 2).map(ex => ({ en: String(ex?.en || ''), vi: String(ex?.vi || '') })).filter(ex => ex.en)
+            ? parsed.examples.slice(0, 2).map((ex) => ({ en: String(ex?.en || ''), vi: String(ex?.vi || '') })).filter((ex) => ex.en)
             : [];
+          const quota = await chargeQuota();
           sendJson(req, res, 200, {
             phrase,
             meaningVi: String(parsed.meaningVi || '').trim() || phrase,
@@ -697,13 +806,39 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
           });
           return true;
         } catch (aiErr) {
-          console.warn('[AI Explain] Gemini call failed, using fallback:', aiErr.message);
+          console.warn('[AI Explain] Gemini call failed, using real translation fallback:', aiErr.message);
+          fallbackReason = 'gemini_error';
         }
       }
 
       const cached = await db.findMasterWord(phrase);
-      const fallback = generateFallbackExplanation({ phrase, sentence, cachedTranslation: cached?.defaultTranslationVi });
-      sendJson(req, res, 200, { ...fallback, source: 'offline-fallback', isFallback: true, quota });
+      const cachedVi = isUsableViTranslation(phrase, cached?.defaultTranslationVi)
+        ? cached.defaultTranslationVi
+        : '';
+      const [phraseTr, sentenceTr] = await Promise.all([
+        cachedVi ? Promise.resolve({ translation: cachedVi }) : translateEnToVi(phrase, { timeoutMs: 4000 }),
+        sentence && sentence.toLowerCase() !== phrase.toLowerCase()
+          ? translateEnToVi(sentence, { timeoutMs: 4000 })
+          : Promise.resolve({ translation: '' })
+      ]);
+
+      const fallback = generateFallbackExplanation({
+        phrase,
+        sentence,
+        cachedTranslation: phraseTr?.translation || cachedVi,
+        sentenceTranslation: sentenceTr?.translation || '',
+        fallbackReason
+      });
+      sendJson(req, res, 200, {
+        ...fallback,
+        source: 'translate-fallback',
+        isFallback: true,
+        quota: {
+          used: usedBefore,
+          limit: isUnlimited ? null : MAX_USER_DAILY_AI_TURNS,
+          unlimited: isUnlimited
+        }
+      });
       return true;
     } catch (err) {
       sendJson(req, res, 500, { error: err.message || 'Lỗi giải thích ngữ cảnh AI.' });
