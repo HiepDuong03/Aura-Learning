@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  buildForYouReelsFeed,
   buildMicroQuizForReels,
   buildThematicReelsFeed,
   mineAmericanExpressionsFromLessons
@@ -94,5 +95,45 @@ describe('americanExpressionMiner', () => {
     expect(quiz?.options[quiz.correctIndex]).toBe(recent[3].expressionMeaningVi);
     // All 3 options must be distinct
     expect(new Set(quiz?.options).size).toBe(3);
+  });
+
+  it('pushes watched Shorts to the end and shuffles unwatched Shorts deterministically per session', () => {
+    const curated = AMERICAN_REELS_CORPUS.map(mapCuratedReelToVideoLesson);
+    const watched = new Set([curated[0].id, curated[1].youtubeId]);
+
+    const feedSeedA1 = buildForYouReelsFeed(curated, { watchedIds: watched, sessionSeed: 101 });
+    const feedSeedA2 = buildForYouReelsFeed(curated, { watchedIds: watched, sessionSeed: 101 });
+    const feedSeedB = buildForYouReelsFeed(curated, { watchedIds: watched, sessionSeed: 99999 });
+
+    expect(feedSeedA1.length).toBe(curated.length);
+    // Deterministic for same seed (prevents mid-watch jumping on re-renders)
+    expect(feedSeedA1.map((r) => r.id)).toEqual(feedSeedA2.map((r) => r.id));
+    // Different session seeds produce a fresh TikTok order
+    expect(feedSeedA1.map((r) => r.id)).not.toEqual(feedSeedB.map((r) => r.id));
+    // The 2 watched items must be at the very end
+    const tailIds = new Set(feedSeedA1.slice(-2).map((r) => r.id));
+    expect(tailIds.has(curated[0].id)).toBe(true);
+    expect(tailIds.has(curated[1].id)).toBe(true);
+  });
+
+  it('interleaves SRS vocabulary review clips every 3 Shorts inside the For You feed', () => {
+    const curated = AMERICAN_REELS_CORPUS.map(mapCuratedReelToVideoLesson);
+    const srsClips: VideoLesson[] = [
+      { ...sampleCustomLesson, id: 'srs-word-pastry', youtubeId: 'pastryVid01', targetWord: 'Pastry', expression: 'Pastry' },
+      { ...sampleCustomLesson, id: 'srs-word-complicated', youtubeId: 'compVid0002', targetWord: 'Complicated', expression: 'Complicated' }
+    ];
+
+    const blended = buildForYouReelsFeed(curated, {
+      watchedIds: new Set(),
+      sessionSeed: 42,
+      srsReviewClips: srsClips,
+      srsEveryN: 3
+    });
+
+    expect(blended.length).toBe(curated.length + 2);
+    expect(blended[3].id).toBe('srs-word-pastry');
+    expect(blended[3].isSrsReviewClip).toBe(true);
+    expect(blended[7].id).toBe('srs-word-complicated');
+    expect(blended[7].isSrsReviewClip).toBe(true);
   });
 });

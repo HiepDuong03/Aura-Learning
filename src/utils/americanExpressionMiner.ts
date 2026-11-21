@@ -438,6 +438,118 @@ export function buildThematicReelsFeed(
   return result;
 }
 
+export interface ForYouFeedOptions {
+  watchedIds?: Set<string>;
+  sessionSeed?: number;
+  srsReviewClips?: VideoLesson[];
+  srsEveryN?: number;
+}
+
+/**
+ * Deterministic seeded Fisher-Yates shuffle (Mulberry32) so each session gets a
+ * fresh TikTok-like order without jumping on React re-renders.
+ */
+function seededShuffle<T>(items: T[], seed: number): T[] {
+  const arr = [...items];
+  let s = (seed >>> 0) || 1;
+  const nextRand = () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(nextRand() * (i + 1));
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+  return arr;
+}
+
+/**
+ * TikTok "For You" + SRS Vocabulary Blending Engine:
+ * 1. Always prioritizes unwatched Shorts first (pushes already-seen videos to the tail).
+ * 2. Shuffles deterministically per session so reopening the app never repeats clip #1.
+ * 3. Interleaves user's own SRS vocabulary review clips every `srsEveryN` videos so
+ *    passive scrolling actively reinforces the words the user is studying.
+ */
+export function buildForYouReelsFeed(
+  baseFeed: VideoLesson[],
+  options: ForYouFeedOptions = {}
+): VideoLesson[] {
+  const {
+    watchedIds = new Set<string>(),
+    sessionSeed = 1,
+    srsReviewClips = [],
+    srsEveryN = 3
+  } = options;
+
+  const isWatched = (item: VideoLesson): boolean =>
+    watchedIds.has(item.id) || Boolean(item.youtubeId && watchedIds.has(item.youtubeId));
+
+  const unwatched: VideoLesson[] = [];
+  const watched: VideoLesson[] = [];
+  for (const item of baseFeed) {
+    if (isWatched(item)) {
+      watched.push(item);
+    } else {
+      unwatched.push(item);
+    }
+  }
+
+  const orderedBase = [
+    ...seededShuffle(unwatched, sessionSeed),
+    ...seededShuffle(watched, sessionSeed + 997)
+  ];
+
+  const validSrs = srsReviewClips.filter((clip) => Boolean(clip && clip.id && clip.youtubeId));
+  if (validSrs.length === 0 || srsEveryN <= 0) {
+    return orderedBase;
+  }
+
+  const orderedSrs = [
+    ...validSrs.filter((c) => !isWatched(c)),
+    ...validSrs.filter((c) => isWatched(c))
+  ];
+
+  const merged: VideoLesson[] = [];
+  const usedIds = new Set<string>();
+  let srsCursor = 0;
+  let regularSinceLastSrs = 0;
+
+  for (const item of orderedBase) {
+    if (usedIds.has(item.id)) continue;
+    merged.push(item);
+    usedIds.add(item.id);
+    regularSinceLastSrs += 1;
+
+    if (regularSinceLastSrs >= srsEveryN && srsCursor < orderedSrs.length) {
+      while (srsCursor < orderedSrs.length && usedIds.has(orderedSrs[srsCursor].id)) {
+        srsCursor += 1;
+      }
+      if (srsCursor < orderedSrs.length) {
+        const srsItem = orderedSrs[srsCursor];
+        merged.push({ ...srsItem, isSrsReviewClip: true });
+        usedIds.add(srsItem.id);
+        srsCursor += 1;
+        regularSinceLastSrs = 0;
+      }
+    }
+  }
+
+  // If the base feed was tiny, still surface remaining SRS clips at the end
+  while (srsCursor < orderedSrs.length) {
+    const srsItem = orderedSrs[srsCursor];
+    srsCursor += 1;
+    if (usedIds.has(srsItem.id)) continue;
+    merged.push({ ...srsItem, isSrsReviewClip: true });
+    usedIds.add(srsItem.id);
+  }
+
+  return merged;
+}
+
 export interface MicroQuizQuestion {
   id: string;
   reelId: string;

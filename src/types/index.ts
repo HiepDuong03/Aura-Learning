@@ -46,6 +46,8 @@ export interface VideoLesson {
   americanUsageNote?: string;
   reelCategory?: ReelCategory;
   register?: ReelRegister;
+  srsWordId?: string;
+  isSrsReviewClip?: boolean;
 }
 
 export type ReelCategory = 'daily_life' | 'work_talk' | 'my_videos';

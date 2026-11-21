@@ -3,8 +3,11 @@ import {
   DEFAULT_REEL_CHANNELS,
   extractExpressionFromTitle,
   extractShortVideoId,
+  fetchYouTubeApiShorts,
   isValidChannelId,
-  parseYouTubeRssShorts
+  parseYouTubeApiSearchItems,
+  parseYouTubeRssShorts,
+  sanitizeVocabWords
 } from '../../../api/reels-feed.js';
 
 const SAMPLE_RSS_XML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -65,5 +68,52 @@ describe('reels-feed RSS parser & validators', () => {
   it('extracts clean expression hints from Short titles', () => {
     expect(extractExpressionFromTitle('What Does "Circle Back" Really Mean? | Business English #Shorts')).toBe('Circle Back');
     expect(extractExpressionFromTitle('How Americans Say It Fast #shorts #english')).toBe('How Americans Say It Fast');
+  });
+
+  it('sanitizes vocabulary words for YouTube Data API queries (deduped, capped at 5)', () => {
+    expect(
+      sanitizeVocabWords(' Pastry, complicated!, pastry, a, vibration, circle back, touch base, wrap up ')
+    ).toEqual(['Pastry', 'complicated', 'vibration', 'circle back', 'touch base']);
+  });
+
+  it('parses YouTube Data API v3 search items and tags matched vocabulary words', () => {
+    const sampleApiPayload = {
+      nextPageToken: 'CAUQAA',
+      items: [
+        {
+          id: { videoId: 'AbCdEfGhI12' },
+          snippet: {
+            title: 'How to Use &quot;Complicated&quot; Naturally #shorts',
+            channelTitle: 'Speak English US',
+            channelId: 'UCAmXZMMytG4OQ6bz_Pm9KuA',
+            publishedAt: '2026-11-20T10:00:00Z',
+            thumbnails: { high: { url: 'https://i.ytimg.com/vi/AbCdEfGhI12/hqdefault.jpg' } }
+          }
+        },
+        {
+          id: { videoId: 'invalid' },
+          snippet: { title: 'Bad ID should be skipped' }
+        }
+      ]
+    };
+
+    const parsed = parseYouTubeApiSearchItems(sampleApiPayload, {
+      category: 'daily_life',
+      matchedVocabWord: 'Complicated'
+    });
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].youtubeId).toBe('AbCdEfGhI12');
+    expect(parsed[0].expression).toBe('Complicated');
+    expect(parsed[0].matchedVocabWord).toBe('Complicated');
+    expect(parsed[0].source).toBe('youtube_api_v3');
+  });
+
+  it('gracefully reports missing_key when YOUTUBE_API_KEY is not configured', async () => {
+    const res = await fetchYouTubeApiShorts({ apiKey: '' });
+    expect(res.ok).toBe(false);
+    expect(res.reason).toBe('missing_key');
+    expect(res.items).toEqual([]);
+    expect(res.nextPageToken).toBeNull();
   });
 });

@@ -62,6 +62,7 @@ import {
 } from '../../utils/shortsPlayerPool';
 import { decodeConnectedSpeech } from '../../utils/connectedSpeechDecoder';
 import {
+  buildForYouReelsFeed,
   buildMicroQuizForReels,
   buildThematicReelsFeed,
   MicroQuizQuestion,
@@ -206,10 +207,31 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   }
   const [liveRssReels, setLiveRssReels] = useState<VideoLesson[]>([]);
   const [isRefreshingFeed, setIsRefreshingFeed] = useState<boolean>(false);
+  const [isLoadingMoreFeed, setIsLoadingMoreFeed] = useState<boolean>(false);
+  const [nextPageToken, setNextPageToken] = useState<string | null>(null);
+  const [feedSource, setFeedSource] = useState<'youtube_api_v3' | 'rss_fallback'>('rss_fallback');
+  const [queryIndex, setQueryIndex] = useState<number>(0);
+  const [sessionSeed, setSessionSeed] = useState<number>(() => (Date.now() % 1000000) + 17);
   const [showAddSourcePanel, setShowAddSourcePanel] = useState<boolean>(false);
   const [sourceInput, setSourceInput] = useState<string>('');
   const [isResolvingSource, setIsResolvingSource] = useState<boolean>(false);
   const [sourceError, setSourceError] = useState<string | null>(null);
+
+  const loadWatchedIdsForProfile = (profileId: string): string[] => {
+    try {
+      const raw = localStorage.getItem(`4you_shorts_watched_${profileId}`);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
+    } catch {
+      return [];
+    }
+  };
+
+  // Persistent watched history per account + frozen snapshot for current session so active video never jumps mid-watch
+  const [watchedIds, setWatchedIds] = useState<string[]>(() => loadWatchedIdsForProfile(activeProfileId));
+  const [sessionWatchedSnapshot, setSessionWatchedSnapshot] = useState<string[]>(() =>
+    loadWatchedIdsForProfile(activeProfileId)
+  );
 
   const [followedChannels, setFollowedChannels] = useState<FollowedReelChannel[]>(() => {
     try {
@@ -333,7 +355,20 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     } catch {
       setCustomAddedShorts([]);
     }
+    const profileWatched = loadWatchedIdsForProfile(activeProfileId);
+    setWatchedIds(profileWatched);
+    setSessionWatchedSnapshot(profileWatched);
+    setSessionSeed((Date.now() % 1000000) + 29);
   }, [activeProfileId]);
+
+  useEffect(() => {
+    if (lastLoadedProfileIdRef.current !== activeProfileId) return;
+    try {
+      localStorage.setItem(`4you_shorts_watched_${activeProfileId}`, JSON.stringify(watchedIds.slice(-500)));
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [watchedIds, activeProfileId]);
 
   // Persist user-followed YouTube channels & custom-added Shorts strictly for the active profile
   useEffect(() => {
@@ -354,77 +389,172 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     }
   }, [customAddedShorts, activeProfileId]);
 
-  // Fetch auto-updating live YouTube Shorts feed from official RSS via /api/reels/feed
-  const loadLiveRssFeed = useCallback(async (forceRefresh = false, showToastOnDone = false) => {
-    setIsRefreshingFeed(true);
-    try {
-      const customChannelIds = followedChannels.map((c) => c.channelId).filter(Boolean);
-      const params = new URLSearchParams();
-      if (forceRefresh) params.set('refresh', '1');
-      if (customChannelIds.length > 0) params.set('channels', customChannelIds.join(','));
-      const query = params.toString();
-      const res = await fetch(`/api/reels/feed${query ? `?${query}` : ''}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      if (!Array.isArray(data?.reels)) return;
+  // Prioritized due/saved words from user's Word Vault for SRS-blended Shorts discovery
+  const priorityVocabWordsKey = useMemo(() => {
+    const now = Date.now();
+    const sorted = [...savedWords]
+      .filter((w) => w?.word && w.word.trim().length >= 2)
+      .sort((a, b) => {
+        const aDue = (a.dueAt || 0) <= now ? 0 : 1;
+        const bDue = (b.dueAt || 0) <= now ? 0 : 1;
+        if (aDue !== bDue) return aDue - bDue;
+        return (a.dueAt || 0) - (b.dueAt || 0);
+      });
+    return sorted
+      .slice(0, 3)
+      .map((w) => w.word.trim())
+      .join(',');
+  }, [savedWords]);
 
-      const mapped: VideoLesson[] = data.reels
-        .filter((item: unknown): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
-        .map((item: Record<string, unknown>) => {
-          const youtubeId = String(item.youtubeId || '');
-          const title = String(item.title || 'Real American Short');
-          const channel = String(item.channel || 'American English');
-          const expression = String(item.expression || title);
-          const category =
-            item.reelCategory === 'work_talk' || item.reelCategory === 'my_videos'
-              ? item.reelCategory
-              : 'daily_life';
-          const register =
-            item.register === 'workplace_us' || item.register === 'everyday'
-              ? item.register
-              : 'casual_us';
-          const level = item.level === 'A2' || item.level === 'B2' ? item.level : 'B1';
+  const savedWordsLookupRef = useRef<SavedWord[]>(savedWords);
+  useEffect(() => {
+    savedWordsLookupRef.current = savedWords;
+  }, [savedWords]);
 
-          return {
-            id: `rss-short-${youtubeId}`,
-            youtubeId,
-            title,
-            channel,
-            thumbnail: `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`,
-            level,
-            topic: category === 'work_talk' ? 'Công sở Mỹ' : category === 'my_videos' ? 'Kênh bạn theo dõi' : 'Đời sống Mỹ',
-            duration: '00:55',
-            durationSec: 55,
-            views: 'Live RSS',
-            description: `Shorts dọc 9:16 mới nhất từ ${channel} — phụ đề & dịch tiếng Việt tự động nạp khi xem.`,
-            subtitles: [],
-            quizzes: [],
-            isShort: true,
-            isCustom: category === 'my_videos',
-            startSeconds: 0,
-            endSeconds: 59,
-            targetWord: expression,
-            sourceLessonTitle: title,
-            expression,
-            expressionMeaningVi: '',
-            americanUsageNote: `Clip Shorts dọc 9:16 tự động cập nhật từ kênh ${channel}. Nhấn vào bất kỳ từ nào trong phụ đề để tra & lưu FSRS-6.`,
-            reelCategory: category,
-            register
-          } as VideoLesson;
-        });
-
-      setLiveRssReels(mapped);
-      if (showToastOnDone) {
-        toast.success(`Đã cập nhật ${mapped.length} Shorts dọc 9:16 mới nhất từ YouTube!`);
+  // Fetch auto-updating live YouTube Shorts feed (YouTube Data API v3 infinite scroll + RSS fallback + Vocab Shorts)
+  const loadLiveRssFeed = useCallback(
+    async (
+      forceRefresh = false,
+      showToastOnDone = false,
+      pageTokenOverride?: string,
+      append = false,
+      nextQueryIdx?: number
+    ) => {
+      if (append) {
+        setIsLoadingMoreFeed(true);
+      } else {
+        setIsRefreshingFeed(true);
       }
-    } catch {
-      if (showToastOnDone) {
-        toast.error('Không thể làm mới feed lúc này — đang dùng kho Shorts dự phòng.');
+      try {
+        const customChannelIds = followedChannels.map((c) => c.channelId).filter(Boolean);
+        const params = new URLSearchParams();
+        if (forceRefresh) params.set('refresh', '1');
+        if (customChannelIds.length > 0) params.set('channels', customChannelIds.join(','));
+        const apiTopic =
+          reelTopicFilter === 'work_talk'
+            ? 'work_talk'
+            : reelTopicFilter === 'daily_life'
+              ? 'daily_life'
+              : 'all';
+        params.set('topic', apiTopic);
+        const activeQIdx = typeof nextQueryIdx === 'number' ? nextQueryIdx : queryIndex;
+        if (activeQIdx > 0) params.set('queryIndex', String(activeQIdx));
+        if (pageTokenOverride) {
+          params.set('pageToken', pageTokenOverride);
+        } else if (priorityVocabWordsKey) {
+          params.set('words', priorityVocabWordsKey);
+        }
+
+        const query = params.toString();
+        const res = await fetch(`/api/reels/feed${query ? `?${query}` : ''}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!Array.isArray(data?.reels)) return;
+
+        if (data.source === 'youtube_api_v3' || data.source === 'rss_fallback') {
+          setFeedSource(data.source);
+        }
+        setNextPageToken(typeof data.nextPageToken === 'string' && data.nextPageToken ? data.nextPageToken : null);
+
+        const vaultWords = savedWordsLookupRef.current;
+        const mapped: VideoLesson[] = data.reels
+          .filter((item: unknown): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+          .map((item: Record<string, unknown>) => {
+            const youtubeId = String(item.youtubeId || '');
+            const title = String(item.title || 'Real American Short');
+            const channel = String(item.channel || 'American English');
+            const matchedVocab = typeof item.matchedVocabWord === 'string' ? item.matchedVocabWord.trim() : '';
+            const vaultMatch = matchedVocab
+              ? vaultWords.find((w) => w?.word && w.word.toLowerCase().trim() === matchedVocab.toLowerCase())
+              : undefined;
+            const expression = matchedVocab || String(item.expression || title);
+            const category =
+              item.reelCategory === 'work_talk' || item.reelCategory === 'my_videos'
+                ? item.reelCategory
+                : 'daily_life';
+            const register =
+              item.register === 'workplace_us' || item.register === 'everyday'
+                ? item.register
+                : 'casual_us';
+            const level = item.level === 'A2' || item.level === 'B2' ? item.level : 'B1';
+            const isApiSource = item.source === 'youtube_api_v3';
+
+            return {
+              id: matchedVocab ? `srs-yt-${youtubeId}` : isApiSource ? `ytapi-short-${youtubeId}` : `rss-short-${youtubeId}`,
+              youtubeId,
+              title,
+              channel,
+              thumbnail: `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`,
+              level,
+              topic: matchedVocab
+                ? `Ôn từ: ${matchedVocab}`
+                : category === 'work_talk'
+                  ? 'Công sở Mỹ'
+                  : category === 'my_videos'
+                    ? 'Kênh bạn theo dõi'
+                    : 'Đời sống Mỹ',
+              duration: '00:55',
+              durationSec: 55,
+              views: isApiSource ? 'YouTube Live' : 'Live RSS',
+              description: matchedVocab
+                ? `Clip thực tế giúp bạn ôn lại từ "${matchedVocab}" trong kho từ vựng FSRS-6.`
+                : `Shorts dọc 9:16 mới nhất từ ${channel} — phụ đề & dịch tiếng Việt tự động nạp khi xem.`,
+              subtitles: [],
+              quizzes: [],
+              isShort: true,
+              isCustom: category === 'my_videos',
+              startSeconds: 0,
+              endSeconds: 59,
+              targetWord: expression,
+              sourceLessonTitle: title,
+              expression,
+              expressionMeaningVi: vaultMatch?.translation || '',
+              americanUsageNote: matchedVocab
+                ? `Từ vựng bạn đang ôn trong Kho từ vựng${vaultMatch?.translation ? `: "${vaultMatch.translation}"` : ''}. Đánh giá mức nhớ ngay bên dưới để cập nhật lịch FSRS-6.`
+                : `Clip Shorts dọc 9:16 từ kênh ${channel}. Nhấn vào bất kỳ từ nào trong phụ đề để tra & lưu FSRS-6.`,
+              reelCategory: category,
+              register,
+              srsWordId: vaultMatch?.id,
+              isSrsReviewClip: Boolean(matchedVocab)
+            } as VideoLesson;
+          });
+
+        if (append) {
+          setLiveRssReels((prev) => {
+            const seen = new Set(prev.map((r) => r.youtubeId));
+            const fresh = mapped.filter((r) => r.youtubeId && !seen.has(r.youtubeId));
+            return fresh.length > 0 ? [...prev, ...fresh] : prev;
+          });
+        } else {
+          setLiveRssReels(mapped);
+          if (forceRefresh) {
+            setSessionWatchedSnapshot(loadWatchedIdsForProfile(activeProfileId));
+            setSessionSeed((Date.now() % 1000000) + Math.floor(Math.random() * 999));
+            setCurrentIndex(0);
+          }
+        }
+
+        if (showToastOnDone) {
+          toast.success(
+            data.source === 'youtube_api_v3'
+              ? `✨ Đã nạp ${mapped.length} Shorts mới (Chế độ lướt vô tận YouTube API)!`
+              : `Đã làm mới & xáo trộn ${mapped.length} Shorts chưa xem!`
+          );
+        }
+      } catch {
+        if (showToastOnDone) {
+          toast.error('Không thể làm mới feed lúc này — đang dùng kho Shorts dự phòng.');
+        }
+      } finally {
+        if (append) {
+          setIsLoadingMoreFeed(false);
+        } else {
+          setIsRefreshingFeed(false);
+        }
       }
-    } finally {
-      setIsRefreshingFeed(false);
-    }
-  }, [followedChannels, toast]);
+    },
+    [followedChannels, reelTopicFilter, priorityVocabWordsKey, queryIndex, activeProfileId, toast]
+  );
 
   useEffect(() => {
     void loadLiveRssFeed(false, false);
@@ -563,10 +693,6 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     };
   }, [allReelsPool]);
 
-  const thematicReelsFeed: VideoLesson[] = useMemo(() => {
-    return buildThematicReelsFeed(curatedReels, minedReels, reelTopicFilter);
-  }, [curatedReels, minedReels, reelTopicFilter]);
-
   // --- 1. Compute YouGlish Mined Occurrences with SRS Smart Sorter ---
   const youglishOccurrences: YouGlishOccurrence[] = useMemo(() => {
     return youglishEngine.mineYouGlishOccurrences(savedWords, lessons, {
@@ -575,6 +701,64 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
       registerFilter: registerFilter === 'all' ? undefined : registerFilter
     });
   }, [savedWords, lessons, selectedWordFilter, accentFilter, registerFilter]);
+
+  // Convert SRS occurrences + API vocab-matched Shorts into uniform SRS review clips
+  const srsReviewClips: VideoLesson[] = useMemo(() => {
+    const apiVocabClips = curatedReels.filter((r) => r.isSrsReviewClip);
+    const minedSrsClips: VideoLesson[] = youglishOccurrences.map((occ) => {
+      const vaultMatch = savedWords.find(
+        (w) => w?.word && occ.targetWord && w.word.toLowerCase().trim() === occ.targetWord.toLowerCase().trim()
+      );
+      return {
+        id: occ.id,
+        youtubeId: occ.vid,
+        title: occ.sourceLessonTitle ? `Ôn từ "${occ.targetWord}" — ${occ.sourceLessonTitle}` : `Ôn từ "${occ.targetWord}"`,
+        channel: occ.channel,
+        thumbnail: occ.thumbnail,
+        level: 'B1',
+        topic: `Ôn từ: ${occ.targetWord}`,
+        duration: `00:${Math.max(5, Math.round(occ.clipEnd - occ.clipStart)).toString().padStart(2, '0')}`,
+        durationSec: Math.max(5, Math.round(occ.clipEnd - occ.clipStart)),
+        views: 'Ôn SRS',
+        description: occ.display,
+        subtitles: occ.subtitles,
+        quizzes: [],
+        isShort: true,
+        startSeconds: occ.clipStart,
+        endSeconds: occ.clipEnd,
+        targetWord: occ.targetWord,
+        targetContext: occ.display,
+        expression: occ.targetWord,
+        expressionMeaningVi: vaultMatch?.translation || '',
+        americanUsageNote: `Từ bạn đã lưu trong Kho từ vựng${vaultMatch?.translation ? `: "${vaultMatch.translation}"` : ''}. Hãy nghe lại trong ngữ cảnh thật và chọn mức nhớ FSRS-6 bên dưới.`,
+        sourceLessonTitle: occ.sourceLessonTitle,
+        subtitleOffset: occ.subtitleOffset,
+        initialSubIndex: 0,
+        srsWordId: vaultMatch?.id,
+        isSrsReviewClip: true
+      };
+    });
+
+    const seen = new Set<string>();
+    const combined: VideoLesson[] = [];
+    for (const clip of [...apiVocabClips, ...minedSrsClips]) {
+      if (!clip.id || seen.has(clip.id)) continue;
+      seen.add(clip.id);
+      combined.push(clip);
+    }
+    return combined;
+  }, [curatedReels, youglishOccurrences, savedWords]);
+
+  const thematicReelsFeed: VideoLesson[] = useMemo(() => {
+    const nonSrsCurated = curatedReels.filter((r) => !r.isSrsReviewClip);
+    const base = buildThematicReelsFeed(nonSrsCurated, minedReels, reelTopicFilter);
+    return buildForYouReelsFeed(base, {
+      watchedIds: new Set(sessionWatchedSnapshot),
+      sessionSeed,
+      srsReviewClips: reelTopicFilter === 'my_videos' ? [] : srsReviewClips,
+      srsEveryN: 3
+    });
+  }, [curatedReels, minedReels, reelTopicFilter, sessionWatchedSnapshot, sessionSeed, srsReviewClips]);
 
   // List of words that have YouGlish video occurrences
   const availableWordsWithCount = useMemo(() => {
@@ -629,33 +813,18 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
       });
     }
 
-    // 'youglish' SRS review mode
-    return youglishOccurrences.map(occ => {
-      return {
-        id: occ.id,
-        youtubeId: occ.vid,
-        title: occ.sourceLessonTitle ? `Trích đoạn: ${occ.sourceLessonTitle}` : 'Video trích đoạn YouGlish',
-        channel: occ.channel,
-        thumbnail: occ.thumbnail,
-        level: 'B1',
-        topic: 'Luyện phản xạ YouGlish',
-        duration: `00:${Math.round(occ.clipEnd - occ.clipStart).toString().padStart(2, '0')}`,
-        durationSec: Math.round(occ.clipEnd - occ.clipStart),
-        views: '1.2M',
-        description: occ.display,
-        subtitles: occ.subtitles,
-        quizzes: [],
-        isShort: true,
-        startSeconds: occ.clipStart,
-        endSeconds: occ.clipEnd,
-        targetWord: occ.targetWord,
-        targetContext: occ.display,
-        sourceLessonTitle: occ.sourceLessonTitle,
-        subtitleOffset: occ.subtitleOffset,
-        initialSubIndex: 0
-      };
-    });
-  }, [feedMode, thematicReelsFeed, youglishOccurrences, searchQuery, lessons]);
+    // 'youglish' SRS review mode — combines mined lesson clips + live YouTube API vocab Shorts
+    return srsReviewClips;
+  }, [feedMode, thematicReelsFeed, srsReviewClips, searchQuery, lessons]);
+
+  // Infinite Scroll Auto-Loader: when user gets within 3 clips of the end, fetch next YouTube Data API v3 page
+  useEffect(() => {
+    if (feedMode !== 'reels') return;
+    if (!nextPageToken || isLoadingMoreFeed || isRefreshingFeed) return;
+    if (activeFeed.length > 0 && currentIndex >= activeFeed.length - 3) {
+      void loadLiveRssFeed(false, false, nextPageToken, true);
+    }
+  }, [feedMode, currentIndex, activeFeed.length, nextPageToken, isLoadingMoreFeed, isRefreshingFeed, loadLiveRssFeed]);
 
   // Reset index when feed criteria change
   useEffect(() => {
@@ -793,12 +962,12 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
       ? 'Loading synced English captions...'
       : isCurrentNoCaptions
         ? currentShort.title || 'Listen directly to this American Short'
-        : 'Enjoy this English learning Short!',
+        : currentShort.title || 'Listen to this American Short',
     translation: isCurrentHydrating
       ? 'Đang tự động tải phụ đề khớp giây & dịch tiếng Việt...'
       : isCurrentNoCaptions
-        ? 'Video này chưa có phụ đề YouTube — bạn vẫn nghe trực tiếp hoặc lướt tiếp nhé.'
-        : 'Hãy thưởng thức video ngắn học tiếng Anh này!'
+        ? 'Video này chưa có phụ đề YouTube — bạn có thể nghe trực tiếp hoặc lướt tiếp.'
+        : 'Đang chuẩn bị phụ đề đồng bộ...'
   };
 
   // American Connected Speech Hints (0ms, receptive-first, capped at 2 chips)
@@ -845,6 +1014,19 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     }
     const timer = setTimeout(() => {
       markReelCompleted(currentShort.id);
+      setWatchedIds((prev) => {
+        const next = new Set(prev);
+        let changed = false;
+        if (!next.has(currentShort.id)) {
+          next.add(currentShort.id);
+          changed = true;
+        }
+        if (currentShort.youtubeId && !next.has(currentShort.youtubeId)) {
+          next.add(currentShort.youtubeId);
+          changed = true;
+        }
+        return changed ? Array.from(next).slice(-500) : prev;
+      });
       const alreadyTracked = watchedReelsRef.current.some((r) => r.id === currentShort.id);
       if (!alreadyTracked) {
         watchedReelsRef.current = [...watchedReelsRef.current.slice(-8), currentShort];
@@ -853,10 +1035,12 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     return () => clearTimeout(timer);
   }, [isActive, feedMode, currentShort, markReelCompleted]);
 
-  // SRS Rating for Revealed Flashcards — wired directly to FSRS-6 via App.tsx
+  // SRS Rating for Revealed Flashcards & Interleaved SRS Clips — wired directly to FSRS-6 via App.tsx
   const handleRateCard = async (rating: AnkiRating) => {
     const targetW = activeExpression.toLowerCase();
-    const matchingWord = targetW ? savedWords.find(w => w?.word && w.word.toLowerCase().trim() === targetW) : null;
+    const matchingWord =
+      (currentShort.srsWordId ? savedWords.find((w) => w?.id === currentShort.srsWordId) : null) ||
+      (targetW ? savedWords.find((w) => w?.word && w.word.toLowerCase().trim() === targetW) : null);
     if (matchingWord) {
       if (onReviewWord) {
         onReviewWord(matchingWord.id, rating);
@@ -2053,9 +2237,13 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
           <button
             type="button"
             disabled={isRefreshingFeed}
-            onClick={() => void loadLiveRssFeed(true, true)}
+            onClick={() => {
+              const nextIdx = (queryIndex + 1) % 3;
+              setQueryIndex(nextIdx);
+              void loadLiveRssFeed(true, true, undefined, false, nextIdx);
+            }}
             className="p-2 rounded-xl border bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200 transition-all cursor-pointer disabled:opacity-50"
-            title="Tải Shorts mới nhất từ YouTube ngay"
+            title="Làm mới & trộn Shorts chưa xem từ YouTube"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshingFeed ? 'animate-spin text-teal-600' : ''}`} />
           </button>
@@ -2687,12 +2875,28 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                 {/* 2. Top Slim Video Overlay Bar (Unobtrusive) */}
                 <div className="relative z-10 p-4 flex items-center justify-between bg-gradient-to-b from-black/80 via-black/30 to-transparent">
                   <div className="flex items-center gap-1.5">
-                    <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-rose-500 text-white shadow-md">
-                      #{currentIndex + 1}/{activeFeed.length}
-                    </span>
+                    {currentShort.isSrsReviewClip ? (
+                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-amber-500 text-white shadow-md">
+                        🎯 Ôn từ của bạn
+                      </span>
+                    ) : feedSource === 'youtube_api_v3' ? (
+                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-rose-500 text-white shadow-md">
+                        ✨ For You • #{currentIndex + 1}
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-rose-500 text-white shadow-md">
+                        For You • #{currentIndex + 1}
+                      </span>
+                    )}
                     <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-white/20 text-white backdrop-blur-md">
                       {currentOccurrence ? `${currentOccurrence.zone}` : currentShort.level}
                     </span>
+                    {isLoadingMoreFeed && (
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-black/60 text-teal-300 backdrop-blur-md flex items-center gap-1">
+                        <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                        <span>Đang nạp thêm</span>
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-1.5">
@@ -2942,6 +3146,37 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                       <p className="text-xs sm:text-sm text-slate-600 leading-relaxed bg-slate-50 border border-slate-200/70 rounded-2xl p-3.5">
                         <strong className="text-slate-900">🇺🇸 Người Mỹ dùng khi nào:</strong> {currentShort.americanUsageNote}
                       </p>
+                    )}
+
+                    {/* Direct FSRS-6 Vocabulary Review Bar inside TikTok Shorts feed */}
+                    {(currentShort.isSrsReviewClip || isCurrentExpressionSaved) && (
+                      <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-black text-amber-900 flex items-center gap-1.5">
+                            <Target className="w-3.5 h-3.5 text-amber-600" />
+                            <span>Ôn tập FSRS-6 cho từ bạn đã lưu — bạn nhớ mức nào?</span>
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {(
+                            [
+                              { rating: 1 as AnkiRating, label: 'Quên', cls: 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200' },
+                              { rating: 2 as AnkiRating, label: 'Khó', cls: 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200' },
+                              { rating: 3 as AnkiRating, label: 'Tốt', cls: 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200' },
+                              { rating: 4 as AnkiRating, label: 'Dễ', cls: 'bg-sky-50 hover:bg-sky-100 text-sky-800 border-sky-200' }
+                            ] as const
+                          ).map((btn) => (
+                            <button
+                              key={btn.rating}
+                              type="button"
+                              onClick={() => void handleRateCard(btn.rating)}
+                              className={`py-1.5 px-2 rounded-xl border text-xs font-black transition-all active:scale-95 cursor-pointer ${btn.cls}`}
+                            >
+                              {btn.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     )}
 
                     {/* Receptive Connected Speech Chips (Only when sentence has real reductions/linking) */}
