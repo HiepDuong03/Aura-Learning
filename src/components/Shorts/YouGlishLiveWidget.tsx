@@ -1,30 +1,29 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Search, 
-  ExternalLink, 
-  Sparkles, 
-  RotateCcw, 
-  ChevronLeft, 
-  ChevronRight, 
-  Volume2, 
-  Gauge, 
-  Loader2, 
-  Globe, 
-  X,
-  Play,
-  CheckCircle2
+import React, { useState, useEffect, useRef, useId } from 'react';
+import {
+  Search,
+  ExternalLink,
+  RotateCcw,
+  ChevronLeft,
+  ChevronRight,
+  Gauge,
+  Loader2,
+  Globe,
+  Film,
+  X
 } from 'lucide-react';
 
 interface YouGlishLiveWidgetProps {
   initialWord: string;
   accent?: 'GLOBAL' | 'US' | 'UK' | 'AUS';
+  asModal?: boolean;
   onClose?: () => void;
   onSelectWord?: (word: string) => void;
 }
 
 export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
   initialWord,
-  accent = 'GLOBAL',
+  accent = 'US',
+  asModal = false,
   onClose,
   onSelectWord
 }) => {
@@ -38,7 +37,8 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
   const [hasScriptError, setHasScriptError] = useState<boolean>(false);
 
   const widgetRef = useRef<any>(null);
-  const containerId = 'youglish-embed-container';
+  const rawId = useId();
+  const containerId = `youglish-embed-${rawId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
 
   // Sync initialWord changes
   useEffect(() => {
@@ -48,16 +48,39 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
     }
   }, [initialWord]);
 
+  // Close modal on Escape key
+  useEffect(() => {
+    if (!asModal || !onClose) return;
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleEsc, true);
+    return () => window.removeEventListener('keydown', handleEsc, true);
+  }, [asModal, onClose]);
+
   // Load YouGlish Widget Script and Instantiate Widget
   useEffect(() => {
     let isCancelled = false;
     setIsLoading(true);
     setHasScriptError(false);
 
+    const loadTimeout = window.setTimeout(() => {
+      if (!isCancelled) {
+        setIsLoading(false);
+        setHasScriptError(true);
+      }
+    }, 8500);
+
+    const clearWatchdog = () => window.clearTimeout(loadTimeout);
+
     const initWidget = () => {
       if (isCancelled) return;
       const YG = (window as any).YG;
       if (!YG || !YG.Widget) {
+        clearWatchdog();
         setHasScriptError(true);
         setIsLoading(false);
         return;
@@ -74,13 +97,16 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
           events: {
             onFetchDone: (event: any) => {
               if (isCancelled) return;
+              clearWatchdog();
               setTotalResults(event.totalResult || 0);
               setCurrentTrack(1);
               setIsLoading(false);
             },
             onVideoChange: (event: any) => {
               if (isCancelled) return;
+              clearWatchdog();
               setCurrentTrack(event.trackNumber || 1);
+              setIsLoading(false);
             },
             onCaptionConsumed: () => {
               // Caption clip finished
@@ -88,6 +114,7 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
             onError: (err: any) => {
               console.warn('[YouGlish Live] Widget error:', err);
               if (isCancelled) return;
+              clearWatchdog();
               setIsLoading(false);
             }
           }
@@ -95,15 +122,24 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
 
         widgetRef.current = widgetInstance;
 
-        let lang = 'english';
-        if (selectedAccent === 'US') lang = 'english/us';
-        else if (selectedAccent === 'UK') lang = 'english/uk';
-        else if (selectedAccent === 'AUS') lang = 'english/aus';
+        const accentParam =
+          selectedAccent === 'US'
+            ? 'us'
+            : selectedAccent === 'UK'
+            ? 'uk'
+            : selectedAccent === 'AUS'
+            ? 'aus'
+            : undefined;
 
-        widgetInstance.fetch(currentWord.trim(), lang);
+        if (accentParam) {
+          widgetInstance.fetch(currentWord.trim(), 'english', accentParam);
+        } else {
+          widgetInstance.fetch(currentWord.trim(), 'english');
+        }
       } catch (err) {
         console.error('[YouGlish Live] Setup exception:', err);
         if (isCancelled) return;
+        clearWatchdog();
         setHasScriptError(true);
         setIsLoading(false);
       }
@@ -118,10 +154,11 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
         script.src = 'https://youglish.com/public/emb/widget.js';
         script.async = true;
         script.onload = () => {
-          setTimeout(initWidget, 150);
+          setTimeout(initWidget, 100);
         };
         script.onerror = () => {
           if (!isCancelled) {
+            clearWatchdog();
             setHasScriptError(true);
             setIsLoading(false);
           }
@@ -134,7 +171,7 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
             initWidget();
           }
         }, 100);
-        setTimeout(() => clearInterval(checkInterval), 3000);
+        setTimeout(() => clearInterval(checkInterval), 4000);
       }
     } else {
       initWidget();
@@ -142,8 +179,9 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
 
     return () => {
       isCancelled = true;
+      clearWatchdog();
     };
-  }, [currentWord, selectedAccent]);
+  }, [currentWord, selectedAccent, containerId]);
 
   // Widget Control Handlers
   const handleNext = () => {
@@ -178,39 +216,63 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
     if (onSelectWord) onSelectWord(searchInput.trim());
   };
 
-  return (
-    <div className="w-full bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-2xl text-white space-y-4">
+  const playPhraseUrl = `https://www.playphrase.me/#/search?q=${encodeURIComponent(currentWord.trim())}`;
+  const youGlishUrl = `https://youglish.com/pronounce/${encodeURIComponent(currentWord.trim())}/english${
+    selectedAccent === 'US' ? '/us' : selectedAccent === 'UK' ? '/uk' : selectedAccent === 'AUS' ? '/aus' : ''
+  }`;
+
+  const content = (
+    <div
+      className={`w-full bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-5 shadow-2xl text-white space-y-3.5 ${
+        asModal ? 'max-w-3xl max-h-[92vh] overflow-y-auto animate-fade-in' : ''
+      }`}
+      onClick={(e) => e.stopPropagation()}
+    >
       {/* Header bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
         <div className="flex items-center gap-2.5">
-          <div className="size-9 rounded-xl bg-red-600/20 text-red-400 border border-red-500/30 flex items-center justify-center font-black">
-            <Globe className="w-5 h-5 text-red-400" />
+          <div className="size-9 rounded-xl bg-teal-500/20 text-teal-400 border border-teal-500/30 flex items-center justify-center font-black">
+            <Globe className="w-5 h-5 text-teal-400" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-base font-black tracking-tight text-white">
-                YouGlish Live API Widget
+              <h3 className="text-sm sm:text-base font-black tracking-tight text-white">
+                Nghe &quot;{currentWord}&quot; trong video thực tế
               </h3>
               <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-black uppercase">
-                Chính thức
+                YouTube CDN
               </span>
             </div>
             <p className="text-xs text-slate-400">
-              Tra cứu phát âm thực tế từ hơn 100 triệu video trên YouGlish
+              Phát nhanh ngay trên màn hình · Tự nhảy đúng giây chứa cụm từ
             </p>
           </div>
         </div>
 
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 rounded-full hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-            title="Đóng widget"
+        <div className="flex items-center gap-2">
+          <a
+            href={playPhraseUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-bold text-slate-200 flex items-center gap-1.5 transition-colors"
+            title="Mở kho phim Hollywood trên PlayPhrase.me ở tab đầy đủ"
           >
-            <X className="w-5 h-5" />
-          </button>
-        )}
+            <Film className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">PlayPhrase.me</span>
+            <ExternalLink className="w-3 h-3 opacity-70" />
+          </a>
+
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 rounded-full hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              title="Đóng (Esc)"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Search & Accent Row */}
@@ -266,7 +328,7 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
         </div>
 
         <a
-          href={`https://youglish.com/pronounce/${encodeURIComponent(currentWord)}/english`}
+          href={youGlishUrl}
           target="_blank"
           rel="noopener noreferrer"
           className="text-[11px] font-bold text-slate-400 hover:text-teal-300 flex items-center gap-1 transition-colors"
@@ -282,25 +344,36 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
           <div className="absolute inset-0 z-20 bg-slate-950/90 flex flex-col items-center justify-center gap-3">
             <Loader2 className="w-8 h-8 text-teal-400 animate-spin" />
             <p className="text-xs font-bold text-slate-300">
-              Đang kết nối cơ sở dữ liệu YouGlish cho từ "{currentWord}"...
+              Đang tải video phát âm cho &quot;{currentWord}&quot;...
             </p>
           </div>
         )}
 
         {hasScriptError && (
-          <div className="p-6 text-center space-y-3">
+          <div className="p-6 text-center space-y-3 z-20">
             <p className="text-xs text-amber-300 font-bold">
-              Không thể tải YouGlish Widget trực tiếp (có thể do trình duyệt chặn bên thứ ba).
+              Không thể tải YouGlish Widget trực tiếp (có thể do trình duyệt chặn bên thứ ba hoặc mạng chậm).
             </p>
-            <a
-              href={`https://youglish.com/pronounce/${encodeURIComponent(currentWord)}/english`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold shadow-md transition-all"
-            >
-              <ExternalLink className="w-4 h-4" />
-              <span>Xem trực tiếp trên trang chủ YouGlish</span>
-            </a>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <a
+                href={youGlishUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold shadow-md transition-all"
+              >
+                <ExternalLink className="w-4 h-4" />
+                <span>Mở trên YouGlish</span>
+              </a>
+              <a
+                href={playPhraseUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-xs font-bold shadow-md transition-all"
+              >
+                <Film className="w-4 h-4 text-amber-400" />
+                <span>Mở trên PlayPhrase.me</span>
+              </a>
+            </div>
           </div>
         )}
 
@@ -360,4 +433,20 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
       </div>
     </div>
   );
+
+  if (asModal) {
+    return (
+      <div
+        className="fixed inset-0 z-[130] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-fade-in"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Nghe "${currentWord}" trong video thực tế`}
+        onClick={onClose}
+      >
+        {content}
+      </div>
+    );
+  }
+
+  return content;
 };

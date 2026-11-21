@@ -68,7 +68,6 @@ import {
   buildThematicReelsFeed,
   MicroQuizQuestion,
   mineAmericanExpressionsFromLessons,
-  openPlayPhrasePopup,
   ReelTopicFilter
 } from '../../utils/americanExpressionMiner';
 import { AMERICAN_REELS_CORPUS, mapCuratedReelToVideoLesson } from '../../data/americanReelsCorpus';
@@ -197,6 +196,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   const [showSettingsPanel, setShowSettingsPanel] = useState<boolean>(false);
   const [showSearchBar, setShowSearchBar] = useState<boolean>(false);
   const [subOffset, setSubOffset] = useState<number>(0);
+  const [videoContextQuery, setVideoContextQuery] = useState<string | null>(null);
 
   // Local / R2 MP4 movie reels manifest (auto-loaded from /reels/manifest.json if present)
   const [manifestReels, setManifestReels] = useState<VideoLesson[]>([]);
@@ -3224,21 +3224,15 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                       {(() => {
                         const playPhraseQuery = buildPlayPhraseQuery(activeExpression, currentSub.text);
                         return (
-                          <a
-                            href={`https://www.playphrase.me/#/search?q=${encodeURIComponent(playPhraseQuery)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              openPlayPhrasePopup(playPhraseQuery);
-                            }}
+                          <button
+                            type="button"
+                            onClick={() => setVideoContextQuery(playPhraseQuery)}
                             className="py-2 px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
-                            title={`Mở cửa sổ phim Mỹ mini nói "${playPhraseQuery}" trên PlayPhrase.me`}
+                            title={`Xem video người Mỹ nói "${playPhraseQuery}" ngay trên màn hình`}
                           >
-                            <Film className="w-3.5 h-3.5 text-slate-600" />
-                            <span>Nghe "{playPhraseQuery}" trong phim Mỹ</span>
-                            <ExternalLink className="w-3 h-3 opacity-60" />
-                          </a>
+                            <Film className="w-3.5 h-3.5 text-teal-600" />
+                            <span>Nghe "{playPhraseQuery}" trong video Mỹ</span>
+                          </button>
                         );
                       })()}
                     </div>
@@ -3343,25 +3337,19 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                           {(() => {
                             const playPhraseQuery = buildPlayPhraseQuery(activeExpression, currentSub.text);
                             return (
-                              <a
-                                href={`https://www.playphrase.me/#/search?q=${encodeURIComponent(playPhraseQuery)}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  openPlayPhrasePopup(playPhraseQuery);
-                                }}
+                              <button
+                                type="button"
+                                onClick={() => setVideoContextQuery(playPhraseQuery)}
                                 className="py-2 px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-800 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
-                                title={`Mở cửa sổ phim Mỹ mini nói "${playPhraseQuery}" trên PlayPhrase.me`}
+                                title={`Xem video người Mỹ nói "${playPhraseQuery}" ngay trên màn hình`}
                               >
                                 <Film className="w-3.5 h-3.5 text-teal-600" />
                                 <span>
                                   {isWordRevealed
-                                    ? `Nghe "${playPhraseQuery}" trong phim Mỹ`
-                                    : 'Nghe trong phim Mỹ (PlayPhrase)'}
+                                    ? `Nghe "${playPhraseQuery}" trong video Mỹ`
+                                    : 'Nghe trong video Mỹ'}
                                 </span>
-                                <ExternalLink className="w-3 h-3 opacity-60" />
-                              </a>
+                              </button>
                             );
                           })()}
 
@@ -3497,6 +3485,15 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
           </div>
 
         </div>
+      )}
+
+      {videoContextQuery && (
+        <YouGlishLiveWidget
+          initialWord={videoContextQuery}
+          accent="US"
+          asModal
+          onClose={() => setVideoContextQuery(null)}
+        />
       )}
     </div>
   );

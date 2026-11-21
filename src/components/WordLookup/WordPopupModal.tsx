@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { AuthUser, ContextExplanation, WordDefinition, LingQWordStatus } from '../../types';
-import { Volume2, Bookmark, BookmarkCheck, X, Sparkles, Loader2, Lock, Film, ExternalLink } from 'lucide-react';
+import { Volume2, Bookmark, BookmarkCheck, X, Sparkles, Loader2, Lock, Film } from 'lucide-react';
 import { explainInContext, speakWord } from '../../services/dictionaryService';
-import { buildPlayPhraseQuery, openPlayPhrasePopup } from '../../utils/americanExpressionMiner';
+import { buildPlayPhraseQuery } from '../../utils/americanExpressionMiner';
+import { YouGlishLiveWidget } from '../Shorts/YouGlishLiveWidget';
 import { lingqWordService } from '../../services/lingqWordService';
 import { authService } from '../../services/authService';
 
@@ -33,6 +34,7 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
   const [aiExplanation, setAiExplanation] = useState<ContextExplanation | null>(null);
   const [isExplaining, setIsExplaining] = useState<boolean>(false);
   const [explainError, setExplainError] = useState<string>('');
+  const [videoModalQuery, setVideoModalQuery] = useState<string | null>(null);
 
   useEffect(() => {
     if (definition?.word) {
@@ -40,6 +42,7 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
       setAiExplanation(null);
       setExplainError('');
       setIsExplaining(false);
+      setVideoModalQuery(null);
     }
   }, [definition?.word, contextSentence]);
 
@@ -278,25 +281,19 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
               <p className="mt-1.5 text-[11px] font-semibold text-rose-600">{explainError}</p>
             )}
 
-            {/* Watch real American movie/sitcom scenes on PlayPhrase.me */}
+            {/* Watch real American video clips inline (fast YouTube CDN via YouGlish + PlayPhrase fallback) */}
             {(() => {
               const playPhraseQuery = buildPlayPhraseQuery(definition.word, contextSentence || '');
               return (
-                <a
-                  href={`https://www.playphrase.me/#/search?q=${encodeURIComponent(playPhraseQuery)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    openPlayPhrasePopup(playPhraseQuery);
-                  }}
+                <button
+                  type="button"
+                  onClick={() => setVideoModalQuery(playPhraseQuery)}
                   className="mt-2 w-full py-2 px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-700 text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                  title={`Mở cửa sổ phim Mỹ mini nói "${playPhraseQuery}" trên PlayPhrase.me`}
+                  title={`Xem video người Mỹ nói "${playPhraseQuery}" ngay trên màn hình`}
                 >
-                  <Film className="w-3.5 h-3.5 text-slate-600" />
-                  <span>Nghe &quot;{playPhraseQuery}&quot; trong phim Mỹ</span>
-                  <ExternalLink className="w-3 h-3 opacity-60" />
-                </a>
+                  <Film className="w-3.5 h-3.5 text-teal-600" />
+                  <span>Nghe &quot;{playPhraseQuery}&quot; trong video Mỹ</span>
+                </button>
               );
             })()}
           </div>
@@ -386,6 +383,15 @@ export const WordPopupModal: React.FC<WordPopupModalProps> = ({
           </button>
         </div>
       </div>
+
+      {videoModalQuery && (
+        <YouGlishLiveWidget
+          initialWord={videoModalQuery}
+          accent="US"
+          asModal
+          onClose={() => setVideoModalQuery(null)}
+        />
+      )}
     </div>
   );
 };
