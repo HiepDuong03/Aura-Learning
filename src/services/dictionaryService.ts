@@ -151,7 +151,7 @@ export async function lookupWord(rawWord: string): Promise<WordDefinition> {
   // 2. Query server-side cached master dictionary (/api/dict/lookup -> words_master DB cache)
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), 9000);
 
     const res = await fetch(`/api/dict/lookup?w=${encodeURIComponent(cleanWord)}`, {
       signal: controller.signal

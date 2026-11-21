@@ -136,15 +136,22 @@ export function isUsableViTranslation(sourceEn, candidateVi) {
   return true;
 }
 
-function generateFallbackExplanation({ phrase, sentence, cachedTranslation, sentenceTranslation, fallbackReason }) {
+function generateFallbackExplanation({
+  phrase,
+  sentence,
+  cachedTranslation,
+  sentenceTranslation,
+  fallbackReason,
+  fallbackDetail
+}) {
   const cleanMeaning = isUsableViTranslation(phrase, cachedTranslation) ? String(cachedTranslation).trim() : '';
   const cleanSentenceVi = isUsableViTranslation(sentence, sentenceTranslation)
     ? String(sentenceTranslation).trim()
     : '';
   const reasonNote =
     fallbackReason === 'missing_gemini_key'
-      ? 'Máy chủ chưa gắn GEMINI_API_KEY nên chưa phân tích được sắc thái sâu — đang hiển thị bản dịch trực tiếp.'
-      : 'Dịch vụ AI Gemini tạm thời bận — đang hiển thị bản dịch trực tiếp theo câu.';
+      ? 'Máy chủ chưa gắn GEMINI_API_KEY nên chưa phân tích được sắc thái sâu.'
+      : `Dịch vụ AI Gemini đang báo lỗi (${fallbackDetail || 'unavailable'}).`;
 
   return {
     phrase,
@@ -156,7 +163,8 @@ function generateFallbackExplanation({ phrase, sentence, cachedTranslation, sent
       sentence && cleanSentenceVi
         ? [{ en: sentence, vi: cleanSentenceVi }]
         : [],
-    fallbackReason: fallbackReason || 'gemini_error'
+    fallbackReason: fallbackReason || 'gemini_error',
+    fallbackDetail: fallbackDetail || ''
   };
 }
 
@@ -320,7 +328,7 @@ export function generateFallbackScenario(topic, level = 'B1') {
 
 async function callGeminiJson(apiKey, prompt, timeoutMs = 14000) {
   const candidateModels = Array.from(
-    new Set([process.env.GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-2.0-flash'].filter(Boolean))
+    new Set([process.env.GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'].filter(Boolean))
   );
 
   let lastErr = null;
@@ -337,21 +345,37 @@ async function callGeminiJson(apiKey, prompt, timeoutMs = 14000) {
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
             responseMimeType: 'application/json',
-            temperature: 0.45
+            temperature: 0.4
           }
         })
       });
       if (!res.ok) {
-        lastErr = new Error(`Gemini (${model}) HTTP ${res.status}`);
-        // Retry next model only on 404/429/503
+        let apiErrStatus = '';
+        try {
+          const errBody = await res.json();
+          apiErrStatus = errBody?.error?.status || errBody?.error?.message?.slice(0, 60) || '';
+        } catch {
+          // ignore
+        }
+        lastErr = new Error(`${model} HTTP ${res.status}${apiErrStatus ? ` (${apiErrStatus})` : ''}`);
         if (res.status === 404 || res.status === 429 || res.status === 503) {
           continue;
         }
         throw lastErr;
       }
       const data = await res.json();
-      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      return JSON.parse(rawText);
+      const parts = Array.isArray(data?.candidates?.[0]?.content?.parts)
+        ? data.candidates[0].content.parts
+        : [];
+      // Gemini 2.5 thinking models may put thought traces in parts[0]; pick the final non-thought text part
+      const answerPart =
+        parts.find((p) => p && typeof p.text === 'string' && !p.thought) || parts[parts.length - 1];
+      const rawText = String(answerPart?.text || '').trim();
+      const cleanedJson = rawText
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+      return JSON.parse(cleanedJson);
     } catch (err) {
       lastErr = err;
     } finally {
@@ -361,9 +385,14 @@ async function callGeminiJson(apiKey, prompt, timeoutMs = 14000) {
   throw lastErr || new Error('Gemini unavailable');
 }
 
-export async function translateEnToVi(text, { fetchImpl = fetch, timeoutMs = 4500 } = {}) {
+export async function translateEnToVi(text, { fetchImpl = fetch, timeoutMs = 4500, geminiApiKey = '' } = {}) {
   const clean = String(text || '').trim();
   if (!clean) return { translation: '', partOfSpeech: '', synonyms: [], provider: 'none' };
+
+  const browserHeaders = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    Accept: 'application/json'
+  };
 
   // Provider 1: Google Translate gtx endpoint
   const ctrl1 = new AbortController();
@@ -371,7 +400,7 @@ export async function translateEnToVi(text, { fetchImpl = fetch, timeoutMs = 450
   try {
     const res = await fetchImpl(
       `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=vi&dt=t&dt=bd&q=${encodeURIComponent(clean)}`,
-      { signal: ctrl1.signal }
+      { signal: ctrl1.signal, headers: browserHeaders }
     );
     if (res.ok) {
       const data = await res.json();
@@ -400,7 +429,7 @@ export async function translateEnToVi(text, { fetchImpl = fetch, timeoutMs = 450
   try {
     const res = await fetchImpl(
       `https://api.mymemory.translated.net/get?q=${encodeURIComponent(clean)}&langpair=en|vi`,
-      { signal: ctrl2.signal }
+      { signal: ctrl2.signal, headers: browserHeaders }
     );
     if (res.ok) {
       const data = await res.json();
@@ -414,9 +443,27 @@ export async function translateEnToVi(text, { fetchImpl = fetch, timeoutMs = 450
       }
     }
   } catch {
-    // fall through
+    // fall through to Provider 3
   } finally {
     clearTimeout(t2);
+  }
+
+  // Provider 3: Gemini fallback when configured on server (bypasses shared-IP translate limits)
+  const key = String(geminiApiKey || '').trim();
+  if (key) {
+    try {
+      const parsed = await callGeminiJson(
+        key,
+        `Translate the English word or phrase "${clean}" into concise natural Vietnamese. Respond in JSON: { "translation": "..." }`,
+        7000
+      );
+      const vi = String(parsed?.translation || '').trim();
+      if (isUsableViTranslation(clean, vi)) {
+        return { translation: vi, partOfSpeech: '', synonyms: [], provider: 'gemini' };
+      }
+    } catch {
+      // fall through
+    }
   }
 
   return { translation: '', partOfSpeech: '', synonyms: [], provider: 'none' };
@@ -427,7 +474,10 @@ async function defaultFetchDictionaryEntry(cleanQuery) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5000);
   try {
-    const translatePromise = translateEnToVi(cleanQuery, { timeoutMs: 4000 });
+    const translatePromise = translateEnToVi(cleanQuery, {
+      timeoutMs: 4000,
+      geminiApiKey: process.env.GEMINI_API_KEY || ''
+    });
     const dictPromise = isPhrase
       ? Promise.resolve(null)
       : fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(cleanQuery)}`, {
@@ -775,6 +825,7 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
       }
 
       let fallbackReason = apiKey ? 'gemini_error' : 'missing_gemini_key';
+      let fallbackDetail = '';
 
       if (apiKey) {
         try {
@@ -806,8 +857,10 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
           });
           return true;
         } catch (aiErr) {
-          console.warn('[AI Explain] Gemini call failed, using real translation fallback:', aiErr.message);
+          const safeMsg = String(aiErr?.message || 'error').replace(/key=[^&\s]+/gi, 'key=***').slice(0, 90);
+          console.warn('[AI Explain] Gemini call failed, using real translation fallback:', safeMsg);
           fallbackReason = 'gemini_error';
+          fallbackDetail = safeMsg;
         }
       }
 
@@ -827,7 +880,8 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
         sentence,
         cachedTranslation: phraseTr?.translation || cachedVi,
         sentenceTranslation: sentenceTr?.translation || '',
-        fallbackReason
+        fallbackReason,
+        fallbackDetail
       });
       sendJson(req, res, 200, {
         ...fallback,

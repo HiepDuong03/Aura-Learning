@@ -6,12 +6,12 @@ export function isUsableViTranslation(sourceEn: string, candidateVi: string): bo
 
 export function translateEnToVi(
   text: string,
-  options?: { fetchImpl?: typeof fetch; timeoutMs?: number }
+  options?: { fetchImpl?: typeof fetch; timeoutMs?: number; geminiApiKey?: string }
 ): Promise<{
   translation: string;
   partOfSpeech: string;
   synonyms: string[];
-  provider: 'google_gtx' | 'mymemory' | 'none';
+  provider: 'google_gtx' | 'mymemory' | 'gemini' | 'none';
 }>;
 
 export function handlePublicDictRoutes(params: Record<string, unknown>): Promise<boolean>;
