@@ -131,13 +131,45 @@ export function extractExpressionFromTitle(title) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  const quoted = cleaned.match(/["“”'‘’]([^"“”'‘’]{2,48})["“”'‘’]/);
+  // 1. Prefer explicit quoted expression ("Circle Back", "Just Checking In", etc.)
+  const quoted = cleaned.match(/["“”]([^"“”]{2,48})["“”]/);
   if (quoted && quoted[1]?.trim()) {
     return quoted[1].trim();
   }
 
-  const beforePipe = cleaned.split('|')[0]?.trim() || cleaned;
-  return beforePipe.length > 52 ? `${beforePipe.slice(0, 49).trim()}...` : beforePipe;
+  // 2. Strip trailing pipe/hashtag metadata and parenthetical explanations like "(For Telling Stories in English)"
+  let core = cleaned
+    .split('|')[0]
+    .replace(/\s*\([^)]*\)\s*/g, ' ')
+    .replace(/\s*\[[^\]]*\]\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // 3. Strip common YouTube English-lesson prefixes ("Phrasal Verb — ", "Idiom: ", "Business English - ", etc.)
+  core = core
+    .replace(
+      /^(?:phrasal\s+verbs?|idioms?|slang|expressions?|american\s+english|business\s+english|daily\s+english|spoken\s+english|english\s+(?:tip|phrase|vocabulary|lesson|expression)|speak\s+like\s+a\s+native)\s*[:—–\-=]\s*/i,
+      ''
+    )
+    .trim();
+
+  // 4. If still separated by dash/equals ("Look Back = Remember"), pick the concise phrase side
+  const parts = core
+    .split(/\s*[—–=]\s*|\s+-\s+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length >= 2) {
+    const concise = parts.find((p) => {
+      const words = p.split(/\s+/).filter(Boolean);
+      return words.length >= 1 && words.length <= 5;
+    });
+    if (concise) {
+      core = concise;
+    }
+  }
+
+  // Never truncate mid-word with "..." (breaks English meaning & PlayPhrase search)
+  return core || cleaned;
 }
 
 export function extractShortVideoId(rawInput) {

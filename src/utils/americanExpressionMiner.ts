@@ -488,18 +488,22 @@ export function buildForYouReelsFeed(
   const isWatched = (item: VideoLesson): boolean =>
     watchedIds.has(item.id) || Boolean(item.youtubeId && watchedIds.has(item.youtubeId));
 
-  const unwatched: VideoLesson[] = [];
+  const unwatchedRich: VideoLesson[] = [];
+  const unwatchedDiscovery: VideoLesson[] = [];
   const watched: VideoLesson[] = [];
   for (const item of baseFeed) {
     if (isWatched(item)) {
       watched.push(item);
+    } else if (item.subtitles.length > 0 || Boolean(item.expressionMeaningVi)) {
+      unwatchedRich.push(item);
     } else {
-      unwatched.push(item);
+      unwatchedDiscovery.push(item);
     }
   }
 
   const orderedBase = [
-    ...seededShuffle(unwatched, sessionSeed),
+    ...seededShuffle(unwatchedRich, sessionSeed),
+    ...seededShuffle(unwatchedDiscovery, sessionSeed + 313),
     ...seededShuffle(watched, sessionSeed + 997)
   ];
 
@@ -548,6 +552,59 @@ export function buildForYouReelsFeed(
   }
 
   return merged;
+}
+
+const PLAYPHRASE_TRAILING_STOPWORDS = new Set([
+  'in', 'on', 'at', 'to', 'of', 'for', 'with', 'about', 'from', 'by', 'as', 'the', 'a', 'an',
+  'and', 'or', 'but', 'because', 'if', 'when', 'that', 'this', 'your', 'my', 'their', 'our'
+]);
+
+/**
+ * Extracts a short, natural 1-4 word spoken English phrase guaranteed to match
+ * real movie dialogue on PlayPhrase.me (never sends long titles, prefixes, or "...").
+ */
+export function buildPlayPhraseQuery(expression: string, subtitleText = ''): string {
+  const raw = String(expression || '').trim();
+  const combinedForCatalog = `${raw} ${subtitleText}`.trim();
+
+  // 1. If a known native American expression is present, use it directly
+  for (const entry of AMERICAN_EXPRESSION_CATALOG) {
+    if (entry.pattern.test(combinedForCatalog)) {
+      return entry.expression;
+    }
+  }
+
+  // 2. Clean metadata, ellipsis, parentheses, and teacher prefixes
+  let cleaned = raw
+    .replace(/\.{2,}|…/g, ' ')
+    .replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
+    .replace(
+      /^(?:phrasal\s+verbs?|idioms?|slang|expressions?|american\s+english|business\s+english|daily\s+english|spoken\s+english|english\s+(?:tip|phrase|vocabulary|lesson))\s*[:—–\-=]\s*/i,
+      ''
+    )
+    .replace(/[?!.,"“”|—–()[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // 3. Strip common clickbait/question openers from YouTube titles
+  cleaned = cleaned
+    .replace(
+      /^(?:do\s+you|why\s+do\s+you|how\s+do\s+you|how\s+to\s+use|how\s+to\s+say|how\s+to|stop\s+saying|what\s+does|when\s+you|are\s+you|can\s+you|if\s+you|never\s+say)\s+/i,
+      ''
+    )
+    .trim();
+
+  const words = cleaned.split(/\s+/).filter((w) => w.length > 0 && !w.endsWith('…'));
+  if (words.length <= 4) {
+    return words.join(' ') || raw.slice(0, 24).trim();
+  }
+
+  // 4. Trim long sentences down to a tight 2-3 word natural phrase without dangling stopwords
+  const slice = words.slice(0, 3);
+  while (slice.length > 2 && PLAYPHRASE_TRAILING_STOPWORDS.has(slice[slice.length - 1].toLowerCase())) {
+    slice.pop();
+  }
+  return slice.join(' ');
 }
 
 export interface MicroQuizQuestion {

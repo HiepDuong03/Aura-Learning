@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildForYouReelsFeed,
   buildMicroQuizForReels,
+  buildPlayPhraseQuery,
   buildThematicReelsFeed,
   mineAmericanExpressionsFromLessons
 } from '../americanExpressionMiner';
@@ -135,5 +136,12 @@ describe('americanExpressionMiner', () => {
     expect(blended[3].isSrsReviewClip).toBe(true);
     expect(blended[7].id).toBe('srs-word-complicated');
     expect(blended[7].isSrsReviewClip).toBe(true);
+  });
+
+  it('extracts clean 1-4 word spoken queries for PlayPhrase.me from noisy YouTube titles', () => {
+    expect(buildPlayPhraseQuery('Phrasal Verb — Look Back (For Telling Stories in...')).toBe('Look Back');
+    expect(buildPlayPhraseQuery("Do you stay quiet in meetings because you're worr...")).toBe('stay quiet');
+    expect(buildPlayPhraseQuery('hit the sack')).toBe('hit the sack');
+    expect(buildPlayPhraseQuery('have a reservation')).toBe('have a reservation');
   });
 });

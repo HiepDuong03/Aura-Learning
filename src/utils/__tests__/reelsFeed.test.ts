@@ -65,9 +65,13 @@ describe('reels-feed RSS parser & validators', () => {
     expect(extractShortVideoId('@rachelsenglish')).toBeNull();
   });
 
-  it('extracts clean expression hints from Short titles', () => {
+  it('extracts clean expression hints from Short titles without truncating mid-word', () => {
     expect(extractExpressionFromTitle('What Does "Circle Back" Really Mean? | Business English #Shorts')).toBe('Circle Back');
     expect(extractExpressionFromTitle('How Americans Say It Fast #shorts #english')).toBe('How Americans Say It Fast');
+    expect(extractExpressionFromTitle('Phrasal Verb — Look Back (For Telling Stories in English)')).toBe('Look Back');
+    expect(
+      extractExpressionFromTitle('Do you stay quiet in meetings because you’re worried about your English?')
+    ).toBe('Do you stay quiet in meetings because you’re worried about your English?');
   });
 
   it('sanitizes vocabulary words for YouTube Data API queries (deduped, capped at 5)', () => {

@@ -64,6 +64,7 @@ import { decodeConnectedSpeech } from '../../utils/connectedSpeechDecoder';
 import {
   buildForYouReelsFeed,
   buildMicroQuizForReels,
+  buildPlayPhraseQuery,
   buildThematicReelsFeed,
   MicroQuizQuestion,
   mineAmericanExpressionsFromLessons,
@@ -3215,17 +3216,22 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                         <span>{currentUser ? 'AI Giải mã sắc thái Mỹ' : 'Đăng nhập dùng AI Sắc thái'}</span>
                       </button>
 
-                      <a
-                        href={`https://www.playphrase.me/#/search?q=${encodeURIComponent(activeExpression)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="py-2 px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-all"
-                        title={`Mở cảnh phim & sitcom Mỹ nói "${activeExpression}" trên PlayPhrase.me`}
-                      >
-                        <Film className="w-3.5 h-3.5 text-slate-600" />
-                        <span>Nghe trong phim Mỹ</span>
-                        <ExternalLink className="w-3 h-3 opacity-60" />
-                      </a>
+                      {(() => {
+                        const playPhraseQuery = buildPlayPhraseQuery(activeExpression, currentSub.text);
+                        return (
+                          <a
+                            href={`https://www.playphrase.me/#/search?q=${encodeURIComponent(playPhraseQuery)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="py-2 px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-all"
+                            title={`Mở cảnh phim & sitcom Mỹ nói "${playPhraseQuery}" trên PlayPhrase.me`}
+                          >
+                            <Film className="w-3.5 h-3.5 text-slate-600" />
+                            <span>Nghe "{playPhraseQuery}" trong phim Mỹ</span>
+                            <ExternalLink className="w-3 h-3 opacity-60" />
+                          </a>
+                        );
+                      })()}
                     </div>
 
                     {aiNuanceError && <p className="text-xs text-rose-600 font-semibold">{aiNuanceError}</p>}
