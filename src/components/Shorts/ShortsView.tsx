@@ -645,7 +645,8 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     toast.info('Đã hủy theo dõi kênh.');
   }, [toast]);
 
-  // --- 0. Curated Vertical 9:16 + Auto-Updating RSS Shorts + Local MP4 + User Custom Videos ---
+  // --- 0. Curated Vertical 9:16 + Verified Subtitled Clips + User Followed Channels ---
+  // Strictly exclude 0-subtitle raw YouTube Shorts from main learning feeds so learners only see real study material.
   const curatedReels: VideoLesson[] = useMemo(() => {
     const starter = [
       ...manifestReels,
@@ -660,24 +661,28 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
       if (seen.has(key)) continue;
       seen.add(key);
       const cachedSubs = reel.subtitles.length === 0 ? dynamicSubtitlesMap[reel.youtubeId] : undefined;
-      if (cachedSubs && cachedSubs.length > 0) {
-        const lastEnd = cachedSubs[cachedSubs.length - 1]?.end || reel.endSeconds || 55;
-        deduped.push({
-          ...reel,
-          subtitles: cachedSubs,
-          endSeconds: Math.max(12, Math.min(90, Math.ceil(lastEnd + 1)))
-        });
-      } else {
-        deduped.push(reel);
+      const hydratedReel: VideoLesson =
+        cachedSubs && cachedSubs.length > 0
+          ? {
+              ...reel,
+              subtitles: cachedSubs,
+              endSeconds: Math.max(12, Math.min(90, Math.ceil((cachedSubs[cachedSubs.length - 1]?.end || reel.endSeconds || 55) + 1)))
+            }
+          : reel;
+
+      // Keep if it has real synced subtitles OR was explicitly added by the user in "Của tôi"
+      const isUserOwnedChannelClip = hydratedReel.reelCategory === 'my_videos' || Boolean(hydratedReel.isCustom);
+      if (hydratedReel.subtitles.length > 0 || isUserOwnedChannelClip) {
+        deduped.push(hydratedReel);
       }
     }
     return deduped;
   }, [manifestReels, customAddedShorts, liveRssReels, dynamicSubtitlesMap]);
 
-  // Only auto-mine user-imported custom lessons (never pollute vertical 9:16 tabs with 16:9 MOCK_LESSONS!)
+  // Mine verified American expression clips from ALL lessons with synced bilingual subtitles (curated + user-imported)
   const minedReels: VideoLesson[] = useMemo(() => {
-    const customUserLessons = lessons.filter((l) => l.isCustom);
-    return mineAmericanExpressionsFromLessons(customUserLessons, curatedReels, 4);
+    const subtitledLessons = lessons.filter((l) => Array.isArray(l?.subtitles) && l.subtitles.length > 0);
+    return mineAmericanExpressionsFromLessons(subtitledLessons, curatedReels, 36);
   }, [lessons, curatedReels]);
 
   const allReelsPool: VideoLesson[] = useMemo(() => {
@@ -957,26 +962,31 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   const isCurrentHydrating = hydratingVideoId === currentShort.youtubeId && currentShort.subtitles.length === 0;
   const isCurrentNoCaptions = Boolean(failedCaptionIds[currentShort.youtubeId]) && currentShort.subtitles.length === 0;
   const subtitles = currentShort?.subtitles || [];
+  const hasRealSubtitles = subtitles.length > 0;
+  const cleanFallbackTitle = (currentShort.title || '')
+    .replace(/#[\w-]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const hasRealExpression = Boolean(activeExpression && (hasRealSubtitles || currentShort.expressionMeaningVi));
   const currentSub = subtitles[currentSubIndex] || subtitles[0] || {
     id: 'empty',
     start: 0,
     end: 5,
     text: isCurrentHydrating
-      ? 'Loading synced English captions...'
-      : isCurrentNoCaptions
-        ? currentShort.title || 'Listen directly to this American Short'
-        : currentShort.title || 'Listen to this American Short',
+      ? 'Đang tải phụ đề tiếng Anh đồng bộ...'
+      : cleanFallbackTitle || 'Video từ kênh bạn theo dõi',
     translation: isCurrentHydrating
       ? 'Đang tự động tải phụ đề khớp giây & dịch tiếng Việt...'
       : isCurrentNoCaptions
-        ? 'Video này chưa có phụ đề YouTube — bạn có thể nghe trực tiếp hoặc lướt tiếp.'
-        : 'Đang chuẩn bị phụ đề đồng bộ...'
+        ? 'Video này trên YouTube chưa có phụ đề — bạn có thể nghe trực tiếp hoặc lướt tiếp.'
+        : 'Video này chưa có phụ đề đồng bộ.'
   };
 
-  // American Connected Speech Hints (0ms, receptive-first, capped at 2 chips)
+  // American Connected Speech Hints (0ms, receptive-first, capped at 2 chips — only on real captions)
   const connectedSpeechHints = useMemo(() => {
+    if (!hasRealSubtitles) return [];
     return decodeConnectedSpeech(currentSub.text, 2);
-  }, [currentSub.text]);
+  }, [hasRealSubtitles, currentSub.text]);
 
   // Daily Micro-Habit Progress Helper (5 real American expressions/day)
   const effectiveDailyGoal = dailyReelProgress?.dailyGoal || 5;
@@ -2952,7 +2962,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                     title="Bấm vào thẻ để nghe lại câu này"
                   >
                     <p className="text-sm sm:text-base font-black text-white leading-relaxed">
-                      {renderWords(currentSub.text)}
+                      {hasRealSubtitles ? renderWords(currentSub.text) : currentSub.text}
                     </p>
                     {subtitleMode !== 'en_only' && (
                       <p className="text-xs text-slate-300/90 mt-1.5 italic font-medium">
@@ -3035,24 +3045,26 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                   </span>
                 </button>
 
-                {/* 1-Tap Save Expression to FSRS-6 */}
-                <button
-                  type="button"
-                  onClick={handleSaveCurrentExpression}
-                  className="flex flex-col items-center gap-1 cursor-pointer group"
-                  title={isCurrentExpressionSaved ? 'Cụm này đã có trong Kho FSRS-6' : 'Lưu nhanh cụm này vào FSRS-6'}
-                >
-                  <div className={`p-3 rounded-2xl border transition-all shadow-xs ${
-                    isCurrentExpressionSaved || bookmarked
-                      ? 'bg-amber-50 border-amber-300 text-amber-700 shadow-amber-200/50'
-                      : 'bg-white border-slate-200 text-slate-600 hover:border-teal-300 hover:text-teal-700'
-                  }`}>
-                    {isCurrentExpressionSaved || bookmarked ? <BookmarkCheck className="w-5 h-5" /> : <Bookmark className="w-5 h-5" />}
-                  </div>
-                  <span className="text-[10px] font-bold text-slate-500">
-                    {isCurrentExpressionSaved ? 'Đã lưu' : 'Lưu SRS'}
-                  </span>
-                </button>
+                {/* 1-Tap Save Expression to FSRS-6 (only when clip has a real expression/subtitles) */}
+                {hasRealExpression && (
+                  <button
+                    type="button"
+                    onClick={handleSaveCurrentExpression}
+                    className="flex flex-col items-center gap-1 cursor-pointer group"
+                    title={isCurrentExpressionSaved ? 'Cụm này đã có trong Kho FSRS-6' : 'Lưu nhanh cụm này vào FSRS-6'}
+                  >
+                    <div className={`p-3 rounded-2xl border transition-all shadow-xs ${
+                      isCurrentExpressionSaved || bookmarked
+                        ? 'bg-amber-50 border-amber-300 text-amber-700 shadow-amber-200/50'
+                        : 'bg-white border-slate-200 text-slate-600 hover:border-teal-300 hover:text-teal-700'
+                    }`}>
+                      {isCurrentExpressionSaved || bookmarked ? <BookmarkCheck className="w-5 h-5" /> : <Bookmark className="w-5 h-5" />}
+                    </div>
+                    <span className="text-[10px] font-bold text-slate-500">
+                      {isCurrentExpressionSaved ? 'Đã lưu' : 'Lưu SRS'}
+                    </span>
+                  </button>
+                )}
 
                 {/* 1-Tap Shadowing Mic Button */}
                 <button
@@ -3104,6 +3116,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
               {/* Top Section: American Expression OR SRS Active Recall */}
               {activeExpression && (
                 feedMode === 'reels' ? (
+                  hasRealExpression ? (
                   <div className="space-y-3 shrink-0">
                     <div className="flex items-start justify-between gap-3 flex-wrap">
                       <div className="min-w-0 space-y-1">
@@ -3258,6 +3271,19 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                       </div>
                     )}
                   </div>
+                  ) : (
+                  <div className="space-y-2.5 shrink-0">
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                      🎬 Kênh bạn theo dõi
+                    </span>
+                    <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
+                      {cleanFallbackTitle || currentShort.title}
+                    </h2>
+                    <p className="text-xs text-slate-500 leading-relaxed bg-slate-50 border border-slate-200/70 rounded-2xl p-3">
+                      Video này trên YouTube hiện chưa có phụ đề đồng bộ — bạn có thể nghe trực tiếp hoặc bấm <strong>Học full →</strong> để mở phòng học đầy đủ.
+                    </p>
+                  </div>
+                  )
                 ) : (
                   <div className="space-y-4">
                     <div className="flex items-start justify-between gap-3 flex-wrap">
