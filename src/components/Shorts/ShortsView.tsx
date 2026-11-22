@@ -443,8 +443,6 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
         if (activeQIdx > 0) params.set('queryIndex', String(activeQIdx));
         if (pageTokenOverride) {
           params.set('pageToken', pageTokenOverride);
-        } else if (priorityVocabWordsKey) {
-          params.set('words', priorityVocabWordsKey);
         }
 
         const query = params.toString();
@@ -516,8 +514,8 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                 : `Clip Shorts dọc 9:16 từ kênh ${channel}. Nhấn vào bất kỳ từ nào trong phụ đề để tra & lưu FSRS-6.`,
               reelCategory: category,
               register,
-              srsWordId: vaultMatch?.id,
-              isSrsReviewClip: Boolean(matchedVocab)
+              srsWordId: undefined,
+              isSrsReviewClip: false
             } as VideoLesson;
           });
 
@@ -2149,7 +2147,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   const cueProgress = Math.min(100, Math.max(0, ((currentTime - cueStartNormalized) / cueDuration) * 100));
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-2 sm:px-4 py-2 font-['Plus_Jakarta_Sans',sans-serif] space-y-3.5">
+    <div className="w-full max-w-6xl mx-auto px-1 sm:px-2 py-0.5 font-['Plus_Jakarta_Sans',sans-serif] space-y-2.5">
       {/* REGION 1: Single Slim Unified Bar (Replaces 2 stacked bars & duplicate buttons) */}
       <div className="bg-white border border-slate-200/90 rounded-2xl px-2.5 py-2 shadow-xs flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
@@ -2578,8 +2576,8 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
           </div>
         </div>
       ) : (
-        /* 2. Main Studio Grid: Clean Video Stage (Left) + YouGlish Study Companion (Right) */
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start justify-center">
+        /* 2. Main Studio Grid: Fit-Viewport Video Stage (Left) + Synced Study Companion (Right) */
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-6 items-start justify-center">
           
           {/* ================= COLUMN 1: THE CLEAN VIDEO STAGE ================= */}
           <div className="lg:col-span-6 xl:col-span-5 flex justify-center w-full">
@@ -2602,7 +2600,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                   else if (diff < -45) handlePrev();
                   touchStartY.current = null;
                 }}
-                className={`relative w-[340px] sm:w-[376px] h-[630px] sm:h-[675px] rounded-[28px] overflow-hidden shadow-xl bg-slate-950 border border-slate-200 flex flex-col justify-between select-none transition-all duration-150 ${
+                className={`relative h-[calc(100dvh-168px)] min-h-[460px] max-h-[680px] aspect-[9/16] max-w-[82vw] sm:max-w-[382px] rounded-[28px] overflow-hidden shadow-xl bg-slate-950 border border-slate-200 flex flex-col justify-between select-none transition-transform duration-150 ${
                   swipeAnimation === 'slide-up' ? '-translate-y-4 opacity-75 scale-[0.98]' : ''
                 } ${
                   swipeAnimation === 'slide-down' ? 'translate-y-4 opacity-75 scale-[0.98]' : ''
@@ -3100,13 +3098,13 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
             </div>
           </div>
 
-          {/* ================= REGION 3: SINGLE CLEAN STUDY CARD (ZERO CLUTTER) ================= */}
+          {/* ================= REGION 3: SINGLE CLEAN STUDY CARD (FIT-VIEWPORT) ================= */}
           <div className={`lg:col-span-6 xl:col-span-7 w-full ${isMobileDrawerOpen ? 'block' : 'hidden lg:flex lg:flex-col'}`}>
-            <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200/90 shadow-sm space-y-5">
+            <div className="p-4 sm:p-5 rounded-3xl bg-white border border-slate-200/90 shadow-sm flex flex-col gap-3.5 lg:h-[calc(100dvh-168px)] lg:min-h-[460px] lg:max-h-[680px] lg:overflow-hidden">
               {/* Top Section: American Expression OR SRS Active Recall */}
               {activeExpression && (
                 feedMode === 'reels' ? (
-                  <div className="space-y-4">
+                  <div className="space-y-3 shrink-0">
                     <div className="flex items-start justify-between gap-3 flex-wrap">
                       <div className="min-w-0 space-y-1">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -3433,9 +3431,9 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                 </div>
               )}
 
-              {/* Bottom Section inside SAME Single Card: Compact Transcript (Click any line to seek) */}
-              <div className="pt-4 border-t border-slate-100 space-y-2.5">
-                <div className="flex items-center justify-between text-xs">
+              {/* Bottom Section inside SAME Single Card: Compact Transcript (Scrolls smoothly inside card) */}
+              <div className="pt-3 border-t border-slate-100 flex flex-col gap-2 min-h-0 flex-1">
+                <div className="flex items-center justify-between text-xs shrink-0">
                   <span className="font-bold text-slate-700 flex items-center gap-1.5">
                     <Layers className="w-3.5 h-3.5 text-teal-600" />
                     <span>Kịch bản ({subtitles.length} câu)</span>
@@ -3447,7 +3445,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                   </div>
                 </div>
 
-                <div className="max-h-[250px] overflow-y-auto space-y-1.5 pr-1 scrollbar-thin">
+                <div className="flex-1 min-h-[140px] max-h-[340px] lg:max-h-none overflow-y-auto space-y-1.5 pr-1 scrollbar-thin">
                   {subtitles.map((sub, idx) => {
                     const isActive = currentSubIndex === idx;
                     return (

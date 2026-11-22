@@ -1018,7 +1018,13 @@ export const App: React.FC = () => {
           onOpenAdmin={() => setIsAdminModalOpen(true)}
         />
 
-        <main className="flex-1 p-4 lg:p-8 max-w-7xl mx-auto w-full pb-24 lg:pb-12">
+        <main
+          className={`flex-1 max-w-7xl mx-auto w-full ${
+            activeTab === 'shorts'
+              ? 'px-3 py-2 lg:px-6 lg:py-3 pb-20 lg:pb-3'
+              : 'p-4 lg:p-8 pb-24 lg:pb-12'
+          }`}
+        >
           <React.Suspense fallback={<LoadingFallback />}>
             {activeTab === 'home' && (
               <ProductionErrorBoundary componentName="Trang chủ" onGoHome={() => setActiveTab('home')}>
