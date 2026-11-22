@@ -35,10 +35,12 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
   const [currentTrack, setCurrentTrack] = useState<number>(1);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [hasScriptError, setHasScriptError] = useState<boolean>(false);
+  const [emptyResult, setEmptyResult] = useState<boolean>(false);
 
   const widgetRef = useRef<any>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
   const rawId = useId();
-  const containerId = `youglish-embed-${rawId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  const baseId = `youglish-embed-${rawId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
 
   // Sync initialWord changes
   useEffect(() => {
@@ -62,17 +64,20 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
   }, [asModal, onClose]);
 
   // Load YouGlish Widget Script and Instantiate Widget
+  // NOTE: YouGlish's widget.js mutates the target node via `outerHTML`, so we imperatively create
+  // a fresh child node inside `hostRef` rather than letting YG overwrite a React-managed element.
   useEffect(() => {
     let isCancelled = false;
     setIsLoading(true);
     setHasScriptError(false);
+    setEmptyResult(false);
 
     const loadTimeout = window.setTimeout(() => {
       if (!isCancelled) {
         setIsLoading(false);
         setHasScriptError(true);
       }
-    }, 8500);
+    }, 12000);
 
     const clearWatchdog = () => window.clearTimeout(loadTimeout);
 
@@ -86,26 +91,40 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
         return;
       }
 
-      const container = document.getElementById(containerId);
-      if (!container) return;
-      container.innerHTML = '';
+      const host = hostRef.current;
+      if (!host) return;
+
+      // Fresh imperative mount node so YouGlish's `outerHTML` replacement never breaks React reconciliation
+      const mountId = `${baseId}-${Date.now()}`;
+      host.innerHTML = '';
+      const mountEl = document.createElement('div');
+      mountEl.id = mountId;
+      host.appendChild(mountEl);
+
+      const numericWidth = Math.max(320, Math.min(720, Math.round(host.clientWidth || 640)));
 
       try {
-        const widgetInstance = new YG.Widget(containerId, {
-          width: '100%',
-          components: 9, // Video player + Subtitles + controls
+        const widgetInstance = new YG.Widget(mountId, {
+          width: numericWidth,
+          height: 440,
+          components: 72, // Video player (64) + Captions (8)
+          autoStart: 1,
           events: {
             onFetchDone: (event: any) => {
               if (isCancelled) return;
               clearWatchdog();
-              setTotalResults(event.totalResult || 0);
+              const count = Number(event?.totalResult || 0);
+              setTotalResults(count);
               setCurrentTrack(1);
               setIsLoading(false);
+              if (count === 0) {
+                setEmptyResult(true);
+              }
             },
             onVideoChange: (event: any) => {
               if (isCancelled) return;
               clearWatchdog();
-              setCurrentTrack(event.trackNumber || 1);
+              setCurrentTrack(event?.trackNumber || 1);
               setIsLoading(false);
             },
             onCaptionConsumed: () => {
@@ -116,6 +135,7 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
               if (isCancelled) return;
               clearWatchdog();
               setIsLoading(false);
+              setHasScriptError(true);
             }
           }
         });
@@ -180,8 +200,12 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
     return () => {
       isCancelled = true;
       clearWatchdog();
+      widgetRef.current = null;
+      if (hostRef.current) {
+        hostRef.current.innerHTML = '';
+      }
     };
-  }, [currentWord, selectedAccent, containerId]);
+  }, [currentWord, selectedAccent, baseId]);
 
   // Widget Control Handlers
   const handleNext = () => {
@@ -204,8 +228,8 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
 
   const handleSpeedChange = (speed: number) => {
     setPlaybackSpeed(speed);
-    if (widgetRef.current && typeof widgetRef.current.speed === 'function') {
-      widgetRef.current.speed(speed);
+    if (widgetRef.current && typeof widgetRef.current.setSpeed === 'function') {
+      widgetRef.current.setSpeed(speed);
     }
   };
 
@@ -349,10 +373,12 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
           </div>
         )}
 
-        {hasScriptError && (
-          <div className="p-6 text-center space-y-3 z-20">
-            <p className="text-xs text-amber-300 font-bold">
-              Không thể tải YouGlish Widget trực tiếp (có thể do trình duyệt chặn bên thứ ba hoặc mạng chậm).
+        {(hasScriptError || emptyResult) && (
+          <div className="absolute inset-0 z-20 bg-slate-950/95 p-6 flex flex-col items-center justify-center text-center space-y-3">
+            <p className="text-xs text-amber-300 font-bold max-w-md">
+              {emptyResult
+                ? `Không tìm thấy clip YouGlish cho cụm "${currentWord}". Bạn có thể rút gọn từ khóa hoặc mở trực tiếp bên dưới.`
+                : 'Không thể tải YouGlish Widget trực tiếp (có thể do trình duyệt chặn bên thứ ba hoặc mạng chậm).'}
             </p>
             <div className="flex flex-wrap items-center justify-center gap-2">
               <a
@@ -377,7 +403,7 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
           </div>
         )}
 
-        <div id={containerId} className="w-full min-h-[360px]" />
+        <div ref={hostRef} className="w-full min-h-[440px]" />
       </div>
 
       {/* Quick Player Bar (Next / Prev / Replay / Speed) */}
