@@ -19,7 +19,7 @@ interface SubtitlesTabProps {
   onSelectPhrase?: (phrase: string, sub: SubtitleLine, index: number) => void;
 }
 
-export const SubtitlesTab: React.FC<SubtitlesTabProps> = ({
+export const SubtitlesTab: React.FC<SubtitlesTabProps> = React.memo(({
   subtitles,
   activeSubtitleIndex,
   showVietnamese,
@@ -286,4 +286,5 @@ export const SubtitlesTab: React.FC<SubtitlesTabProps> = ({
       </div>
     </div>
   );
-};
+});
+SubtitlesTab.displayName = 'SubtitlesTab';

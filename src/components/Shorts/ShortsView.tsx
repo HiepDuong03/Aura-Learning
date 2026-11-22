@@ -704,9 +704,9 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     });
   }, [savedWords, lessons, selectedWordFilter, accentFilter, registerFilter]);
 
-  // Convert SRS occurrences + API vocab-matched Shorts into uniform SRS review clips
+  // Convert verified SRS occurrences from the user's lessons into uniform SRS review clips.
+  // Excludes fuzzy YouTube Search API clips (which do not guarantee the target word in their transcript).
   const srsReviewClips: VideoLesson[] = useMemo(() => {
-    const apiVocabClips = curatedReels.filter((r) => r.isSrsReviewClip);
     const minedSrsClips: VideoLesson[] = youglishOccurrences.map((occ) => {
       const vaultMatch = savedWords.find(
         (w) => w?.word && occ.targetWord && w.word.toLowerCase().trim() === occ.targetWord.toLowerCase().trim()
@@ -743,14 +743,13 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
 
     const seen = new Set<string>();
     const combined: VideoLesson[] = [];
-    // Prioritize mined lesson clips (guaranteed synced subtitles & exact word timestamps) before live API vocab Shorts
-    for (const clip of [...minedSrsClips, ...apiVocabClips]) {
+    for (const clip of minedSrsClips) {
       if (!clip.id || seen.has(clip.id)) continue;
       seen.add(clip.id);
       combined.push(clip);
     }
     return combined;
-  }, [curatedReels, youglishOccurrences, savedWords]);
+  }, [youglishOccurrences, savedWords]);
 
   const thematicReelsFeed: VideoLesson[] = useMemo(() => {
     const nonSrsCurated = curatedReels.filter((r) => !r.isSrsReviewClip);

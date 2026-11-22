@@ -126,6 +126,7 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
   const [subOffset, setSubOffset] = useState<number>(() => lesson.subtitleOffset || 0);
   const isSeekingRef = useRef<boolean>(false);
   const seekCooldownTimerRef = useRef<any>(null);
+  const lastUiTimeSyncRef = useRef<number>(0);
 
   const rawSubtitles = (lesson.subtitles || []).filter(s => s && typeof s === 'object');
   const subtitles: SubtitleLine[] = React.useMemo(() => {
@@ -354,7 +355,13 @@ export const VideoStudyRoom: React.FC<VideoStudyRoomProps> = ({
         try {
           const time = player.getCurrentTime();
           if (typeof time === 'number' && !isNaN(time)) {
-            setCurrentTime(time);
+            // Throttle UI timestamp state updates to ~4Hz (every 250ms) so the full study room
+            // doesn't re-render 25 times/sec while keeping 40ms precision for loop/auto-pause/subtitle sync.
+            const nowMs = Date.now();
+            if (nowMs - lastUiTimeSyncRef.current >= 250) {
+              lastUiTimeSyncRef.current = nowMs;
+              setCurrentTime(time);
+            }
 
             const ytState = typeof player.getPlayerState === 'function' ? player.getPlayerState() : -1;
 

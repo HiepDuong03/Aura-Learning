@@ -21,15 +21,15 @@ import { ProductionErrorBoundary } from './components/Common/ProductionErrorBoun
 import { LoadingFallback } from './components/Common/LoadingFallback';
 import { useNotify } from './components/Common/ToastProvider';
 
-import { VideoStudyRoom } from './components/Player/VideoStudyRoom';
-import { ShortsView } from './components/Shorts/ShortsView';
-import { VocabularyReview } from './components/Review/VocabularyReview';
-import { WordVaultScreen } from './components/Vocabulary/WordVaultScreen';
-import { WordGarden } from './components/Garden/WordGarden';
-import { RapidSpeakingRoom } from './components/Speaking/RapidSpeakingRoom';
-import { ProfileScreen } from './components/Profile/ProfileScreen';
-import { ImportVideoModal } from './components/Import/ImportVideoModal';
-import { AdminPanelModal } from './components/Admin/AdminPanelModal';
+const VideoStudyRoom = React.lazy(() => import('./components/Player/VideoStudyRoom').then((m) => ({ default: m.VideoStudyRoom })));
+const ShortsView = React.lazy(() => import('./components/Shorts/ShortsView').then((m) => ({ default: m.ShortsView })));
+const VocabularyReview = React.lazy(() => import('./components/Review/VocabularyReview').then((m) => ({ default: m.VocabularyReview })));
+const WordVaultScreen = React.lazy(() => import('./components/Vocabulary/WordVaultScreen').then((m) => ({ default: m.WordVaultScreen })));
+const WordGarden = React.lazy(() => import('./components/Garden/WordGarden').then((m) => ({ default: m.WordGarden })));
+const RapidSpeakingRoom = React.lazy(() => import('./components/Speaking/RapidSpeakingRoom').then((m) => ({ default: m.RapidSpeakingRoom })));
+const ProfileScreen = React.lazy(() => import('./components/Profile/ProfileScreen').then((m) => ({ default: m.ProfileScreen })));
+const ImportVideoModal = React.lazy(() => import('./components/Import/ImportVideoModal').then((m) => ({ default: m.ImportVideoModal })));
+const AdminPanelModal = React.lazy(() => import('./components/Admin/AdminPanelModal').then((m) => ({ default: m.AdminPanelModal })));
 
 const STORAGE_KEYS = {
   SAVED_WORDS: '4you_saved_words_v2',
@@ -56,13 +56,15 @@ export const App: React.FC = () => {
     const freshLesson = mock && (!lesson.subtitles || lesson.subtitles.length < mock.subtitles.length)
       ? { ...lesson, subtitles: mock.subtitles, quizzes: mock.quizzes, duration: mock.duration, durationSec: mock.durationSec }
       : lesson;
-    setInitialVideoTimestampSec(
-      typeof startTimestampSec === 'number' && Number.isFinite(startTimestampSec) && startTimestampSec >= 0
-        ? startTimestampSec
-        : undefined
-    );
-    setCurrentLesson(freshLesson);
-    setCurrentLessonMode(mode);
+    React.startTransition(() => {
+      setInitialVideoTimestampSec(
+        typeof startTimestampSec === 'number' && Number.isFinite(startTimestampSec) && startTimestampSec >= 0
+          ? startTimestampSec
+          : undefined
+      );
+      setCurrentLesson(freshLesson);
+      setCurrentLessonMode(mode);
+    });
   };
 
   // Authentication & Session States (Defined first for proper scoped storage resolution)
@@ -933,26 +935,30 @@ export const App: React.FC = () => {
         onGoHome={() => setCurrentLesson(null)}
       >
         <div className="min-h-screen bg-slate-50 font-['Plus_Jakarta_Sans',sans-serif]">
-          <VideoStudyRoom
-            lesson={currentLesson}
-            onBack={() => {
-              setCurrentLesson(null);
-              setInitialVideoTimestampSec(undefined);
-            }}
-            onSelectWord={handleSelectWord}
-            onUpdateLesson={(updated) => {
-              setCurrentLesson(updated);
-              setLessons((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
-              if (updated.isCustom || (typeof updated.id === 'string' && updated.id.startsWith('lesson-custom-'))) {
-                ankiDb.saveCustomLesson(updated).catch(() => {});
-              }
-            }}
-            initialMode={currentLessonMode}
-            isWordModalOpen={wordModal.isOpen}
-            initialTimestampSec={initialVideoTimestampSec}
-            currentUser={currentUser}
-            onOpenAuth={() => setIsAuthModalOpen(true)}
-          />
+          <React.Suspense fallback={<LoadingFallback />}>
+            <VideoStudyRoom
+              lesson={currentLesson}
+              onBack={() => {
+                React.startTransition(() => {
+                  setCurrentLesson(null);
+                  setInitialVideoTimestampSec(undefined);
+                });
+              }}
+              onSelectWord={handleSelectWord}
+              onUpdateLesson={(updated) => {
+                setCurrentLesson(updated);
+                setLessons((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
+                if (updated.isCustom || (typeof updated.id === 'string' && updated.id.startsWith('lesson-custom-'))) {
+                  ankiDb.saveCustomLesson(updated).catch(() => {});
+                }
+              }}
+              initialMode={currentLessonMode}
+              isWordModalOpen={wordModal.isOpen}
+              initialTimestampSec={initialVideoTimestampSec}
+              currentUser={currentUser}
+              onOpenAuth={() => setIsAuthModalOpen(true)}
+            />
+          </React.Suspense>
 
           <WordPopupModal
             isOpen={wordModal.isOpen}
@@ -986,8 +992,10 @@ export const App: React.FC = () => {
       <Sidebar
         activeTab={activeTab}
         onSelectTab={(tab) => {
-          setActiveTab(tab);
-          setCurrentLesson(null);
+          React.startTransition(() => {
+            setActiveTab(tab);
+            setCurrentLesson(null);
+          });
         }}
         savedWordsCount={savedWords.length}
         streakDays={streakDays}
@@ -1148,8 +1156,10 @@ export const App: React.FC = () => {
       <MobileNav
         activeTab={activeTab}
         onSelectTab={(tab) => {
-          setActiveTab(tab);
-          setCurrentLesson(null);
+          React.startTransition(() => {
+            setActiveTab(tab);
+            setCurrentLesson(null);
+          });
         }}
         savedWordsCount={savedWords.length}
       />
@@ -1205,10 +1215,14 @@ export const App: React.FC = () => {
       />
 
       {/* Admin RBAC Management Panel */}
-      <AdminPanelModal
-        isOpen={isAdminModalOpen}
-        onClose={() => setIsAdminModalOpen(false)}
-      />
+      {isAdminModalOpen && (
+        <React.Suspense fallback={null}>
+          <AdminPanelModal
+            isOpen={isAdminModalOpen}
+            onClose={() => setIsAdminModalOpen(false)}
+          />
+        </React.Suspense>
+      )}
     </div>
   );
 };

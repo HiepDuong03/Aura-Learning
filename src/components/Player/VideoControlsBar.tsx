@@ -19,7 +19,7 @@ interface VideoControlsBarProps {
   onReplayCurrentSub: () => void;
 }
 
-export const VideoControlsBar: React.FC<VideoControlsBarProps> = ({
+export const VideoControlsBar: React.FC<VideoControlsBarProps> = React.memo(({
   isPlaying,
   onTogglePlay,
   playbackRate,
@@ -100,4 +100,5 @@ export const VideoControlsBar: React.FC<VideoControlsBarProps> = ({
       </div>
     </div>
   );
-};
+});
+VideoControlsBar.displayName = 'VideoControlsBar';

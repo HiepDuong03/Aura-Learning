@@ -689,10 +689,16 @@ export const VocabularyReview: React.FC<VocabularyReviewProps> = ({
                           ”
                         </p>
                       </div>
-                      <p className="text-xs font-bold text-slate-500">
-                        Nghĩa gợi ý: <span className="text-teal-700">{currentWord.translation}</span>
-                        {currentWord.phonetic ? ` • ${currentWord.phonetic}` : ''}
-                      </p>
+                      {peekWord ? (
+                        <p className="text-xs font-bold text-slate-600 animate-fade-in">
+                          Nghĩa gợi ý: <span className="text-teal-700">{currentWord.translation}</span>
+                          <span className="text-slate-400"> • {currentWord.word.trim().split(/\s+/).length} từ ({currentWord.word.length} ký tự)</span>
+                        </p>
+                      ) : (
+                        <p className="text-xs font-semibold text-slate-400">
+                          Tự nhớ lại từ/cụm từ bị ẩn ({currentWord.word.trim().split(/\s+/).length} từ) — bấm <span className="font-bold text-slate-600">Gợi ý</span> nếu cần
+                        </p>
+                      )}
                     </div>
                   ) : studyModality === 'typing' ? (
                     <div className="space-y-2 text-center">
