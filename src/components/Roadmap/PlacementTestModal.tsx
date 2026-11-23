@@ -3,6 +3,7 @@ import confetti from 'canvas-confetti';
 import { X, Trophy, CheckCircle2, XCircle, Headphones, ArrowRight } from 'lucide-react';
 import { CurriculumQuizQuestion, PASS_THRESHOLD_PERCENT } from '../../utils/curriculumEngine';
 import { speakWord } from '../../services/dictionaryService';
+import { ModalPortal } from '../Common/ModalPortal';
 
 interface PlacementTestModalProps {
   unitTitle: string;
@@ -64,12 +65,13 @@ export const PlacementTestModal: React.FC<PlacementTestModalProps> = ({
   const isAnswered = q?.kind === 'dictation' ? dictChecked !== null : selected !== null;
 
   return (
-    <div
-      className="fixed inset-0 z-[115] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 animate-fade-in"
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
-    >
+    <ModalPortal onClose={onClose}>
+      <div
+        className="fixed inset-0 z-[115] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 animate-fade-in"
+        role="dialog"
+        aria-modal="true"
+        onClick={onClose}
+      >
       <div
         className="w-full max-w-2xl max-h-[92vh] bg-white rounded-3xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -213,6 +215,7 @@ export const PlacementTestModal: React.FC<PlacementTestModalProps> = ({
           )}
         </div>
       </div>
-    </div>
+      </div>
+    </ModalPortal>
   );
 };

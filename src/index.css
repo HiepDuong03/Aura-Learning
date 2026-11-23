@@ -17,15 +17,13 @@
   }
 }
 
-/* Smooth GPU-composited entrance animation for views, cards, and modals */
+/* Smooth entrance animation — opacity-only so it NEVER creates a CSS transform containing block that traps fixed modals */
 @keyframes fadeIn {
   from {
     opacity: 0;
-    transform: translateY(4px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 

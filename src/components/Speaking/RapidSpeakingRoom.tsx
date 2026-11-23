@@ -5,7 +5,6 @@ import {
   CEFR_LEVEL_SPECS 
 } from '../../data/speakingScenarios';
 import { 
-  ArrowLeft, 
   Plus, 
   X,
   MessageSquare,
@@ -23,6 +22,7 @@ import { authService } from '../../services/authService';
 import { ScopedStorage, PersistedRoleplayMessage } from '../../services/scopedStorage';
 import { ActivePracticeMission, AuthUser, SavedWord } from '../../types';
 import { useNotify } from '../Common/ToastProvider';
+import { ModalPortal } from '../Common/ModalPortal';
 import { GuidedSpeakingCard, ReflexScaffoldingStep } from './GuidedSpeakingCard';
 import { RoleplayChatRoom, RoleplayPersona, ChatMessage } from './RoleplayChatRoom';
 import { WritingCoachPanel } from './WritingCoachPanel';
@@ -98,7 +98,7 @@ const CATEGORIES = ['Tất cả', 'Ăn uống', 'Mua sắm', 'Du lịch', 'Công
 
 export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
   scenarios,
-  onBack,
+  onBack: _onBack,
   onAddCustomScenario,
   currentUser,
   onOpenAuth,
@@ -667,60 +667,54 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
   };
 
   return (
-    <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6 animate-fade-in pb-16 font-['Plus_Jakarta_Sans',sans-serif]">
+    <div className="space-y-5 animate-fade-in pb-12 font-['Plus_Jakarta_Sans',sans-serif]">
       {/* Top Header & Mode Toggle */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
-        <div>
-          <button
-            onClick={onBack}
-            className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 mb-1 transition-colors"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" /> Quay lại
-          </button>
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+        <div className="min-w-0">
           <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
-            <Zap className="w-6 h-6 text-orange-500 fill-orange-500" />
-            Phòng Nói & Viết AI (Output Lab)
+            <Zap className="w-6 h-6 text-orange-500 fill-orange-500 shrink-0" />
+            <span>Phòng Nói & Viết AI (Output Lab)</span>
           </h1>
-          <p className="text-xs text-slate-500 font-medium">
+          <p className="text-xs text-slate-500 font-medium mt-0.5">
             Biến từ vựng & ngữ pháp Lộ trình thành phản xạ Nói & bài Viết IELTS / Công sở chuẩn bản xứ
           </p>
         </div>
 
-        {/* Tab Toggle */}
-        <div className="flex flex-wrap p-1.5 rounded-2xl bg-slate-200/80 gap-1 sm:w-auto">
+        {/* Tab Toggle (Single-row nowrap on desktop, horizontal scroll on narrow screens) */}
+        <div className="inline-flex max-w-full overflow-x-auto no-scrollbar p-1.5 rounded-2xl bg-slate-200/80 gap-1 shrink-0 self-start lg:self-auto">
           <button
             type="button"
             onClick={() => setActiveTab('guided')}
-            className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
               activeTab === 'guided'
                 ? 'bg-white text-teal-700 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Lộ trình phản xạ CEFR
+            Phản xạ CEFR
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('roleplay')}
-            className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'roleplay'
                 ? 'bg-white text-teal-700 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <MessageSquare className="w-3.5 h-3.5" />
+            <MessageSquare className="w-3.5 h-3.5 shrink-0" />
             <span>AI Roleplay Chat</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('writing')}
-            className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'writing'
                 ? 'bg-white text-teal-700 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <PenTool className="w-3.5 h-3.5" />
+            <PenTool className="w-3.5 h-3.5 shrink-0" />
             <span>Luyện Viết AI</span>
           </button>
         </div>
@@ -1046,10 +1040,13 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
 
       {/* Custom Scenario Modal */}
       {isCustomModalOpen && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in"
-          onClick={() => setIsCustomModalOpen(false)}
-        >
+        <ModalPortal onClose={() => setIsCustomModalOpen(false)}>
+          <div 
+            className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in"
+            role="dialog"
+            aria-modal="true"
+            onClick={() => setIsCustomModalOpen(false)}
+          >
           <div 
             className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl border border-slate-100 space-y-4"
             onClick={(e) => e.stopPropagation()}
@@ -1216,7 +1213,8 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
               </button>
             </div>
           </div>
-        </div>
+          </div>
+        </ModalPortal>
       )}
     </div>
   );

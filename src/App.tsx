@@ -1094,6 +1094,7 @@ export const App: React.FC = () => {
       {/* Main Content Area (offset by sidebar on desktop) */}
       <div className="lg:pl-64 flex flex-col min-h-screen">
         <Header
+          activeTab={activeTab}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           onOpenImport={() => setIsImportOpen(true)}
@@ -1112,6 +1113,7 @@ export const App: React.FC = () => {
               <ProductionErrorBoundary componentName="Lộ trình học" onGoHome={() => setActiveTab('roadmap')}>
                 <RoadmapScreen
                   progress={curriculumProgress}
+                  searchQuery={searchQuery}
                   onUpdateProgress={setCurriculumProgress}
                   onSaveWordsToSrs={handleSaveWordsBatchToSrs}
                   onLaunchMission={(mission) => {

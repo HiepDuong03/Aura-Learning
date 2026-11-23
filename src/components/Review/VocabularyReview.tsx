@@ -403,10 +403,10 @@ export const VocabularyReview: React.FC<VocabularyReviewProps> = ({
           <button
             type="button"
             onClick={handleStartSession}
-            className="px-6 py-3 rounded-2xl btn-3d btn-3d-teal text-sm font-black shadow-[0_4px_0_#0f766e] flex items-center justify-center gap-2"
+            className="px-6 py-3 rounded-2xl btn-3d btn-3d-teal text-sm font-black shadow-[0_4px_0_#0f766e] flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
           >
-            <Sparkles className="w-4 h-4 text-amber-300" />
-            Bắt đầu ôn {displayWords.length} thẻ ➔
+            <Sparkles className="w-4 h-4 text-amber-300 shrink-0" />
+            <span>Bắt đầu ôn {displayWords.length} thẻ ➔</span>
           </button>
         )}
       </div>
@@ -601,7 +601,7 @@ export const VocabularyReview: React.FC<VocabularyReviewProps> = ({
                 setIsFlipped(!isFlipped);
               }
             }}
-            className={`relative min-h-[350px] w-full rounded-3xl bg-white border-2 border-slate-200/90 shadow-xl p-6 sm:p-7 flex flex-col justify-between transition-all duration-300 ${
+            className={`relative min-h-[280px] w-full rounded-3xl bg-white border-2 border-slate-200/90 shadow-xl p-5 sm:p-6 flex flex-col justify-between transition-all duration-300 ${
               studyModality === 'cloze' ? 'cursor-pointer hover:border-teal-400' : ''
             }`}
           >

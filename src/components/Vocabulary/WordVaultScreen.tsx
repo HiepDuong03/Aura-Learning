@@ -237,7 +237,8 @@ export const WordVaultScreen: React.FC<WordVaultScreenProps> = ({
           <select
             value={videoFilter}
             onChange={(e) => setVideoFilter(e.target.value)}
-            className="h-10 px-3 rounded-xl border border-slate-200 bg-slate-50 text-xs font-bold text-slate-700 outline-none focus:border-teal-500 max-w-full md:max-w-[220px]"
+            aria-label="Lọc theo nguồn video"
+            className="h-10 py-0 px-3 rounded-xl border border-slate-200 bg-slate-50 text-xs font-bold leading-normal text-slate-700 outline-none focus:border-teal-500 max-w-full md:max-w-[220px]"
           >
             <option value="ALL">🎬 Tất cả nguồn video ({videoTitles.length})</option>
             {videoTitles.map((title) => (
@@ -253,7 +254,8 @@ export const WordVaultScreen: React.FC<WordVaultScreenProps> = ({
             onChange={(e) =>
               setLingqFilter(e.target.value === 'ALL' ? 'ALL' : (Number(e.target.value) as LingQWordStatus))
             }
-            className="h-10 px-3 rounded-xl border border-slate-200 bg-slate-50 text-xs font-bold text-slate-700 outline-none focus:border-teal-500"
+            aria-label="Lọc theo cấp độ LingQ"
+            className="h-10 py-0 px-3 rounded-xl border border-slate-200 bg-slate-50 text-xs font-bold leading-normal text-slate-700 outline-none focus:border-teal-500"
           >
             <option value="ALL">🏷️ Mọi cấp độ LingQ</option>
             <option value="1">1 • Mới lưu</option>

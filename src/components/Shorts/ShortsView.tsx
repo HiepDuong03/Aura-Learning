@@ -1244,7 +1244,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
       if (!container) return;
 
       const mountNodeId = `yt-shorts-pool-slot-${slotId}`;
-      container.innerHTML = `<div id="${mountNodeId}" class="w-full h-full pointer-events-none scale-[1.35] origin-center"></div>`;
+      container.innerHTML = `<div id="${mountNodeId}" class="w-full h-full pointer-events-none"></div>`;
 
       poolRuntimesRef.current[slotId] = {
         clipId: clip.clipId,
@@ -2610,7 +2610,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                   else if (diff < -45) handlePrev();
                   touchStartY.current = null;
                 }}
-                className={`relative h-[calc(100dvh-168px)] min-h-[460px] max-h-[680px] aspect-[9/16] max-w-[82vw] sm:max-w-[382px] rounded-[28px] overflow-hidden shadow-xl bg-slate-950 border border-slate-200 flex flex-col justify-between select-none transition-transform duration-150 ${
+                className={`relative h-[calc(100dvh-224px)] min-h-[440px] max-h-[600px] aspect-[9/16] max-w-[82vw] sm:max-w-[340px] rounded-[28px] overflow-hidden isolate [clip-path:inset(0_round_28px)] shadow-xl bg-slate-950 border border-slate-200 flex flex-col justify-between select-none transition-transform duration-150 ${
                   swipeAnimation === 'slide-up' ? '-translate-y-4 opacity-75 scale-[0.98]' : ''
                 } ${
                   swipeAnimation === 'slide-down' ? 'translate-y-4 opacity-75 scale-[0.98]' : ''
@@ -2682,7 +2682,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                             ref={(el) => {
                               poolContainersRef.current[slotId] = el;
                             }}
-                            className={`absolute inset-0 w-full h-full pointer-events-none [&_iframe]:pointer-events-none [&_iframe]:w-full [&_iframe]:h-full transition-opacity duration-150 ${
+                            className={`absolute inset-0 w-full h-full overflow-hidden pointer-events-none [&_iframe]:pointer-events-none [&_iframe]:w-full [&_iframe]:h-full transition-opacity duration-150 ${
                               isSlotActive ? 'opacity-100 z-[2]' : 'opacity-0 z-[0]'
                             }`}
                           />
@@ -3112,7 +3112,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
 
           {/* ================= REGION 3: SINGLE CLEAN STUDY CARD (FIT-VIEWPORT) ================= */}
           <div className={`lg:col-span-6 xl:col-span-7 w-full ${isMobileDrawerOpen ? 'block' : 'hidden lg:flex lg:flex-col'}`}>
-            <div className="p-4 sm:p-5 rounded-3xl bg-white border border-slate-200/90 shadow-sm flex flex-col gap-3.5 lg:h-[calc(100dvh-168px)] lg:min-h-[460px] lg:max-h-[680px] lg:overflow-hidden">
+            <div className="p-4 sm:p-5 rounded-3xl bg-white border border-slate-200/90 shadow-sm flex flex-col gap-3.5 lg:h-[calc(100dvh-224px)] lg:min-h-[440px] lg:max-h-[600px] lg:overflow-hidden">
               {/* Top Section: American Expression OR SRS Active Recall */}
               {activeExpression && (
                 feedMode === 'reels' ? (
@@ -3160,7 +3160,8 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
 
                     {currentShort.americanUsageNote && (
                       <p className="text-xs sm:text-sm text-slate-600 leading-relaxed bg-slate-50 border border-slate-200/70 rounded-2xl p-3.5">
-                        <strong className="text-slate-900">🇺🇸 Người Mỹ dùng khi nào:</strong> {currentShort.americanUsageNote}
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 text-[10px] font-black mr-1.5 align-middle">US</span>
+                        <strong className="text-slate-900">Người Mỹ dùng khi nào:</strong> {currentShort.americanUsageNote}
                       </p>
                     )}
 

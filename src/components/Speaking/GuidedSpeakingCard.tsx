@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { speakWord } from '../../services/dictionaryService';
+import { ModalPortal } from '../Common/ModalPortal';
+import { AvatarBadge } from '../Common/AvatarBadge';
 import { 
   assessSpeech, 
   DetailedSpeechAssessment, 
@@ -267,10 +269,10 @@ export const GuidedSpeakingCard: React.FC<GuidedSpeakingCardProps> = ({
 
       {/* Conversation Turn Card */}
       <div className="flex items-start gap-4">
-        <img
+        <AvatarBadge
           src={currentTurn.avatar}
-          alt={currentTurn.speakerName}
-          className="size-14 rounded-2xl object-cover ring-2 ring-slate-200 shrink-0 shadow-sm"
+          name={currentTurn.speakerName}
+          className="size-14 rounded-2xl ring-2 ring-slate-200 shadow-sm"
         />
         <div className="flex-1 space-y-1">
           <div className="flex items-center justify-between">
@@ -550,8 +552,17 @@ export const GuidedSpeakingCard: React.FC<GuidedSpeakingCardProps> = ({
 
       {/* Targeted Word Drill Modal (Reverse-Engineered from ELSA Speak) */}
       {drillingWord && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in">
-          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-200 space-y-4 text-center">
+        <ModalPortal onClose={() => setDrillingWord(null)}>
+          <div
+            className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in"
+            role="dialog"
+            aria-modal="true"
+            onClick={() => setDrillingWord(null)}
+          >
+            <div
+              className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-200 space-y-4 text-center"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="flex justify-between items-center pb-2 border-b border-slate-100">
               <span className="text-xs font-black uppercase text-teal-700 tracking-wider">
                 🎯 Luyện phát âm từng từ (ELSA Drill)
@@ -640,7 +651,8 @@ export const GuidedSpeakingCard: React.FC<GuidedSpeakingCardProps> = ({
               </button>
             </div>
           </div>
-        </div>
+          </div>
+        </ModalPortal>
       )}
     </div>
   );

@@ -124,7 +124,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-4 sm:p-6 space-y-6 animate-fade-in pb-16">
+    <div className="max-w-5xl mx-auto space-y-6 animate-fade-in pb-12">
       {/* 2-Pill Switcher: Overview & Word Garden */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex p-1 rounded-2xl bg-white border border-slate-200/90 shadow-xs">
@@ -307,10 +307,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               </span>
               <div>
                 <h3 className="text-sm font-black text-slate-900">
-                  Chỉ số sức khỏe trí nhớ Anki (Memory Retention Health)
+                  Chỉ số sức khỏe trí nhớ FSRS-6 (Memory Retention Health)
                 </h3>
                 <p className="text-[11px] text-slate-600 font-medium">
-                  Đo lường trực tiếp từ nhật ký ôn tập revlog của thuật toán SM-2
+                  Đo lường trực tiếp từ nhật ký ôn tập revlog của thuật toán FSRS-6
                 </p>
               </div>
             </div>
@@ -351,7 +351,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-100 shadow-sm space-y-4">
         <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
           <Sprout className="w-4 h-4 text-teal-600" />
-          Phân bố độ bền trí nhớ từ vựng (SM-2 Algorithm)
+          Phân bố độ bền trí nhớ từ vựng (FSRS-6 Algorithm)
         </h3>
 
         <div className="space-y-3">
@@ -489,8 +489,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               <p className="text-xs text-slate-400">Tự động phát giọng đọc chuẩn AI khi tra từ</p>
             </div>
             <button
+              type="button"
+              role="switch"
+              aria-checked={soundEnabled}
+              aria-label="Âm thanh & Hiệu ứng phát âm"
               onClick={() => setSoundEnabled(!soundEnabled)}
-              className={`w-12 h-6 rounded-full transition-colors relative p-0.5 ${soundEnabled ? 'bg-teal-600' : 'bg-slate-200'}`}
+              className={`w-12 h-6 rounded-full transition-colors relative p-0.5 cursor-pointer ${soundEnabled ? 'bg-teal-600' : 'bg-slate-200'}`}
             >
               <div className={`size-5 rounded-full bg-white shadow-md transition-transform ${soundEnabled ? 'translate-x-6' : 'translate-x-0'}`} />
             </button>
@@ -502,8 +506,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               <p className="text-xs text-slate-400">Phát âm lời thoại nhân vật khi luyện phản xạ nói</p>
             </div>
             <button
+              type="button"
+              role="switch"
+              aria-checked={autoPlayAudio}
+              aria-label="Tự động phát câu thoại AI"
               onClick={() => setAutoPlayAudio(!autoPlayAudio)}
-              className={`w-12 h-6 rounded-full transition-colors relative p-0.5 ${autoPlayAudio ? 'bg-teal-600' : 'bg-slate-200'}`}
+              className={`w-12 h-6 rounded-full transition-colors relative p-0.5 cursor-pointer ${autoPlayAudio ? 'bg-teal-600' : 'bg-slate-200'}`}
             >
               <div className={`size-5 rounded-full bg-white shadow-md transition-transform ${autoPlayAudio ? 'translate-x-6' : 'translate-x-0'}`} />
             </button>

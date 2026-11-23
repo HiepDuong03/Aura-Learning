@@ -210,20 +210,29 @@ export const WritingCoachPanel: React.FC<WritingCoachPanelProps> = ({
 
         <div className="flex items-center justify-between gap-3">
           <span className="text-xs text-slate-400 font-semibold">{text.trim().split(/\s+/).filter(Boolean).length} từ</span>
-          <button
-            type="submit"
-            disabled={isEvaluating || !text.trim()}
-            className="px-6 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs sm:text-sm font-black flex items-center gap-2 shadow-sm cursor-pointer transition-all"
-          >
-            {isEvaluating ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : currentUser ? (
-              <Sparkles className="w-4 h-4" />
-            ) : (
+          {currentUser ? (
+            <button
+              type="submit"
+              disabled={isEvaluating || !text.trim()}
+              className="px-6 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs sm:text-sm font-black flex items-center gap-2 shadow-sm cursor-pointer transition-all whitespace-nowrap"
+            >
+              {isEvaluating ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
+              <span>Chấm điểm & Nâng cấp bằng AI</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onOpenAuth?.()}
+              className="px-6 py-3 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white text-xs sm:text-sm font-black flex items-center gap-2 shadow-sm cursor-pointer transition-all whitespace-nowrap"
+            >
               <Lock className="w-4 h-4" />
-            )}
-            <span>{currentUser ? 'Chấm điểm & Nâng cấp bằng AI' : 'Đăng nhập để dùng AI Chấm Viết'}</span>
-          </button>
+              <span>Đăng nhập để dùng AI Chấm Viết</span>
+            </button>
+          )}
         </div>
       </form>
 

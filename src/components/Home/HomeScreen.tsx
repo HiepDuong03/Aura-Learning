@@ -314,10 +314,21 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 >
                   <div>
                     {/* Thumbnail */}
-                    <div className="relative aspect-video w-full rounded-2xl overflow-hidden bg-slate-100">
+                    <div className="relative aspect-video w-full rounded-2xl overflow-hidden bg-gradient-to-br from-slate-800 to-teal-900">
                       <img
-                        src={lesson.thumbnail}
+                        src={lesson.thumbnail || `https://img.youtube.com/vi/${lesson.youtubeId}/hqdefault.jpg`}
                         alt={lesson.title}
+                        loading="lazy"
+                        onError={(e) => {
+                          const img = e.currentTarget;
+                          const fallback = `https://img.youtube.com/vi/${lesson.youtubeId}/hqdefault.jpg`;
+                          if (img.src !== fallback && !img.dataset.retried) {
+                            img.dataset.retried = '1';
+                            img.src = fallback;
+                          } else {
+                            img.style.opacity = '0';
+                          }
+                        }}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       />
                       <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-colors flex items-center justify-center">

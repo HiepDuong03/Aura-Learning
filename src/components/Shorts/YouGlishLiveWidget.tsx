@@ -11,6 +11,7 @@ import {
   Film,
   X
 } from 'lucide-react';
+import { ModalPortal } from '../Common/ModalPortal';
 
 interface YouGlishLiveWidgetProps {
   initialWord: string;
@@ -462,15 +463,17 @@ export const YouGlishLiveWidget: React.FC<YouGlishLiveWidgetProps> = ({
 
   if (asModal) {
     return (
-      <div
-        className="fixed inset-0 z-[130] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-fade-in"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Nghe "${currentWord}" trong video thực tế`}
-        onClick={onClose}
-      >
-        {content}
-      </div>
+      <ModalPortal onClose={onClose}>
+        <div
+          className="fixed inset-0 z-[130] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-fade-in"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Nghe "${currentWord}" trong video thực tế`}
+          onClick={onClose}
+        >
+          {content}
+        </div>
+      </ModalPortal>
     );
   }
 

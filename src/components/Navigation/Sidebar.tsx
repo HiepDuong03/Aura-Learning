@@ -31,7 +31,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenAdmin
 }) => {
   const navItems: { id: ActiveTab; label: string; icon: React.ComponentType<{ className?: string }>; color: string; badge?: string | number }[] = [
-    { id: 'roadmap', label: 'Lộ trình', icon: Compass, color: 'text-teal-600', badge: 'IELTS' },
+    { id: 'roadmap', label: 'Lộ trình', icon: Compass, color: 'text-teal-600' },
     { id: 'watch', label: 'Xem & Nghe', icon: PlaySquare, color: 'text-rose-500' },
     { id: 'memory', label: 'Ôn tập & Kho từ', icon: Layers, color: 'text-purple-500', badge: savedWordsCount > 0 ? savedWordsCount : undefined },
     { id: 'output', label: 'Nói & Viết AI', icon: Mic, color: 'text-emerald-500', badge: 'AI' },

@@ -43,6 +43,7 @@ import { PlacementTestModal } from './PlacementTestModal';
 
 interface RoadmapScreenProps {
   progress: CurriculumProgressState;
+  searchQuery?: string;
   onUpdateProgress: (updater: (prev: CurriculumProgressState) => CurriculumProgressState) => void;
   onSaveWordsToSrs: (words: Array<{ def: WordDefinition; contextSentence?: string; videoTitle?: string }>) => number;
   onLaunchMission: (mission: ActivePracticeMission) => void;
@@ -50,6 +51,7 @@ interface RoadmapScreenProps {
 
 export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
   progress,
+  searchQuery = '',
   onUpdateProgress,
   onSaveWordsToSrs,
   onLaunchMission
@@ -96,10 +98,23 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
 
   const currentUnits: CurriculumUnitMeta[] = useMemo(() => {
     if (!manifest) return [];
-    if (track === 'ielts_topics') return manifest.ieltsTopics;
-    if (track === 'cefr_vocab') return manifest.cefrVocab;
-    return manifest.grammar;
-  }, [manifest, track]);
+    const raw =
+      track === 'ielts_topics'
+        ? manifest.ieltsTopics
+        : track === 'cefr_vocab'
+          ? manifest.cefrVocab
+          : manifest.grammar;
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return raw;
+    const filtered = raw.filter(
+      (u) =>
+        u.titleEn.toLowerCase().includes(q) ||
+        u.titleVi.toLowerCase().includes(q) ||
+        u.descVi.toLowerCase().includes(q) ||
+        (u.cefr || '').toLowerCase().includes(q)
+    );
+    return filtered.length > 0 ? filtered : raw;
+  }, [manifest, track, searchQuery]);
 
   // Reset selected unit slug when switching track
   useEffect(() => {
@@ -249,12 +264,12 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
           </p>
         </div>
 
-        {/* 3 Track Tabs */}
-        <div className="inline-flex p-1.5 rounded-2xl bg-white border border-slate-200/90 shadow-xs self-start lg:self-auto">
+        {/* 3 Track Tabs (Single-line scrollable pill bar on narrow screens) */}
+        <div className="inline-flex max-w-full overflow-x-auto no-scrollbar p-1.5 rounded-2xl bg-white border border-slate-200/90 shadow-xs self-start lg:self-auto shrink-0">
           {(
             [
               { id: 'grammar', label: 'Ngữ pháp' },
-              { id: 'ielts_topics', label: 'Từ vựng chủ đề IELTS' },
+              { id: 'ielts_topics', label: 'Từ vựng IELTS' },
               { id: 'cefr_vocab', label: 'Từ vựng CEFR' }
             ] as const
           ).map((item) => (
@@ -262,7 +277,7 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
               key={item.id}
               type="button"
               onClick={() => setTrack(item.id)}
-              className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+              className={`px-3.5 py-2 rounded-xl text-xs font-black whitespace-nowrap transition-all cursor-pointer ${
                 track === item.id
                   ? 'bg-teal-900 text-white shadow-sm'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
@@ -274,10 +289,47 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
         </div>
       </div>
 
+      {/* Mobile Compact Horizontal Unit/Topic Picker (keeps Placement Test & Bài 01 above the fold on mobile!) */}
+      <div className="lg:hidden space-y-2">
+        <div className="flex items-center justify-between px-1">
+          <span className="text-[11px] font-black uppercase tracking-wider text-teal-800">
+            {track === 'ielts_topics' ? `Chọn chủ đề IELTS (${currentUnits.length})` : `Chọn chặng CEFR (${currentUnits.length})`}
+          </span>
+          <span className="text-[10px] font-bold text-slate-400">Vuốt ngang →</span>
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-1.5 no-scrollbar">
+          {currentUnits.map((unit, idx) => {
+            const isSelected = activeUnitMeta?.slug === unit.slug;
+            const unitUnlocked = isUnitUnlocked(unit.id, idx, track, progress);
+            const badgeText = unit.cefr || String(unit.order).padStart(2, '0');
+            return (
+              <button
+                key={`mob-${unit.id}`}
+                type="button"
+                onClick={() => setSelectedUnitSlug(unit.slug)}
+                className={`px-3 py-2 rounded-2xl border text-xs font-black whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-all cursor-pointer ${
+                  isSelected
+                    ? 'bg-teal-900 text-white border-teal-900 shadow-sm'
+                    : unitUnlocked
+                      ? 'bg-white text-slate-700 border-slate-200 hover:border-teal-300'
+                      : 'bg-slate-50 text-slate-400 border-slate-200'
+                }`}
+              >
+                <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-black ${isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                  {badgeText}
+                </span>
+                <span>{track === 'ielts_topics' ? unit.titleEn : unit.titleVi}</span>
+                {!unitUnlocked && !progress.unlockedUnits[unit.id] && <Lock className="w-3 h-3 opacity-70" />}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Main 2-Column Studio Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* LEFT COLUMN: Unit / Topic Picker */}
-        <div className="lg:col-span-4 xl:col-span-3 rounded-3xl bg-white border border-slate-200/90 shadow-sm overflow-hidden">
+        {/* LEFT COLUMN (Desktop Only): Unit / Topic Picker */}
+        <div className="hidden lg:block lg:col-span-4 rounded-3xl bg-white border border-slate-200/90 shadow-sm overflow-hidden sticky top-20">
           <div className="p-4 bg-teal-900 text-white">
             <p className="text-[10px] font-black uppercase tracking-widest text-teal-300">
               {track === 'ielts_topics'
@@ -298,7 +350,7 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
             </p>
           </div>
 
-          <div className="p-2.5 max-h-[560px] overflow-y-auto space-y-1.5">
+          <div className="p-2.5 max-h-[calc(100vh-220px)] overflow-y-auto space-y-1.5">
             {currentUnits.map((unit, idx) => {
               const isSelected = activeUnitMeta?.slug === unit.slug;
               const unitUnlocked = isUnitUnlocked(unit.id, idx, track, progress);
@@ -335,12 +387,12 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
                     {badgeText}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-1">
-                      <p className={`text-xs font-black truncate ${isSelected ? 'text-teal-950' : 'text-slate-800'}`}>
+                    <div className="flex items-start justify-between gap-1.5">
+                      <p className={`text-xs font-black leading-snug line-clamp-2 ${isSelected ? 'text-teal-950' : 'text-slate-800'}`}>
                         {track === 'ielts_topics' ? unit.titleEn : unit.titleVi}
                       </p>
                       {!unitUnlocked && !progress.unlockedUnits[unit.id] && (
-                        <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-500 shrink-0">
+                        <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-500 shrink-0 mt-0.5">
                           Khóa
                         </span>
                       )}
@@ -359,7 +411,7 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
         </div>
 
         {/* RIGHT COLUMN: Unit Header, Placement Test Banner & Lessons */}
-        <div className="lg:col-span-8 xl:col-span-9 rounded-3xl bg-white border border-slate-200/90 shadow-sm p-5 sm:p-6 space-y-5">
+        <div className="lg:col-span-8 rounded-3xl bg-white border border-slate-200/90 shadow-sm p-4 sm:p-6 space-y-5">
           {isLoadingUnit ? (
             <div className="min-h-[380px] flex flex-col items-center justify-center gap-3 text-slate-500">
               <Loader2 className="w-7 h-7 text-teal-600 animate-spin" />
@@ -471,9 +523,9 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
                         }`}
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
-                          <div className="flex items-center gap-2.5">
-                            <h4 className="text-base font-black text-slate-900">{lesson.title}</h4>
-                            <span className="text-xs font-semibold text-slate-500">
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <h4 className="text-base font-black text-slate-900 whitespace-nowrap shrink-0">{lesson.title}</h4>
+                            <span className="text-xs font-semibold text-slate-500 truncate">
                               {lesson.wordCount} mục từ · {lesson.words.slice(0, 3).map((w) => w.word).join(', ')}...
                             </span>
                           </div>
@@ -675,10 +727,17 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
                         </div>
 
                         <div className="hidden sm:flex items-center gap-2 shrink-0">
-                          <span className="text-xs font-bold text-teal-700 flex items-center gap-1">
-                            <BookOpen className="w-3.5 h-3.5" />
-                            {passed ? 'Xem lại' : 'Học bài →'}
-                          </span>
+                          {unlocked ? (
+                            <span className="text-xs font-bold text-teal-700 flex items-center gap-1 whitespace-nowrap">
+                              <BookOpen className="w-3.5 h-3.5" />
+                              {passed ? 'Xem lại' : 'Học bài →'}
+                            </span>
+                          ) : (
+                            <span className="text-xs font-bold text-slate-400 flex items-center gap-1 whitespace-nowrap">
+                              <Lock className="w-3.5 h-3.5" />
+                              Chưa mở
+                            </span>
+                          )}
                         </div>
                       </button>
                     );

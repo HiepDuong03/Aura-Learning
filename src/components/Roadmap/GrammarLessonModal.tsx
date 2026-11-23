@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import confetti from 'canvas-confetti';
 import { X, CheckCircle2, XCircle, Sparkles, AlertTriangle, PenTool, ArrowRight, RotateCcw } from 'lucide-react';
 import { ActivePracticeMission, CurriculumGrammarLesson, LessonCompletionRecord } from '../../types';
+import { ModalPortal } from '../Common/ModalPortal';
 
 interface GrammarLessonModalProps {
   lesson: CurriculumGrammarLesson;
@@ -73,12 +74,13 @@ export const GrammarLessonModal: React.FC<GrammarLessonModalProps> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-[110] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 animate-fade-in"
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
-    >
+    <ModalPortal onClose={onClose}>
+      <div
+        className="fixed inset-0 z-[110] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 animate-fade-in"
+        role="dialog"
+        aria-modal="true"
+        onClick={onClose}
+      >
       <div
         className="w-full max-w-2xl max-h-[92vh] bg-white rounded-3xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -248,6 +250,7 @@ export const GrammarLessonModal: React.FC<GrammarLessonModalProps> = ({
           )}
         </div>
       </div>
-    </div>
+      </div>
+    </ModalPortal>
   );
 };

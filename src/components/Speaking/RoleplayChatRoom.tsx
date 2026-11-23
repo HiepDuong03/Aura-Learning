@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   Target
 } from 'lucide-react';
+import { AvatarBadge } from '../Common/AvatarBadge';
 
 export interface RoleplayPersona {
   id: string;
@@ -82,16 +83,18 @@ export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
   onToggleAutoSendVoice,
   onSavePhraseToSrs
 }) => {
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatListRef = useRef<HTMLDivElement>(null);
   const [savedRephraseIds, setSavedRephraseIds] = useState<Set<string>>(new Set());
 
-  // Auto-scroll to bottom when new messages arrive
+  // Container-scoped auto-scroll (NEVER scrolls the outer window/header out of view!)
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = chatListRef.current;
+    if (!el || messages.length <= 1) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [messages, isAiThinking]);
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-5 animate-fade-in">
       {/* Persona Picker Carousel */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {personas.map((p) => {
@@ -101,17 +104,17 @@ export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
               key={p.id}
               type="button"
               onClick={() => onSelectPersona(p)}
-              className={`p-4 rounded-3xl border text-left transition-all ${
+              className={`p-4 rounded-3xl border text-left transition-all cursor-pointer ${
                 isSelected
-                  ? 'bg-teal-600 text-white border-teal-600 shadow-md scale-[1.02]'
+                  ? 'bg-teal-600 text-white border-teal-600 shadow-md scale-[1.01]'
                   : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-800'
               }`}
             >
               <div className="flex items-center gap-3 mb-2">
-                <img
+                <AvatarBadge
                   src={p.avatar}
-                  alt={p.name}
-                  className="size-11 rounded-2xl object-cover ring-2 ring-white/50 shrink-0 shadow-xs"
+                  name={p.name}
+                  className="size-11 rounded-2xl ring-2 ring-white/50 shadow-xs"
                 />
                 <div className="min-w-0">
                   <h4 className="text-sm font-black truncate">{p.name}</h4>
@@ -129,14 +132,14 @@ export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
       </div>
 
       {/* Interactive Chat Canvas */}
-      <div className="rounded-[36px] bg-white border border-slate-200/80 p-5 sm:p-6 shadow-sm flex flex-col h-[560px]">
+      <div className={`rounded-[32px] bg-white border border-slate-200/80 p-5 sm:p-6 shadow-sm flex flex-col ${isLockedForGuest ? 'h-[360px]' : 'h-[480px] sm:h-[520px]'}`}>
         {/* Header Info */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <div className="flex items-center gap-3">
-            <img
+            <AvatarBadge
               src={selectedPersona.avatar}
-              alt={selectedPersona.name}
-              className="size-10 rounded-xl object-cover ring-1 ring-slate-200 shrink-0"
+              name={selectedPersona.name}
+              className="size-10 rounded-xl ring-1 ring-slate-200"
             />
             <div>
               <div className="flex flex-wrap items-center gap-2">
@@ -213,7 +216,7 @@ export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
         </div>
 
         {/* Message History List */}
-        <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1">
+        <div ref={chatListRef} className="flex-1 overflow-y-auto py-4 space-y-4 pr-1">
           {messages.map((msg) => {
             const isUser = msg.sender === 'User';
             return (
@@ -314,8 +317,6 @@ export const RoleplayChatRoom: React.FC<RoleplayChatRoomProps> = ({
               <span>{selectedPersona.name} đang suy nghĩ câu trả lời...</span>
             </div>
           )}
-
-          <div ref={chatEndRef} />
         </div>
 
         {/* Input Controls or Auth Gate */}

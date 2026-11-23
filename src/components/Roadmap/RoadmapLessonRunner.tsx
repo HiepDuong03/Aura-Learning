@@ -26,6 +26,7 @@ import {
   LessonCompletionRecord,
   WordDefinition
 } from '../../types';
+import { ModalPortal } from '../Common/ModalPortal';
 import {
   buildLessonQuizQuestions,
   curriculumWordToWordDefinition,
@@ -257,12 +258,13 @@ export const RoadmapLessonRunner: React.FC<RoadmapLessonRunnerProps> = ({
   const quizPassedNow = quizPercent >= PASS_THRESHOLD_PERCENT;
 
   return (
-    <div
-      className="fixed inset-0 z-[110] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 animate-fade-in"
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
-    >
+    <ModalPortal onClose={videoModalWord ? undefined : onClose}>
+      <div
+        className="fixed inset-0 z-[110] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 animate-fade-in"
+        role="dialog"
+        aria-modal="true"
+        onClick={onClose}
+      >
       <div
         className="w-full max-w-2xl max-h-[92vh] bg-white rounded-3xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -779,6 +781,7 @@ export const RoadmapLessonRunner: React.FC<RoadmapLessonRunnerProps> = ({
           onClose={() => setVideoModalWord(null)}
         />
       )}
-    </div>
+      </div>
+    </ModalPortal>
   );
 };

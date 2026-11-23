@@ -11,12 +11,12 @@ import {
   Volume2,
   X,
   ArrowRight,
-  Clock,
   BrainCircuit
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { speakWord } from '../../services/dictionaryService';
 import { calculateRetrievability } from '../../services/ankiScheduler';
+import { ModalPortal } from '../Common/ModalPortal';
 
 interface WordGardenProps {
   savedWords: SavedWord[];
@@ -63,19 +63,11 @@ export const WordGarden: React.FC<WordGardenProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          {dueWords.length > 0 && onNavigateToReview && (
-            <button
-              onClick={onNavigateToReview}
-              className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl btn-3d bg-emerald-600 text-white shadow-[0_3px_0_#059669] text-xs font-black animate-pulse"
-            >
-              <Clock className="w-4 h-4" /> Ôn {dueWords.length} cây cần tưới ➔
-            </button>
-          )}
-
+        <div className="flex items-center gap-2 shrink-0">
           <button
+            type="button"
             onClick={handleWaterGarden}
-            className={`flex items-center gap-1.5 px-4 py-2.5 rounded-2xl btn-3d text-xs font-bold transition-all ${
+            className={`flex items-center gap-1.5 px-4 py-2.5 rounded-2xl btn-3d text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
               isWatered
                 ? 'bg-sky-600 text-white shadow-[0_3px_0_#0369a1] scale-105'
                 : 'bg-sky-500 text-white shadow-[0_3px_0_#0284c7]'
@@ -87,28 +79,29 @@ export const WordGarden: React.FC<WordGardenProps> = ({
         </div>
       </div>
 
-      {/* Due Words Notification Banner */}
+      {/* Due Words Notification Banner (Single clear CTA, no duplication) */}
       {dueWords.length > 0 && (
-        <div className="p-4 rounded-3xl bg-amber-50 border border-amber-200/90 flex items-center justify-between shadow-sm">
+        <div className="p-4 rounded-3xl bg-amber-50 border border-amber-200/90 flex flex-wrap items-center justify-between gap-3 shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="size-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center font-black">
+            <div className="size-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center font-black shrink-0">
               💧
             </div>
             <div>
               <p className="text-xs font-black text-slate-900">
-                Có {dueWords.length} mầm cây đang khô hạn và cần bạn ôn tập hôm nay!
+                Có {dueWords.length} mầm cây đang cần tưới nước (đến hạn ôn hôm nay)!
               </p>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                Bấm vào cây để xem thẻ từ hoặc bắt đầu phiên ôn tập thuật toán SM-2.
+                Bấm vào từng cây để xem thẻ từ hoặc bắt đầu phiên ôn tập thuật toán FSRS-6.
               </p>
             </div>
           </div>
           {onNavigateToReview && (
             <button
+              type="button"
               onClick={onNavigateToReview}
-              className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black transition-all flex items-center gap-1"
+              className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black transition-all flex items-center gap-1 whitespace-nowrap cursor-pointer"
             >
-              Ôn ngay <ArrowRight className="w-3.5 h-3.5" />
+              Ôn {dueWords.length} cây ngay <ArrowRight className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
@@ -150,7 +143,7 @@ export const WordGarden: React.FC<WordGardenProps> = ({
       </div>
 
       {/* Visual Garden Canvas */}
-      <div className={`relative rounded-[36px] bg-gradient-to-b from-sky-200 via-sky-100 to-emerald-100 p-8 border border-sky-200 shadow-inner overflow-hidden min-h-[380px] flex flex-col justify-between transition-all ${
+      <div className={`relative rounded-[32px] bg-gradient-to-b from-sky-200 via-sky-100 to-emerald-100 p-6 border border-sky-200 shadow-inner overflow-hidden min-h-[280px] flex flex-col justify-between transition-all ${
         isWatered ? 'ring-4 ring-sky-300 ring-offset-2' : ''
       }`}>
         {/* Floating Sun and Clouds */}
@@ -228,8 +221,17 @@ export const WordGarden: React.FC<WordGardenProps> = ({
 
       {/* PLANT INSPECTION POPUP MODAL */}
       {selectedPlant && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-slate-100 space-y-4">
+        <ModalPortal onClose={() => setSelectedPlant(null)}>
+          <div
+            className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/55 backdrop-blur-sm p-4 animate-fade-in"
+            role="dialog"
+            aria-modal="true"
+            onClick={() => setSelectedPlant(null)}
+          >
+            <div
+              className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-slate-100 space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="text-2xl">🌱</span>
@@ -306,12 +308,13 @@ export const WordGarden: React.FC<WordGardenProps> = ({
                   }}
                   className="flex-1 py-2.5 rounded-2xl btn-3d btn-3d-teal text-white text-xs font-black shadow-[0_3px_0_#0f766e]"
                 >
-                  Mở phòng ôn tập SM-2
+                  Mở phòng ôn tập FSRS-6
                 </button>
               )}
             </div>
           </div>
-        </div>
+          </div>
+        </ModalPortal>
       )}
     </div>
   );
