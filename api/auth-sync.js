@@ -25,15 +25,21 @@ function resolveSecretKey(explicitSecret, secretDir) {
     console.error('[CRITICAL SECURITY] JWT_SECRET is not configured (>=16 chars) in production!');
   }
   const secretPath = path.join(secretDir, '.jwt_secret');
-  if (!fs.existsSync(secretDir)) {
-    fs.mkdirSync(secretDir, { recursive: true });
+  try {
+    if (!fs.existsSync(secretDir)) {
+      fs.mkdirSync(secretDir, { recursive: true });
+    }
+    if (fs.existsSync(secretPath)) {
+      return fs.readFileSync(secretPath, 'utf8').trim();
+    }
+    const generated = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(secretPath, generated, 'utf8');
+    return generated;
+  } catch {
+    // Read-only serverless filesystems (e.g. Vercel /var/task): fall back to an ephemeral in-memory secret
+    // so public endpoints like /api/auth/config never crash with ENOENT. Always set JWT_SECRET in production.
+    return crypto.randomBytes(32).toString('hex');
   }
-  if (fs.existsSync(secretPath)) {
-    return fs.readFileSync(secretPath, 'utf8').trim();
-  }
-  const generated = crypto.randomBytes(32).toString('hex');
-  fs.writeFileSync(secretPath, generated, 'utf8');
-  return generated;
 }
 
 function hashPassword(password, salt) {
