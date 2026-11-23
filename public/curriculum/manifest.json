@@ -1,11 +1,16 @@
 {
-  "version": "1.0.0",
-  "generatedAt": "2026-11-23T08:14:43.789Z",
+  "version": "2.0.0",
+  "generatedAt": "2026-11-23T15:36:01.417Z",
   "attributions": [
     {
       "name": "Word Atlas (IELTS & CEFR)",
       "url": "https://github.com/designfuchen/word-atlas",
       "license": "MIT / CC BY 4.0"
+    },
+    {
+      "name": "AWL 570 & NAWL 963 Academic Word Lists",
+      "url": "https://github.com/lpmi-13/machine_readable_wordlists",
+      "license": "Open Academic Corpus"
     },
     {
       "name": "Oxford 3000 Multilingual Flashcards",
@@ -20,7 +25,7 @@
   ],
   "stats": {
     "totalIeltsTopics": 19,
-    "totalIeltsWords": 1900,
+    "totalIeltsWords": 1754,
     "totalCefrWords": 1700,
     "totalGrammarLessons": 60
   },
@@ -129,8 +134,8 @@
       "titleVi": "Truyền thông & Báo chí",
       "descVi": "Mạng xã hội, tin tức, quảng cáo và kỹ năng truyền đạt thông tin.",
       "color": "pink",
-      "totalWords": 100,
-      "totalLessons": 10,
+      "totalWords": 52,
+      "totalLessons": 6,
       "dataPath": "/curriculum/topics/media.json"
     },
     {
@@ -153,8 +158,8 @@
       "titleVi": "Đô thị & Giao thông",
       "descVi": "Quy hoạch thành phố, nhà ở, giao thông công cộng và đô thị hóa.",
       "color": "orange",
-      "totalWords": 100,
-      "totalLessons": 10,
+      "totalWords": 77,
+      "totalLessons": 8,
       "dataPath": "/curriculum/topics/city.json"
     },
     {
@@ -237,8 +242,8 @@
       "titleVi": "Thể thao & Rèn luyện",
       "descVi": "Thi đấu, tinh thần đồng đội, kỷ luật và rèn luyện thể lực.",
       "color": "sky",
-      "totalWords": 100,
-      "totalLessons": 10,
+      "totalWords": 25,
+      "totalLessons": 3,
       "dataPath": "/curriculum/topics/sport.json"
     },
     {

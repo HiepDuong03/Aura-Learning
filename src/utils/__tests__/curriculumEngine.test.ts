@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   buildLessonQuizQuestions,
@@ -147,5 +149,49 @@ describe('curriculumEngine', () => {
       maxStars: 12,
       percent: 25
     });
+  });
+
+  it('enforces IELTS curriculum data integrity: 100% B2-C2, zero A1/A2, zero CJK leaks, zero untranslated meanings', () => {
+    const curriculumRoot = path.resolve(process.cwd(), 'public', 'curriculum');
+    const manifest = JSON.parse(fs.readFileSync(path.join(curriculumRoot, 'manifest.json'), 'utf8'));
+    const allowedIeltsLevels = new Set(['B2', 'C1', 'C2']);
+    let totalIeltsWords = 0;
+    let awlOrNawlCount = 0;
+
+    for (const meta of manifest.ieltsTopics) {
+      const unitData = JSON.parse(
+        fs.readFileSync(path.join(curriculumRoot, 'topics', `${meta.slug}.json`), 'utf8')
+      );
+      expect(unitData.lessons.length).toBeGreaterThan(0);
+      for (const lesson of unitData.lessons) {
+        for (const w of lesson.words) {
+          totalIeltsWords += 1;
+          expect(allowedIeltsLevels.has(w.cefr)).toBe(true);
+          expect(/[\u4e00-\u9fff]/.test(JSON.stringify(w))).toBe(false);
+          expect(w.meaningVi.trim().length).toBeGreaterThan(0);
+          expect(w.meaningVi.trim().toLowerCase()).not.toBe(w.word.trim().toLowerCase());
+          expect(w.exampleIeltsEn.trim().length).toBeGreaterThan(15);
+          if (w.academicTag === 'AWL' || w.academicTag === 'NAWL') awlOrNawlCount += 1;
+        }
+      }
+    }
+
+    expect(totalIeltsWords).toBe(manifest.stats.totalIeltsWords);
+    expect(totalIeltsWords).toBeGreaterThanOrEqual(1700);
+    expect(awlOrNawlCount).toBeGreaterThanOrEqual(400);
+
+    for (const meta of manifest.cefrVocab) {
+      const unitData = JSON.parse(
+        fs.readFileSync(path.join(curriculumRoot, 'cefr', `${meta.slug}.json`), 'utf8')
+      );
+      for (const lesson of unitData.lessons) {
+        for (const w of lesson.words) {
+          expect(w.cefr).toBe(meta.cefr);
+          expect(/[\u4e00-\u9fff]/.test(JSON.stringify(w))).toBe(false);
+          expect(w.meaningVi.trim().length).toBeGreaterThan(0);
+          expect(w.meaningVi.trim().toLowerCase()).not.toBe(w.word.trim().toLowerCase());
+        }
+      }
+    }
   });
 });

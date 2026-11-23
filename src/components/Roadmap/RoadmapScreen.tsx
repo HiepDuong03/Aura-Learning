@@ -343,7 +343,7 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
             </h2>
             <p className="text-[11px] text-teal-200 mt-0.5">
               {track === 'ielts_topics'
-                ? `${manifest.stats.totalIeltsTopics} chủ đề · ${manifest.stats.totalIeltsWords.toLocaleString()} mục từ`
+                ? `${manifest.stats.totalIeltsTopics} chủ đề · ${manifest.stats.totalIeltsWords.toLocaleString()} từ B2–C2 (AWL 570)`
                 : track === 'cefr_vocab'
                   ? `6 bậc A1 → C2 · ${manifest.stats.totalCefrWords.toLocaleString()} mục từ`
                   : `6 bậc A1 → C2 · ${manifest.stats.totalGrammarLessons} chủ điểm`}
@@ -523,8 +523,17 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
                         }`}
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
-                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap sm:flex-nowrap">
                             <h4 className="text-base font-black text-slate-900 whitespace-nowrap shrink-0">{lesson.title}</h4>
+                            {(() => {
+                              const levels = Array.from(new Set(lesson.words.map((w) => w.cefr)));
+                              const bandText = levels.length > 1 ? `${levels[0]}–${levels[levels.length - 1]}` : levels[0] || 'B2';
+                              return (
+                                <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] font-black whitespace-nowrap shrink-0">
+                                  {bandText}
+                                </span>
+                              );
+                            })()}
                             <span className="text-xs font-semibold text-slate-500 truncate">
                               {lesson.wordCount} mục từ · {lesson.words.slice(0, 3).map((w) => w.word).join(', ')}...
                             </span>
@@ -773,6 +782,7 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
       {activeVocabRunner && vocabUnitData && (
         <RoadmapLessonRunner
           lesson={activeVocabRunner.lesson}
+          trackType={vocabUnitData.trackType}
           unitTitle={track === 'ielts_topics' ? vocabUnitData.titleEn : vocabUnitData.titleVi}
           unitTopic={vocabUnitData.titleEn}
           unitCefr={(vocabUnitData.cefr || activeVocabRunner.lesson.words[0]?.cefr || 'B1') as CefrLevel}

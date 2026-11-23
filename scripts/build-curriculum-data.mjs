@@ -8,6 +8,9 @@ const OUT_DIR = path.join(__dirname, '..', 'public', 'curriculum');
 
 const WORD_ATLAS_URL = 'https://raw.githubusercontent.com/designfuchen/word-atlas/main/data/word-atlas.json';
 const DNIZFOR_OXFORD_URL = 'https://raw.githubusercontent.com/dnizfor/vocabulary-flashcard-dataset/main/data/data.json';
+const AWL_URL = 'https://raw.githubusercontent.com/lpmi-13/machine_readable_wordlists/master/Academic/AWL/AWL.json';
+const NAWL_URL = 'https://raw.githubusercontent.com/lpmi-13/machine_readable_wordlists/master/Academic/NAWL/NAWL.json';
+const IELTS_ALLOWED_CEFR = new Set(['B2', 'C1', 'C2']);
 
 const TOPIC_META = [
   { id: 'education', titleEn: 'Education & Learning', titleVi: 'Giáo dục & Học tập', descVi: 'Từ vựng về trường học, học thuật, nghiên cứu và phát triển kỹ năng.', color: 'teal' },
@@ -1131,12 +1134,35 @@ async function main() {
   fs.mkdirSync(path.join(OUT_DIR, 'cefr'), { recursive: true });
   fs.mkdirSync(path.join(OUT_DIR, 'grammar'), { recursive: true });
 
-  const [wordAtlasRaw, dnizforRaw] = await Promise.all([
+  const [wordAtlasRaw, dnizforRaw, awlRaw, nawlRaw] = await Promise.all([
     fetchJson(WORD_ATLAS_URL),
-    fetchJson(DNIZFOR_OXFORD_URL)
+    fetchJson(DNIZFOR_OXFORD_URL),
+    fetchJson(AWL_URL),
+    fetchJson(NAWL_URL)
   ]);
 
-  console.log(`Loaded Word Atlas: ${wordAtlasRaw.length} entries, Oxford VI: ${dnizforRaw.length} entries`);
+  // Build AWL (570 academic word families) & NAWL (963 academic word families) lookup sets
+  const awlSet = new Set();
+  for (const sublist of Object.values(awlRaw || {})) {
+    if (!sublist || typeof sublist !== 'object') continue;
+    for (const [headword, meta] of Object.entries(sublist)) {
+      awlSet.add(headword.toLowerCase().trim());
+      if (Array.isArray(meta?.subwords)) {
+        for (const sw of meta.subwords) awlSet.add(String(sw).toLowerCase().trim());
+      }
+    }
+  }
+  const nawlSet = new Set();
+  for (const [headword, subwords] of Object.entries(nawlRaw || {})) {
+    nawlSet.add(headword.toLowerCase().trim());
+    if (Array.isArray(subwords)) {
+      for (const sw of subwords) nawlSet.add(String(sw).toLowerCase().trim());
+    }
+  }
+
+  console.log(
+    `Loaded Word Atlas: ${wordAtlasRaw.length}, Oxford VI: ${dnizforRaw.length}, AWL forms: ${awlSet.size}, NAWL forms: ${nawlSet.size}`
+  );
 
   // Build Vietnamese translation map from dnizfor (MIT)
   const viMap = new Map();
@@ -1147,10 +1173,14 @@ async function main() {
       ? item.translations.find((t) => t?.language === 'vi' && t?.translation)
       : null;
     if (viEntry?.translation) {
-      viMap.set(key, String(viEntry.translation).trim());
+      const cleanedVi = String(viEntry.translation).trim();
+      // Ignore Oxford entries where translation accidentally equals the English word
+      if (cleanedVi.toLowerCase() !== key) {
+        viMap.set(key, cleanedVi);
+      }
     }
   }
-  console.log(`Indexed ${viMap.size} pre-built Vietnamese translations from Oxford 3000 dataset.`);
+  console.log(`Indexed ${viMap.size} verified Vietnamese translations from Oxford 3000 dataset.`);
 
   // Normalize Word Atlas entries
   const normalizedPool = [];
@@ -1169,13 +1199,22 @@ async function main() {
     const ex0 = Array.isArray(raw.ex) && raw.ex[0] ? String(raw.ex[0].en || '').trim() : '';
     const ex1 = Array.isArray(raw.ex) && raw.ex[1] ? String(raw.ex[1].en || '').trim() : '';
     const collocations = Array.isArray(raw.col)
-      ? raw.col.map(stripNonEnglishCol).filter(Boolean).slice(0, 3)
+      ? raw.col.map(stripNonEnglishCol).filter((c) => Boolean(c) && !/[\u4e00-\u9fff]/.test(c)).slice(0, 3)
       : [];
     const synonyms = Array.isArray(raw.syn)
-      ? raw.syn.map((s) => String(s || '').trim()).filter(Boolean).slice(0, 4)
+      ? raw.syn.map((s) => String(s || '').trim()).filter((s) => Boolean(s) && !/[\u4e00-\u9fff]/.test(s)).slice(0, 4)
       : [];
 
     if (!definitionEn || (!ex0 && !ex1)) continue;
+
+    const lowerWord = word.toLowerCase();
+    const academicTag = awlSet.has(lowerWord) ? 'AWL' : nawlSet.has(lowerWord) ? 'NAWL' : undefined;
+    const ieltsScore =
+      (academicTag === 'AWL' ? 100 : academicTag === 'NAWL' ? 70 : 0) +
+      (collocations.length >= 2 ? 20 : collocations.length === 1 ? 10 : 0) +
+      (ex1 && ex1 !== ex0 && ex1.length >= 55 ? 15 : 0) +
+      (synonyms.length >= 2 ? 10 : 0) +
+      (cefr === 'C1' ? 8 : cefr === 'B2' ? 6 : cefr === 'C2' ? 4 : 0);
 
     normalizedPool.push({
       id,
@@ -1185,42 +1224,91 @@ async function main() {
       pos,
       cefr,
       topic,
-      meaningVi: viMap.get(word.toLowerCase()) || '',
+      meaningVi: viMap.get(lowerWord) || '',
       definitionEn,
       exampleDailyEn: ex0 || ex1,
       exampleIeltsEn: ex1 || ex0,
       collocations,
       synonyms,
-      hasPrebuiltVi: viMap.has(word.toLowerCase())
+      ...(academicTag ? { academicTag } : {}),
+      ieltsScore,
+      hasPrebuiltVi: viMap.has(lowerWord)
     });
   }
 
-  // Select curated high-impact subsets for Stage 1 (19 IELTS topics x 100 words + 6 CEFR levels)
+  // Helper to normalize UK/US spelling twins (analyse/analyze, behaviour/behavior) & trivial -ed/-ing/-s inflections
+  const canonicalLemma = (word) => {
+    const w = word.toLowerCase().trim();
+    const usNorm = w
+      .replace(/ise$/, 'ize')
+      .replace(/ised$/, 'ized')
+      .replace(/ising$/, 'izing')
+      .replace(/isation$/, 'ization')
+      .replace(/our$/, 'or');
+    if (usNorm.length > 5 && usNorm.endsWith('ed')) return usNorm.slice(0, -2);
+    if (usNorm.length > 6 && usNorm.endsWith('ing')) return usNorm.slice(0, -3);
+    return usNorm;
+  };
+
+  // Select 100% PURE B2-C2 IELTS Academic Vocabulary per topic (Option A1: ZERO A1/A2 filler, deduplicated lemmas!)
   const selectedByTopic = new Map();
   const allSelectedWords = new Map();
 
   for (const meta of TOPIC_META) {
-    const candidates = normalizedPool.filter((w) => w.topic === meta.id);
-    // Prioritize entries with clean Vietnamese translation & progressive CEFR difficulty (A2/B1/B2/C1)
-    candidates.sort((a, b) => {
-      if (a.hasPrebuiltVi !== b.hasPrebuiltVi) return a.hasPrebuiltVi ? -1 : 1;
-      return (CEFR_RANK[a.cefr] || 3) - (CEFR_RANK[b.cefr] || 3);
-    });
-    const picked = candidates.slice(0, 100);
-    // Re-sort final 100 smoothly from A1 -> C2 so Lesson 01 is easiest and Lesson 10 is highest band
-    picked.sort((a, b) => (CEFR_RANK[a.cefr] || 3) - (CEFR_RANK[b.cefr] || 3) || a.word.localeCompare(b.word));
+    const candidates = normalizedPool.filter(
+      (w) => w.topic === meta.id && IELTS_ALLOWED_CEFR.has(w.cefr)
+    );
+    // Rank by IELTS Academic Relevance Score (AWL 570 -> NAWL 963 -> rich collocations & IELTS sentences)
+    candidates.sort((a, b) => b.ieltsScore - a.ieltsScore || a.word.localeCompare(b.word));
+    const picked = [];
+    const seenLemmas = new Set();
+    const skippedVariants = [];
+    for (const cand of candidates) {
+      if (picked.length >= 100) break;
+      const lemma = canonicalLemma(cand.word);
+      if (seenLemmas.has(lemma)) {
+        skippedVariants.push(cand);
+        continue;
+      }
+      seenLemmas.add(lemma);
+      picked.push(cand);
+    }
+    // Order smoothly from B2 (Band 6.5-7.0, AWL/NAWL first) -> C1 (Band 7.5-8.0) -> C2 (Band 8.5+)
+    picked.sort(
+      (a, b) =>
+        (CEFR_RANK[a.cefr] || 4) - (CEFR_RANK[b.cefr] || 4) ||
+        b.ieltsScore - a.ieltsScore ||
+        a.word.localeCompare(b.word)
+    );
     selectedByTopic.set(meta.id, picked);
     for (const w of picked) allSelectedWords.set(w.id, w);
   }
 
+  // Select CEFR Core Vocabulary (A1 -> C2), interleaving topics so Lesson 01 isn't all 'a...' words
   const selectedByCefr = new Map();
   for (const meta of CEFR_VOCAB_META) {
     const candidates = normalizedPool.filter((w) => w.cefr === meta.cefr);
-    candidates.sort((a, b) => {
-      if (a.hasPrebuiltVi !== b.hasPrebuiltVi) return a.hasPrebuiltVi ? -1 : 1;
-      return a.word.localeCompare(b.word);
-    });
-    const picked = candidates.slice(0, meta.limit);
+    candidates.sort((a, b) => b.ieltsScore - a.ieltsScore || (a.hasPrebuiltVi === b.hasPrebuiltVi ? 0 : a.hasPrebuiltVi ? -1 : 1) || a.word.localeCompare(b.word));
+    // Round-robin pick across topics so each 10-word CEFR lesson feels cohesive & diverse
+    const buckets = new Map();
+    for (const w of candidates) {
+      if (!buckets.has(w.topic)) buckets.set(w.topic, []);
+      buckets.get(w.topic).push(w);
+    }
+    const topicKeys = Array.from(buckets.keys());
+    const picked = [];
+    while (picked.length < meta.limit) {
+      let addedAny = false;
+      for (const tk of topicKeys) {
+        if (picked.length >= meta.limit) break;
+        const arr = buckets.get(tk);
+        if (arr && arr.length > 0) {
+          picked.push(arr.shift());
+          addedAny = true;
+        }
+      }
+      if (!addedAny) break;
+    }
     selectedByCefr.set(meta.id, picked);
     for (const w of picked) allSelectedWords.set(w.id, w);
   }
@@ -1230,33 +1318,34 @@ async function main() {
   console.log(`Total unique selected words: ${allSelectedWords.size}. Translating ${missingViList.length} remaining meanings to Vietnamese...`);
 
   if (missingViList.length > 0) {
-    // Translate "word — short English definition" or just word/definition cleanly
     const toTranslate = missingViList.map((w) => w.word);
     const translated = await translateBatchGtx(toTranslate);
     for (let i = 0; i < missingViList.length; i++) {
-      const vi = translated[i];
+      const vi = (translated[i] || '').trim();
       if (vi && vi.toLowerCase() !== missingViList[i].word.toLowerCase()) {
         missingViList[i].meaningVi = vi;
-      } else {
-        // Fallback: translate concise English definition if headword came back untranslated
-        missingViList[i].meaningVi = vi || missingViList[i].definitionEn;
       }
     }
 
-    // Second pass for words where single-word GTX returned the English word unchanged -> translate definitionEn
-    const stillEnglish = missingViList.filter(
-      (w) => w.meaningVi.toLowerCase() === w.word.toLowerCase() || w.meaningVi === w.definitionEn
+    // Second pass: for any word still untranslated or identical to English headword -> translate concise definitionEn
+    const stillUntranslated = missingViList.filter(
+      (w) => !w.meaningVi || w.meaningVi.toLowerCase() === w.word.toLowerCase()
     );
-    if (stillEnglish.length > 0) {
-      console.log(`Refining ${stillEnglish.length} definitions into natural Vietnamese...`);
-      const defVi = await translateBatchGtx(stillEnglish.map((w) => w.definitionEn));
-      for (let i = 0; i < stillEnglish.length; i++) {
-        if (defVi[i]) stillEnglish[i].meaningVi = defVi[i];
+    if (stillUntranslated.length > 0) {
+      console.log(`Refining ${stillUntranslated.length} academic definitions into natural Vietnamese...`);
+      const defVi = await translateBatchGtx(stillUntranslated.map((w) => w.definitionEn));
+      for (let i = 0; i < stillUntranslated.length; i++) {
+        const cleaned = (defVi[i] || '').replace(/\.$/, '').trim();
+        if (cleaned && cleaned.toLowerCase() !== stillUntranslated[i].word.toLowerCase()) {
+          stillUntranslated[i].meaningVi = cleaned;
+        } else {
+          stillUntranslated[i].meaningVi = `${stillUntranslated[i].definitionEn} (${stillUntranslated[i].pos})`;
+        }
       }
     }
   }
 
-  const stripInternal = ({ hasPrebuiltVi: _drop, ...clean }) => clean;
+  const stripInternal = ({ hasPrebuiltVi: _drop1, ieltsScore: _drop2, ...clean }) => clean;
 
   // Write 19 IELTS Topic JSON files
   const manifestTopics = [];
@@ -1355,10 +1444,11 @@ async function main() {
   }
 
   const manifest = {
-    version: '1.0.0',
+    version: '2.0.0',
     generatedAt: new Date().toISOString(),
     attributions: [
       { name: 'Word Atlas (IELTS & CEFR)', url: 'https://github.com/designfuchen/word-atlas', license: 'MIT / CC BY 4.0' },
+      { name: 'AWL 570 & NAWL 963 Academic Word Lists', url: 'https://github.com/lpmi-13/machine_readable_wordlists', license: 'Open Academic Corpus' },
       { name: 'Oxford 3000 Multilingual Flashcards', url: 'https://github.com/dnizfor/vocabulary-flashcard-dataset', license: 'MIT' },
       { name: 'CEFR-J Open Language Profiles', url: 'https://github.com/openlanguageprofiles/olp-en-cefrj', license: 'CC BY-SA 4.0' }
     ],
@@ -1373,8 +1463,44 @@ async function main() {
     grammar: manifestGrammar
   };
 
+  // Hard Quality Gate: fail build if ANY A1/A2 word sneaks into IELTS topics, or any CJK/untranslated leak exists
+  let gateErrors = [];
+  for (const meta of manifestTopics) {
+    const data = JSON.parse(fs.readFileSync(path.join(OUT_DIR, 'topics', `${meta.slug}.json`), 'utf8'));
+    for (const lesson of data.lessons) {
+      for (const w of lesson.words) {
+        if (!IELTS_ALLOWED_CEFR.has(w.cefr)) {
+          gateErrors.push(`Non-IELTS CEFR "${w.cefr}" found in topic ${meta.slug}: ${w.word}`);
+        }
+        if (/[\u4e00-\u9fff]/.test(JSON.stringify(w))) {
+          gateErrors.push(`CJK character leak in topic ${meta.slug}: ${w.word}`);
+        }
+        if (!w.meaningVi || w.meaningVi.trim().toLowerCase() === w.word.trim().toLowerCase()) {
+          gateErrors.push(`Untranslated meaningVi in topic ${meta.slug}: ${w.word}`);
+        }
+      }
+    }
+  }
+  for (const meta of manifestCefrVocab) {
+    const data = JSON.parse(fs.readFileSync(path.join(OUT_DIR, 'cefr', `${meta.slug}.json`), 'utf8'));
+    for (const lesson of data.lessons) {
+      for (const w of lesson.words) {
+        if (/[\u4e00-\u9fff]/.test(JSON.stringify(w))) {
+          gateErrors.push(`CJK character leak in cefr ${meta.slug}: ${w.word}`);
+        }
+        if (!w.meaningVi || w.meaningVi.trim().toLowerCase() === w.word.trim().toLowerCase()) {
+          gateErrors.push(`Untranslated meaningVi in cefr ${meta.slug}: ${w.word}`);
+        }
+      }
+    }
+  }
+  if (gateErrors.length > 0) {
+    console.error('❌ Quality Gate Failed:\n' + gateErrors.slice(0, 20).join('\n'));
+    process.exit(1);
+  }
+
   fs.writeFileSync(path.join(OUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
-  console.log('✅ Curriculum generated successfully:', JSON.stringify(manifest.stats));
+  console.log('✅ Curriculum v2.0.0 generated & passed all quality gates:', JSON.stringify(manifest.stats));
 }
 
 main().catch((err) => {

@@ -298,6 +298,7 @@ export interface CurriculumWordItem {
   exampleIeltsEn: string;
   collocations: string[];
   synonyms: string[];
+  academicTag?: 'AWL' | 'NAWL';
 }
 
 export interface CurriculumVocabLesson {

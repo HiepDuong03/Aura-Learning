@@ -40,6 +40,7 @@ export type LessonRunnerMode = 'flashcards' | 'quiz' | 'dictation' | 'pronunciat
 
 interface RoadmapLessonRunnerProps {
   lesson: CurriculumVocabLesson;
+  trackType?: 'ielts_topics' | 'cefr_vocab';
   unitTitle: string;
   unitTopic: string;
   unitCefr: CefrLevel;
@@ -52,8 +53,18 @@ interface RoadmapLessonRunnerProps {
   onLaunchMission: (mission: ActivePracticeMission) => void;
 }
 
+const CEFR_BAND_META: Record<CefrLevel, { label: string; cls: string }> = {
+  A1: { label: 'A1', cls: 'bg-slate-100 text-slate-700 border-slate-200' },
+  A2: { label: 'A2', cls: 'bg-sky-50 text-sky-700 border-sky-200' },
+  B1: { label: 'B1 · Band 5.5', cls: 'bg-teal-50 text-teal-700 border-teal-200' },
+  B2: { label: 'B2 · Band 6.5+', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+  C1: { label: 'C1 · Band 7.5+', cls: 'bg-indigo-50 text-indigo-800 border-indigo-200' },
+  C2: { label: 'C2 · Band 8.5+', cls: 'bg-purple-50 text-purple-800 border-purple-200' }
+};
+
 export const RoadmapLessonRunner: React.FC<RoadmapLessonRunnerProps> = ({
   lesson,
+  trackType = 'ielts_topics',
   unitTitle,
   unitTopic,
   unitCefr,
@@ -347,12 +358,36 @@ export const RoadmapLessonRunner: React.FC<RoadmapLessonRunnerProps> = ({
               </div>
 
               {/* Interactive Card */}
+              {(() => {
+                const bandMeta = CEFR_BAND_META[currentWord.cefr] || CEFR_BAND_META.B2;
+                const preferIeltsFront = trackType === 'ielts_topics' || ['B2', 'C1', 'C2'].includes(currentWord.cefr);
+                const frontSentence = preferIeltsFront
+                  ? currentWord.exampleIeltsEn || currentWord.exampleDailyEn
+                  : currentWord.exampleDailyEn || currentWord.exampleIeltsEn;
+                const backComparisonSentence = preferIeltsFront
+                  ? currentWord.exampleDailyEn
+                  : currentWord.exampleIeltsEn;
+
+                return (
               <div
                 onClick={() => setIsFlipped((prev) => !prev)}
                 className="p-6 rounded-3xl border-2 border-slate-200 hover:border-teal-300 bg-gradient-to-b from-white to-slate-50/70 shadow-sm cursor-pointer transition-all space-y-4 min-h-[260px] flex flex-col justify-between"
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                      <span className={`px-2 py-0.5 rounded-md border text-[10px] font-black uppercase ${bandMeta.cls}`}>
+                        {bandMeta.label}
+                      </span>
+                      {currentWord.academicTag && (
+                        <span className="px-2 py-0.5 rounded-md bg-violet-600 text-white text-[10px] font-black uppercase tracking-wide">
+                          {currentWord.academicTag === 'AWL' ? 'AWL 570' : 'NAWL'}
+                        </span>
+                      )}
+                      <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-bold">
+                        {currentWord.pos}
+                      </span>
+                    </div>
                     <h2 className="text-3xl font-black text-slate-900 tracking-tight">
                       {currentWord.word}
                     </h2>
@@ -361,7 +396,7 @@ export const RoadmapLessonRunner: React.FC<RoadmapLessonRunnerProps> = ({
                       {currentWord.ipaUk && currentWord.ipaUk !== currentWord.ipaUs ? ` · UK ${currentWord.ipaUk}` : ''}
                     </p>
                   </div>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
                       onClick={(e) => {
@@ -389,12 +424,15 @@ export const RoadmapLessonRunner: React.FC<RoadmapLessonRunnerProps> = ({
                 </div>
 
                 {!isFlipped ? (
-                  <div className="py-6 text-center space-y-2">
-                    <p className="text-sm font-semibold text-slate-600 italic">
-                      “{currentWord.exampleDailyEn}”
+                  <div className="py-5 text-center space-y-2.5">
+                    <span className="inline-block px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase tracking-wider">
+                      {preferIeltsFront ? 'Ngữ cảnh IELTS học thuật' : 'Ví dụ ngữ cảnh'}
+                    </span>
+                    <p className="text-sm sm:text-base font-semibold text-slate-700 italic leading-relaxed">
+                      “{frontSentence}”
                     </p>
-                    <p className="text-xs font-bold text-teal-600 pt-2">
-                      Nhấp vào thẻ để xem nghĩa Tiếng Việt, câu IELTS & Collocation
+                    <p className="text-xs font-bold text-teal-600 pt-1">
+                      Nhấp vào thẻ để xem nghĩa Tiếng Việt, Collocation & từ đồng nghĩa
                     </p>
                   </div>
                 ) : (
@@ -405,12 +443,16 @@ export const RoadmapLessonRunner: React.FC<RoadmapLessonRunnerProps> = ({
                     </div>
 
                     <div className="space-y-2 text-xs">
-                      <div className="p-3 rounded-xl bg-white border border-slate-200/80">
-                        <span className="font-black text-indigo-700 uppercase text-[10px]">Ngữ cảnh IELTS:</span>
-                        <p className="font-semibold text-slate-800 mt-0.5 leading-relaxed">
-                          {currentWord.exampleIeltsEn}
-                        </p>
-                      </div>
+                      {backComparisonSentence && backComparisonSentence !== frontSentence && (
+                        <div className="p-3 rounded-xl bg-white border border-slate-200/80">
+                          <span className="font-black text-indigo-700 uppercase text-[10px]">
+                            {preferIeltsFront ? 'Câu giao tiếp đời thường:' : 'Ngữ cảnh IELTS:'}
+                          </span>
+                          <p className="font-semibold text-slate-800 mt-0.5 leading-relaxed">
+                            {backComparisonSentence}
+                          </p>
+                        </div>
+                      )}
                       {currentWord.collocations.length > 0 && (
                         <div className="flex flex-wrap gap-1.5 items-center">
                           <span className="text-[11px] font-bold text-slate-500">Collocations:</span>
@@ -424,10 +466,25 @@ export const RoadmapLessonRunner: React.FC<RoadmapLessonRunnerProps> = ({
                           ))}
                         </div>
                       )}
+                      {currentWord.synonyms.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 items-center">
+                          <span className="text-[11px] font-bold text-slate-500">Synonyms (Paraphrase):</span>
+                          {currentWord.synonyms.map((syn) => (
+                            <span
+                              key={syn}
+                              className="px-2 py-0.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-900 font-bold text-[11px]"
+                            >
+                              {syn}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
               </div>
+                );
+              })()}
 
               {/* Navigation & Remember actions */}
               <div className="flex items-center justify-between gap-2 pt-1">
