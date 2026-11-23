@@ -110,6 +110,35 @@ function sendJson(req, res, statusCode, body, extraHeaders = {}) {
 }
 
 function parseJsonBody(req, limit = 5 * 1024 * 1024) {
+  // Vercel @vercel/node pre-parses application/json into req.body before invoking the handler.
+  if (req && req.body !== undefined) {
+    if (req.body === null) return Promise.resolve({});
+    if (Buffer.isBuffer(req.body)) {
+      if (req.body.length > limit) return Promise.reject(new Error('Payload too large (Limit 5MB).'));
+      const raw = req.body.toString('utf8').trim();
+      if (!raw) return Promise.resolve({});
+      try {
+        return Promise.resolve(JSON.parse(raw));
+      } catch {
+        return Promise.reject(new Error('Invalid JSON format.'));
+      }
+    }
+    if (typeof req.body === 'string') {
+      if (Buffer.byteLength(req.body, 'utf8') > limit) {
+        return Promise.reject(new Error('Payload too large (Limit 5MB).'));
+      }
+      if (!req.body.trim()) return Promise.resolve({});
+      try {
+        return Promise.resolve(JSON.parse(req.body));
+      } catch {
+        return Promise.reject(new Error('Invalid JSON format.'));
+      }
+    }
+    if (typeof req.body === 'object') {
+      return Promise.resolve(req.body);
+    }
+  }
+
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];

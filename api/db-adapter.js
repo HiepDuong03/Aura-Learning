@@ -461,11 +461,12 @@ class PostgresDbAdapter {
         normalizedUrl = cleaned;
       }
     }
+    const isServerless = Boolean(process.env.VERCEL);
     this.pool = new Pool({
       connectionString: normalizedUrl,
       ssl: isLocal ? false : { rejectUnauthorized: false },
-      max: 10,
-      idleTimeoutMillis: 30000
+      max: isServerless ? 3 : 10,
+      idleTimeoutMillis: isServerless ? 10000 : 30000
     });
   }
 

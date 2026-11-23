@@ -703,6 +703,24 @@ export async function resolveChannelOrShort(rawInput) {
 }
 
 async function readJsonBody(req, maxBytes = 8192) {
+  if (req && req.body !== undefined) {
+    if (req.body === null) return {};
+    if (typeof req.body === 'string') {
+      if (Buffer.byteLength(req.body, 'utf8') > maxBytes) {
+        throw Object.assign(new Error('Payload too large'), { statusCode: 413 });
+      }
+      if (!req.body.trim()) return {};
+      try {
+        return JSON.parse(req.body);
+      } catch {
+        throw Object.assign(new Error('Invalid JSON body'), { statusCode: 400 });
+      }
+    }
+    if (typeof req.body === 'object') {
+      return req.body;
+    }
+  }
+
   return new Promise((resolve, reject) => {
     let raw = '';
     let size = 0;
