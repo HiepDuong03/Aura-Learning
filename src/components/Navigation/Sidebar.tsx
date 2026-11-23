@@ -1,12 +1,9 @@
 import React from 'react';
 import { 
-  Home, 
+  Compass,
   PlaySquare, 
-  BookOpen, 
-  Headphones, 
   Mic, 
   Layers, 
-  Sprout, 
   User,
   Sparkles,
   Flame,
@@ -14,7 +11,7 @@ import {
 } from 'lucide-react';
 import { AuthUser } from '../../types';
 
-export type ActiveTab = 'home' | 'shorts' | 'words' | 'listening' | 'speaking' | 'review' | 'garden' | 'profile';
+export type ActiveTab = 'roadmap' | 'watch' | 'memory' | 'output' | 'profile';
 
 interface SidebarProps {
   activeTab: ActiveTab;
@@ -34,13 +31,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenAdmin
 }) => {
   const navItems: { id: ActiveTab; label: string; icon: React.ComponentType<{ className?: string }>; color: string; badge?: string | number }[] = [
-    { id: 'home', label: 'Trang chủ', icon: Home, color: 'text-teal-600' },
-    { id: 'shorts', label: 'Shorts Video', icon: PlaySquare, color: 'text-rose-500', badge: 'Hot' },
-    { id: 'words', label: 'Kho từ vựng', icon: BookOpen, color: 'text-amber-500' },
-    { id: 'listening', label: 'Luyện nghe', icon: Headphones, color: 'text-sky-500' },
-    { id: 'speaking', label: 'Luyện nói & AI Roleplay', icon: Mic, color: 'text-emerald-500' },
-    { id: 'review', label: 'Ôn tập SRS', icon: Layers, color: 'text-purple-500', badge: savedWordsCount > 0 ? savedWordsCount : undefined },
-    { id: 'garden', label: 'Vườn từ vựng', icon: Sprout, color: 'text-lime-600' },
+    { id: 'roadmap', label: 'Lộ trình', icon: Compass, color: 'text-teal-600', badge: 'IELTS' },
+    { id: 'watch', label: 'Xem & Nghe', icon: PlaySquare, color: 'text-rose-500' },
+    { id: 'memory', label: 'Ôn tập & Kho từ', icon: Layers, color: 'text-purple-500', badge: savedWordsCount > 0 ? savedWordsCount : undefined },
+    { id: 'output', label: 'Nói & Viết AI', icon: Mic, color: 'text-emerald-500', badge: 'AI' },
   ];
 
   return (
@@ -48,7 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Brand Logo */}
       <div className="flex h-16 shrink-0 items-center px-6 border-b border-slate-100">
         <button 
-          onClick={() => onSelectTab('home')}
+          onClick={() => onSelectTab('roadmap')}
           className="group flex items-center gap-3 text-left"
         >
           <div className="flex size-10 items-center justify-center rounded-2xl bg-gradient-to-tr from-teal-600 to-teal-400 text-white font-black text-xl shadow-[0_3px_0_#0f766e] group-hover:scale-105 group-hover:-rotate-3 transition-all duration-200">

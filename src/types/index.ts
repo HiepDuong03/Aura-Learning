@@ -277,3 +277,142 @@ export interface LingQWordRecord {
 }
 
 export type LessonSourceType = 'youtube' | 'file_srt_vtt' | 'text_article';
+
+// ==========================================
+// STRUCTURED CURRICULUM (IELTS + CEFR ROADMAP)
+// ==========================================
+export type CurriculumTrackType = 'grammar' | 'ielts_topics' | 'cefr_vocab';
+export type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
+
+export interface CurriculumWordItem {
+  id: string;
+  word: string;
+  ipaUs: string;
+  ipaUk?: string;
+  pos: string;
+  cefr: CefrLevel;
+  topic: string;
+  meaningVi: string;
+  definitionEn: string;
+  exampleDailyEn: string;
+  exampleIeltsEn: string;
+  collocations: string[];
+  synonyms: string[];
+}
+
+export interface CurriculumVocabLesson {
+  id: string;
+  lessonNumber: number;
+  title: string;
+  wordCount: number;
+  words: CurriculumWordItem[];
+}
+
+export interface CurriculumGrammarExercise {
+  question: string;
+  options: string[];
+  correctAnswer: number;
+  explanationVi: string;
+}
+
+export interface CurriculumGrammarLesson {
+  id: string;
+  lessonNumber: number;
+  category: string;
+  title: string;
+  titleVi: string;
+  cefr: CefrLevel;
+  formula: string;
+  explanationVi: string;
+  ieltsTipVi: string;
+  examples: Array<{ en: string; vi: string }>;
+  commonMistake: {
+    wrong: string;
+    right: string;
+    whyVi: string;
+  };
+  exercises: CurriculumGrammarExercise[];
+}
+
+export interface CurriculumUnitMeta {
+  id: string;
+  slug: string;
+  cefr?: CefrLevel;
+  order: number;
+  titleEn: string;
+  titleVi: string;
+  descVi: string;
+  color?: string;
+  totalWords?: number;
+  totalLessons: number;
+  dataPath: string;
+}
+
+export interface CurriculumVocabUnitData {
+  id: string;
+  slug: string;
+  cefr?: CefrLevel;
+  trackType: 'ielts_topics' | 'cefr_vocab';
+  order: number;
+  titleEn: string;
+  titleVi: string;
+  descVi: string;
+  color?: string;
+  totalWords: number;
+  totalLessons: number;
+  lessons: CurriculumVocabLesson[];
+}
+
+export interface CurriculumGrammarUnitData {
+  id: string;
+  slug: string;
+  cefr: CefrLevel;
+  trackType: 'grammar';
+  order: number;
+  titleVi: string;
+  descVi: string;
+  totalLessons: number;
+  lessons: CurriculumGrammarLesson[];
+}
+
+export interface CurriculumManifest {
+  version: string;
+  generatedAt: string;
+  attributions: Array<{ name: string; url: string; license: string }>;
+  stats: {
+    totalIeltsTopics: number;
+    totalIeltsWords: number;
+    totalCefrWords: number;
+    totalGrammarLessons: number;
+  };
+  ieltsTopics: CurriculumUnitMeta[];
+  cefrVocab: CurriculumUnitMeta[];
+  grammar: CurriculumUnitMeta[];
+}
+
+export interface LessonCompletionRecord {
+  flashcardsDone?: boolean;
+  quizBestScore?: number; // 0..100
+  quizPassed?: boolean;
+  dictationDone?: boolean;
+  pronunciationDone?: boolean;
+  stars: number; // 0..3
+  updatedAt: number;
+}
+
+export interface CurriculumProgressState {
+  lessons: Record<string, LessonCompletionRecord>;
+  unlockedUnits: Record<string, boolean>;
+  placementScores: Record<string, number>;
+}
+
+export interface ActivePracticeMission {
+  id: string;
+  mode: 'roleplay' | 'writing';
+  sourceTitle: string;
+  topicName: string;
+  cefr: CefrLevel;
+  targetWords: Array<{ word: string; meaningVi: string; exampleEn?: string }>;
+  grammarFocus?: { title: string; formula: string };
+  createdAt: number;
+}

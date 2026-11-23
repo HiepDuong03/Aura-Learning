@@ -13,16 +13,20 @@ import {
   Mic,
   Activity,
   Sparkles,
-  Loader2
+  Loader2,
+  PenTool,
+  CheckCircle2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { speakWord } from '../../services/dictionaryService';
 import { authService } from '../../services/authService';
 import { ScopedStorage, PersistedRoleplayMessage } from '../../services/scopedStorage';
-import { AuthUser } from '../../types';
+import { ActivePracticeMission, AuthUser, SavedWord } from '../../types';
 import { useNotify } from '../Common/ToastProvider';
 import { GuidedSpeakingCard, ReflexScaffoldingStep } from './GuidedSpeakingCard';
 import { RoleplayChatRoom, RoleplayPersona, ChatMessage } from './RoleplayChatRoom';
+import { WritingCoachPanel } from './WritingCoachPanel';
+import { detectUsedMissionWords } from '../../utils/curriculumEngine';
 import { VoiceActivityDetector } from '../../utils/voiceActivityDetector';
 import { assessSpeech, DetailedSpeechAssessment } from '../../utils/speechAssessor';
 import { soundEffects } from '../../utils/audioFeedback';
@@ -42,6 +46,9 @@ interface RapidSpeakingRoomProps {
   completedScenarios?: Record<string, ScenarioCompletionRecord>;
   onCompletedScenariosChange?: (records: Record<string, ScenarioCompletionRecord>) => void;
   onSavePhraseToSrs?: (phrase: string, contextSentence: string, tip?: string) => void;
+  activeMission?: ActivePracticeMission | null;
+  onClearMission?: () => void;
+  savedWords?: SavedWord[];
 }
 
 const AI_PERSONAS: RoleplayPersona[] = [
@@ -98,10 +105,20 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
   onRoleplayHistoryChange,
   completedScenarios: completedScenariosProp,
   onCompletedScenariosChange,
-  onSavePhraseToSrs
+  onSavePhraseToSrs,
+  activeMission,
+  onClearMission,
+  savedWords = []
 }) => {
   const { toast } = useNotify();
-  const [activeTab, setActiveTab] = useState<'guided' | 'roleplay'>('guided');
+  const [activeTab, setActiveTab] = useState<'guided' | 'roleplay' | 'writing'>(() =>
+    activeMission ? (activeMission.mode === 'writing' ? 'writing' : 'roleplay') : 'guided'
+  );
+
+  useEffect(() => {
+    if (!activeMission) return;
+    setActiveTab(activeMission.mode === 'writing' ? 'writing' : 'roleplay');
+  }, [activeMission]);
   
   // Guided Mode States
   const [selectedLevel, setSelectedLevel] = useState<CEFRLevel>('A1');
@@ -662,19 +679,19 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
           </button>
           <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
             <Zap className="w-6 h-6 text-orange-500 fill-orange-500" />
-            Luyện Phản Xạ Nói & AI Roleplay
+            Phòng Nói & Viết AI (Output Lab)
           </h1>
           <p className="text-xs text-slate-500 font-medium">
-            Tích hợp công nghệ VAD SuperChinese và bản đồ nhiệt âm thanh 3 cấp độ ELSA Speak
+            Biến từ vựng & ngữ pháp Lộ trình thành phản xạ Nói & bài Viết IELTS / Công sở chuẩn bản xứ
           </p>
         </div>
 
         {/* Tab Toggle */}
-        <div className="flex p-1.5 rounded-2xl bg-slate-200/80 gap-1 sm:w-auto">
+        <div className="flex flex-wrap p-1.5 rounded-2xl bg-slate-200/80 gap-1 sm:w-auto">
           <button
             type="button"
             onClick={() => setActiveTab('guided')}
-            className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+            className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'guided'
                 ? 'bg-white text-teal-700 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
@@ -685,7 +702,7 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('roleplay')}
-            className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+            className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'roleplay'
                 ? 'bg-white text-teal-700 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
@@ -693,6 +710,18 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
           >
             <MessageSquare className="w-3.5 h-3.5" />
             <span>AI Roleplay Chat</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('writing')}
+            className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              activeTab === 'writing'
+                ? 'bg-white text-teal-700 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <PenTool className="w-3.5 h-3.5" />
+            <span>Luyện Viết AI</span>
           </button>
         </div>
       </div>
@@ -903,43 +932,114 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
 
       {/* MODE 2: ROLEPLAY CHAT */}
       {activeTab === 'roleplay' && (
-        <RoleplayChatRoom
-          personas={AI_PERSONAS}
-          selectedPersona={selectedPersona}
-          onSelectPersona={(p) => setSelectedPersona(p)}
-          messages={roleplayMessages}
-          inputMessage={roleplayInput}
-          onChangeInput={setRoleplayInput}
-          onSendMessage={handleSendRoleplay}
-          isAiThinking={isAiThinking}
-          isRecording={isRecording}
-          onToggleRecording={toggleRecording}
-          onRestartChat={() => {
-            const resetSeed: ChatMessage[] = [
-              {
-                id: `init-${Date.now()}`,
-                sender: 'AI',
-                text: selectedPersona.initialMessage,
-                translation: selectedPersona.initialTranslation
-              }
-            ];
-            setRoleplayMessages(resetSeed);
-            persistRoleplayForPersona(selectedPersona.id, resetSeed);
-            setMissionProgressMap((prev) => ({
-              ...prev,
-              [selectedPersona.id]: { progress: 0, completed: false }
-            }));
-            speakWithVadGuard(selectedPersona.initialMessage);
-          }}
-          onSpeakText={(t) => speakWithVadGuard(t)}
-          aiEngineLabel={aiEngineLabel}
-          quotaBadge={quotaBadge}
-          isLockedForGuest={!currentUser}
-          onRequestLogin={onOpenAuth}
-          missionProgress={missionProgressMap[selectedPersona.id]?.progress || 0}
-          missionCompleted={Boolean(missionProgressMap[selectedPersona.id]?.completed)}
-          autoSendVoice={autoSendVoice}
-          onToggleAutoSendVoice={() => setAutoSendVoice((prev) => !prev)}
+        <div className="space-y-4">
+          {activeMission && activeMission.targetWords.length > 0 && (() => {
+            const userTranscript = roleplayMessages
+              .filter((m) => m.sender === 'User')
+              .map((m) => m.text)
+              .join(' ');
+            const usedSet = new Set(
+              detectUsedMissionWords(
+                userTranscript,
+                activeMission.targetWords.map((w) => w.word)
+              )
+            );
+            return (
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-teal-50 to-emerald-50 border border-teal-200/80 space-y-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-wider text-teal-700">
+                      Nhiệm vụ thực chiến từ Lộ trình ({usedSet.size}/{activeMission.targetWords.length} từ đã dùng)
+                    </p>
+                    <h3 className="text-sm font-black text-slate-900">{activeMission.sourceTitle}</h3>
+                  </div>
+                  {onClearMission && (
+                    <button
+                      type="button"
+                      onClick={onClearMission}
+                      className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-white cursor-pointer"
+                      title="Đóng nhiệm vụ"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {activeMission.targetWords.map((tw) => {
+                    const isUsed = usedSet.has(tw.word);
+                    return (
+                      <span
+                        key={tw.word}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border transition-all ${
+                          isUsed
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                            : 'bg-white text-slate-700 border-teal-200'
+                        }`}
+                        title={tw.meaningVi}
+                      >
+                        {isUsed && <CheckCircle2 className="w-3.5 h-3.5" />}
+                        <span>{tw.word}</span>
+                        <span className={`text-[10px] ${isUsed ? 'text-emerald-100' : 'text-slate-400'}`}>
+                          · {tw.meaningVi}
+                        </span>
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
+          <RoleplayChatRoom
+            personas={AI_PERSONAS}
+            selectedPersona={selectedPersona}
+            onSelectPersona={(p) => setSelectedPersona(p)}
+            messages={roleplayMessages}
+            inputMessage={roleplayInput}
+            onChangeInput={setRoleplayInput}
+            onSendMessage={handleSendRoleplay}
+            isAiThinking={isAiThinking}
+            isRecording={isRecording}
+            onToggleRecording={toggleRecording}
+            onRestartChat={() => {
+              const resetSeed: ChatMessage[] = [
+                {
+                  id: `init-${Date.now()}`,
+                  sender: 'AI',
+                  text: selectedPersona.initialMessage,
+                  translation: selectedPersona.initialTranslation
+                }
+              ];
+              setRoleplayMessages(resetSeed);
+              persistRoleplayForPersona(selectedPersona.id, resetSeed);
+              setMissionProgressMap((prev) => ({
+                ...prev,
+                [selectedPersona.id]: { progress: 0, completed: false }
+              }));
+              speakWithVadGuard(selectedPersona.initialMessage);
+            }}
+            onSpeakText={(t) => speakWithVadGuard(t)}
+            aiEngineLabel={aiEngineLabel}
+            quotaBadge={quotaBadge}
+            isLockedForGuest={!currentUser}
+            onRequestLogin={onOpenAuth}
+            missionProgress={missionProgressMap[selectedPersona.id]?.progress || 0}
+            missionCompleted={Boolean(missionProgressMap[selectedPersona.id]?.completed)}
+            autoSendVoice={autoSendVoice}
+            onToggleAutoSendVoice={() => setAutoSendVoice((prev) => !prev)}
+            onSavePhraseToSrs={onSavePhraseToSrs}
+          />
+        </div>
+      )}
+
+      {/* MODE 3: AI WRITING COACH */}
+      {activeTab === 'writing' && (
+        <WritingCoachPanel
+          activeMission={activeMission}
+          onClearMission={onClearMission}
+          savedWords={savedWords}
+          currentUser={currentUser}
+          onOpenAuth={onOpenAuth}
           onSavePhraseToSrs={onSavePhraseToSrs}
         />
       )}

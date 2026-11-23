@@ -1,12 +1,21 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { VideoLesson, SavedWord, WordDefinition, AnkiRating, AnkiUserProfile, AuthUser, DailyReelProgress } from './types';
+import {
+  VideoLesson,
+  SavedWord,
+  WordDefinition,
+  AnkiRating,
+  AnkiUserProfile,
+  AuthUser,
+  DailyReelProgress,
+  CurriculumProgressState,
+  ActivePracticeMission
+} from './types';
 import { MOCK_LESSONS, MOCK_SHORTS, INITIAL_SAVED_WORDS } from './data/mockLessons';
 import { calculateFsrsSchedule } from './services/fsrsScheduler';
 import { lingqWordService } from './services/lingqWordService';
 import { Sidebar, ActiveTab } from './components/Navigation/Sidebar';
 import { Header } from './components/Navigation/Header';
 import { MobileNav } from './components/Navigation/MobileNav';
-import { HomeScreen } from './components/Home/HomeScreen';
 import { WordPopupModal } from './components/WordLookup/WordPopupModal';
 import { ProfileSwitcherModal } from './components/Navigation/ProfileSwitcherModal';
 import { AuthModal } from './components/Auth/AuthModal';
@@ -16,33 +25,24 @@ import { ankiDb, DEFAULT_PROFILE } from './services/ankiDatabase';
 import { authService } from './services/authService';
 import { ScopedStorage, PersistedRoleplayMessage, getLocalDateKey } from './services/scopedStorage';
 import { ScenarioCompletionRecord } from './utils/speakingMetrics';
+import { createEmptyCurriculumProgress, normalizeCurriculumProgress } from './utils/curriculumEngine';
 import { loadYouTubeIframeAPI } from './services/youtubeLoader';
 import { ProductionErrorBoundary } from './components/Common/ProductionErrorBoundary';
 import { LoadingFallback } from './components/Common/LoadingFallback';
 import { useNotify } from './components/Common/ToastProvider';
 
 const VideoStudyRoom = React.lazy(() => import('./components/Player/VideoStudyRoom').then((m) => ({ default: m.VideoStudyRoom })));
-const ShortsView = React.lazy(() => import('./components/Shorts/ShortsView').then((m) => ({ default: m.ShortsView })));
-const VocabularyReview = React.lazy(() => import('./components/Review/VocabularyReview').then((m) => ({ default: m.VocabularyReview })));
-const WordVaultScreen = React.lazy(() => import('./components/Vocabulary/WordVaultScreen').then((m) => ({ default: m.WordVaultScreen })));
-const WordGarden = React.lazy(() => import('./components/Garden/WordGarden').then((m) => ({ default: m.WordGarden })));
+const RoadmapScreen = React.lazy(() => import('./components/Roadmap/RoadmapScreen').then((m) => ({ default: m.RoadmapScreen })));
+const WatchHubScreen = React.lazy(() => import('./components/Hubs/WatchHubScreen').then((m) => ({ default: m.WatchHubScreen })));
+const MemoryHubScreen = React.lazy(() => import('./components/Hubs/MemoryHubScreen').then((m) => ({ default: m.MemoryHubScreen })));
 const RapidSpeakingRoom = React.lazy(() => import('./components/Speaking/RapidSpeakingRoom').then((m) => ({ default: m.RapidSpeakingRoom })));
 const ProfileScreen = React.lazy(() => import('./components/Profile/ProfileScreen').then((m) => ({ default: m.ProfileScreen })));
 const ImportVideoModal = React.lazy(() => import('./components/Import/ImportVideoModal').then((m) => ({ default: m.ImportVideoModal })));
 const AdminPanelModal = React.lazy(() => import('./components/Admin/AdminPanelModal').then((m) => ({ default: m.AdminPanelModal })));
 
-const STORAGE_KEYS = {
-  SAVED_WORDS: '4you_saved_words_v2',
-  LESSONS: '4you_lessons_v2',
-  CUSTOM_LESSONS: '4you_custom_lessons_v1',
-  STREAK: '4you_streak_days_v2',
-  SCENARIOS: '4you_scenarios_v2',
-  LAST_ACTIVE: '4you_last_active_date_v2'
-};
-
 export const App: React.FC = () => {
   const { toast } = useNotify();
-  const [activeTab, setActiveTab] = useState<ActiveTab>('home');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('roadmap');
   const [currentLesson, setCurrentLesson] = useState<VideoLesson | null>(null);
   const [currentLessonMode, setCurrentLessonMode] = useState<'subtitles' | 'dictation' | 'shadowing' | 'quiz'>('subtitles');
   const [initialVideoTimestampSec, setInitialVideoTimestampSec] = useState<number | undefined>(undefined);
@@ -155,6 +155,17 @@ export const App: React.FC = () => {
     }
   });
 
+  const [curriculumProgress, setCurriculumProgress] = useState<CurriculumProgressState>(() => {
+    try {
+      const user = authService.getCurrentUser();
+      return normalizeCurriculumProgress(ScopedStorage.getCurriculumProgress(user?.id));
+    } catch {
+      return createEmptyCurriculumProgress();
+    }
+  });
+
+  const [activeMission, setActiveMission] = useState<ActivePracticeMission | null>(null);
+
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isImportOpen, setIsImportOpen] = useState<boolean>(false);
 
@@ -238,6 +249,13 @@ export const App: React.FC = () => {
         : ScopedStorage.getDailyReelProgress(user.id);
     setDailyReelProgress(nextDailyProgress);
     ScopedStorage.setDailyReelProgress(user.id, nextDailyProgress);
+
+    const nextCurriculum =
+      cloudState && cloudState.curriculumProgress && typeof cloudState.curriculumProgress === 'object'
+        ? normalizeCurriculumProgress(cloudState.curriculumProgress)
+        : normalizeCurriculumProgress(ScopedStorage.getCurriculumProgress(user.id));
+    setCurriculumProgress(nextCurriculum);
+    ScopedStorage.setCurriculumProgress(user.id, nextCurriculum);
   };
 
   const handleAuthSuccess = async (user: AuthUser) => {
@@ -268,6 +286,7 @@ export const App: React.FC = () => {
         setRoleplayHistory(ScopedStorage.getRoleplayHistory(user.id));
         setCompletedScenarios(ScopedStorage.getCompletedScenarios(user.id));
         setDailyReelProgress(ScopedStorage.getDailyReelProgress(user.id));
+        setCurriculumProgress(normalizeCurriculumProgress(ScopedStorage.getCurriculumProgress(user.id)));
       }
 
       // Commit currentUser AFTER account data is hydrated cleanly
@@ -298,6 +317,8 @@ export const App: React.FC = () => {
       setRoleplayHistory(ScopedStorage.getRoleplayHistory(null));
       setCompletedScenarios(ScopedStorage.getCompletedScenarios(null));
       setDailyReelProgress(ScopedStorage.getDailyReelProgress(null));
+      setCurriculumProgress(normalizeCurriculumProgress(ScopedStorage.getCurriculumProgress(null)));
+      setActiveMission(null);
     } finally {
       isAccountSwitchingRef.current = false;
       setIsBootHydrated(true);
@@ -472,7 +493,16 @@ export const App: React.FC = () => {
     }
   }, [dailyReelProgress, currentUser, isBootHydrated]);
 
-  // Cloud State Sync for scenarios, streakDays, profiles, customShorts & shortsOffsets
+  useEffect(() => {
+    if (!isBootHydrated || isAccountSwitchingRef.current) return;
+    try {
+      ScopedStorage.setCurriculumProgress(currentUser?.id, curriculumProgress);
+    } catch (e) {
+      console.warn('ScopedStorage curriculum progress error', e);
+    }
+  }, [curriculumProgress, currentUser, isBootHydrated]);
+
+  // Cloud State Sync for scenarios, streakDays, profiles, customShorts, shortsOffsets & curriculumProgress
   useEffect(() => {
     if (!isBootHydrated || isAccountSwitchingRef.current || !currentUser) return;
     const token = authService.getToken();
@@ -493,13 +523,14 @@ export const App: React.FC = () => {
             shortsOffsets: ScopedStorage.getShortsOffsets(currentUser.id),
             roleplayHistory,
             completedScenarios,
-            dailyReelProgress
+            dailyReelProgress,
+            curriculumProgress
           }
         })
       }).catch(console.warn);
     }, 1500);
     return () => clearTimeout(timer);
-  }, [scenarios, streakDays, roleplayHistory, completedScenarios, dailyReelProgress, currentUser, isBootHydrated]);
+  }, [scenarios, streakDays, roleplayHistory, completedScenarios, dailyReelProgress, curriculumProgress, currentUser, isBootHydrated]);
 
   // Real-world daily streak tracking based on calendar date
   useEffect(() => {
@@ -732,6 +763,63 @@ export const App: React.FC = () => {
       ScopedStorage.addGuestTransientWord(newWord);
     }
     toast.success(`Đã lưu "${cleanExpr}" vào Kho từ vựng FSRS-6!`);
+  };
+
+  // Batch save vocabulary from Roadmap lessons directly into FSRS-6 deck
+  const handleSaveWordsBatchToSrs = (
+    items: Array<{ def: WordDefinition; contextSentence?: string; videoTitle?: string }>
+  ): number => {
+    if (!items || items.length === 0) return 0;
+    const existingKeys = new Set(
+      savedWords.map((w) => (w?.word || '').toLowerCase().trim()).filter(Boolean)
+    );
+    const now = Date.now();
+    const toAdd: SavedWord[] = [];
+
+    items.forEach((item, idx) => {
+      const cleanWord = (item.def?.word || '').trim();
+      if (!cleanWord) return;
+      const key = cleanWord.toLowerCase();
+      if (existingKeys.has(key)) return;
+      existingKeys.add(key);
+
+      toAdd.push({
+        id: `word-rm-${now}-${idx}`,
+        word: cleanWord,
+        phonetic: item.def.phonetic || '',
+        partOfSpeech: item.def.partOfSpeech || 'word',
+        translation: item.def.translation || cleanWord,
+        definitionEn: item.def.definitionEn || '',
+        exampleEn: item.def.exampleEn || item.contextSentence || '',
+        contextSentence: item.contextSentence || item.def.exampleEn || cleanWord,
+        videoTitle: item.videoTitle || 'Lộ trình 4 Kỹ năng',
+        savedAt: now,
+        easeFactor: 2.5,
+        interval: 0,
+        repetitions: 0,
+        lapses: 0,
+        state: 'new',
+        dueAt: now,
+        lastReviewedAt: now,
+        schedulerVersion: 'fsrs6',
+        usn: 1,
+        isDirty: true
+      });
+    });
+
+    if (toAdd.length > 0) {
+      setSavedWords((prev) => [...toAdd, ...prev]);
+      toAdd.forEach((w) => {
+        ankiDb.saveWord(w).catch(console.warn);
+        if (!currentUser) {
+          ScopedStorage.addGuestTransientWord(w);
+        }
+      });
+      toast.success(`Đã nạp ${toAdd.length} từ mới vào Kho ôn tập FSRS-6!`);
+    } else {
+      toast.info('Toàn bộ từ trong bài này đã có trong Kho từ vựng FSRS-6 của bạn.');
+    }
+    return toAdd.length;
   };
 
   // Update translation / context sentence inline from Word Vault
@@ -1018,79 +1106,65 @@ export const App: React.FC = () => {
           onOpenAdmin={() => setIsAdminModalOpen(true)}
         />
 
-        <main
-          className={`flex-1 max-w-7xl mx-auto w-full ${
-            activeTab === 'shorts'
-              ? 'px-3 py-2 lg:px-6 lg:py-3 pb-20 lg:pb-3'
-              : 'p-4 lg:p-8 pb-24 lg:pb-12'
-          }`}
-        >
+        <main className="flex-1 max-w-7xl mx-auto w-full p-4 lg:p-8 pb-24 lg:pb-12">
           <React.Suspense fallback={<LoadingFallback />}>
-            {activeTab === 'home' && (
-              <ProductionErrorBoundary componentName="Trang chủ" onGoHome={() => setActiveTab('home')}>
-                <HomeScreen
-                  lessons={searchedLessons}
-                  onSelectLesson={handleSelectLesson}
-                  streakDays={streakDays}
-                  savedWordsCount={savedWords.length}
-                  onOpenImport={() => setIsImportOpen(true)}
-                  onDeleteLesson={handleDeleteLesson}
+            {activeTab === 'roadmap' && (
+              <ProductionErrorBoundary componentName="Lộ trình học" onGoHome={() => setActiveTab('roadmap')}>
+                <RoadmapScreen
+                  progress={curriculumProgress}
+                  onUpdateProgress={setCurriculumProgress}
+                  onSaveWordsToSrs={handleSaveWordsBatchToSrs}
+                  onLaunchMission={(mission) => {
+                    setActiveMission(mission);
+                    React.startTransition(() => {
+                      setActiveTab('output');
+                    });
+                  }}
                 />
               </ProductionErrorBoundary>
             )}
 
-            {activeTab === 'shorts' && (
-              <ProductionErrorBoundary componentName="Real American Reels & YouGlish" onGoHome={() => setActiveTab('home')}>
-                <ShortsView
-                  isActive={true}
+            {activeTab === 'watch' && (
+              <ProductionErrorBoundary componentName="Xem & Nghe Video" onGoHome={() => setActiveTab('roadmap')}>
+                <WatchHubScreen
+                  lessons={searchedLessons}
                   shorts={shorts}
-                  onSelectWord={handleSelectWord}
-                  onOpenLesson={(lesson) => handleSelectLesson(lesson, 'subtitles')}
+                  streakDays={streakDays}
                   savedWords={savedWords}
-                  lessons={lessons}
                   activeProfileId={currentUser?.id || activeProfile.id}
-                  onImportShortClick={() => setIsImportOpen(true)}
+                  currentUser={currentUser}
+                  dailyReelProgress={dailyReelProgress}
+                  onSelectLesson={handleSelectLesson}
+                  onOpenImport={() => setIsImportOpen(true)}
+                  onDeleteLesson={handleDeleteLesson}
+                  onSelectWord={handleSelectWord}
                   onReviewWord={handleReviewWord}
                   onSaveReelExpression={handleSaveReelExpression}
-                  currentUser={currentUser}
                   onOpenAuth={() => setIsAuthModalOpen(true)}
-                  dailyReelProgress={dailyReelProgress}
                   onDailyReelProgressChange={setDailyReelProgress}
                 />
               </ProductionErrorBoundary>
             )}
 
-            {activeTab === 'words' && (
-              <ProductionErrorBoundary componentName="Kho từ vựng" onGoHome={() => setActiveTab('home')}>
-                <WordVaultScreen
+            {activeTab === 'memory' && (
+              <ProductionErrorBoundary componentName="Ôn tập & Kho từ" onGoHome={() => setActiveTab('roadmap')}>
+                <MemoryHubScreen
                   savedWords={savedWords}
+                  currentUser={currentUser}
+                  onReviewWord={handleReviewWord}
                   onUpdateWord={handleUpdateWord}
                   onBulkDeleteWords={handleBulkDeleteWords}
                   onOpenWordInVideo={handleOpenWordInVideo}
-                  onNavigateToReview={() => setActiveTab('review')}
+                  onOpenAuth={() => setIsAuthModalOpen(true)}
                 />
               </ProductionErrorBoundary>
             )}
 
-            {activeTab === 'listening' && (
-              <ProductionErrorBoundary componentName="Listening Hub" onGoHome={() => setActiveTab('home')}>
-                <HomeScreen
-                  lessons={lessons}
-                  onSelectLesson={handleSelectLesson}
-                  streakDays={streakDays}
-                  savedWordsCount={savedWords.length}
-                  isListeningHub={true}
-                  onOpenImport={() => setIsImportOpen(true)}
-                  onDeleteLesson={handleDeleteLesson}
-                />
-              </ProductionErrorBoundary>
-            )}
-
-            {activeTab === 'speaking' && (
-              <ProductionErrorBoundary componentName="Luyện Nói AI" onGoHome={() => setActiveTab('home')}>
+            {activeTab === 'output' && (
+              <ProductionErrorBoundary componentName="Phòng Nói & Viết AI" onGoHome={() => setActiveTab('roadmap')}>
                 <RapidSpeakingRoom
                   scenarios={scenarios}
-                  onBack={() => setActiveTab('home')}
+                  onBack={() => setActiveTab('roadmap')}
                   onAddCustomScenario={(sc) => setScenarios((prev) => [sc, ...prev])}
                   currentUser={currentUser}
                   onOpenAuth={() => setIsAuthModalOpen(true)}
@@ -1098,39 +1172,22 @@ export const App: React.FC = () => {
                   completedScenarios={completedScenarios}
                   onCompletedScenariosChange={(records) => setCompletedScenarios(records)}
                   onSavePhraseToSrs={handleSaveRoleplayPhraseToSrs}
-                />
-              </ProductionErrorBoundary>
-            )}
-
-            {activeTab === 'review' && (
-              <ProductionErrorBoundary componentName="Ôn tập FSRS-6" onGoHome={() => setActiveTab('home')}>
-                <VocabularyReview
+                  activeMission={activeMission}
+                  onClearMission={() => setActiveMission(null)}
                   savedWords={savedWords}
-                  onReviewWord={handleReviewWord}
-                  onOpenWordInVideo={handleOpenWordInVideo}
-                  currentUser={currentUser}
-                  onOpenAuth={() => setIsAuthModalOpen(true)}
-                />
-              </ProductionErrorBoundary>
-            )}
-
-            {activeTab === 'garden' && (
-              <ProductionErrorBoundary componentName="Khu Vườn Từ Vựng" onGoHome={() => setActiveTab('home')}>
-                <WordGarden
-                  savedWords={savedWords}
-                  streakDays={streakDays}
-                  onNavigateToReview={() => setActiveTab('review')}
-                  onSelectWord={handleSelectWord}
                 />
               </ProductionErrorBoundary>
             )}
 
             {activeTab === 'profile' && (
-              <ProductionErrorBoundary componentName="Hồ Sơ Học Tập" onGoHome={() => setActiveTab('home')}>
+              <ProductionErrorBoundary componentName="Hồ Sơ Học Tập" onGoHome={() => setActiveTab('roadmap')}>
                 <ProfileScreen
                   savedWords={savedWords}
                   streakDays={streakDays}
                   currentUser={currentUser}
+                  curriculumProgress={curriculumProgress}
+                  onNavigateToReview={() => setActiveTab('memory')}
+                  onSelectWord={handleSelectWord}
                   onResetProgress={() => {
                     const resetWords = currentUser ? [] : INITIAL_SAVED_WORDS;
                     if (currentUser) {
@@ -1140,12 +1197,16 @@ export const App: React.FC = () => {
                     } else {
                       ankiDb.saveWords(INITIAL_SAVED_WORDS).catch(console.warn);
                     }
+                    const emptyCurr = createEmptyCurriculumProgress();
                     setSavedWords(resetWords);
                     setLessons(MOCK_LESSONS);
                     setStreakDays(1);
+                    setCurriculumProgress(emptyCurr);
+                    setActiveMission(null);
                     ScopedStorage.setSavedWords(currentUser?.id, resetWords);
                     ScopedStorage.setCustomLessons(currentUser?.id, []);
                     ScopedStorage.setStreakDays(currentUser?.id, 1);
+                    ScopedStorage.setCurriculumProgress(currentUser?.id, emptyCurr);
                     ScopedStorage.clearGuestTransientWords();
                   }}
                   onImportWords={(imported) => {

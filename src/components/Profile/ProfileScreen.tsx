@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SavedWord, AnkiCollectionStats, AuthUser } from '../../types';
+import { SavedWord, AnkiCollectionStats, AuthUser, CurriculumProgressState } from '../../types';
 import { 
   Flame, 
   BookOpen, 
@@ -16,32 +16,48 @@ import {
   Database,
   FileText,
   Activity,
-  CheckCircle2
+  CheckCircle2,
+  Compass,
+  Star
 } from 'lucide-react';
 import { ankiDb } from '../../services/ankiDatabase';
 import { useNotify } from '../Common/ToastProvider';
+
+const WordGarden = React.lazy(() => import('../Garden/WordGarden').then((m) => ({ default: m.WordGarden })));
 
 interface ProfileScreenProps {
   savedWords: SavedWord[];
   streakDays: number;
   currentUser?: AuthUser | null;
+  curriculumProgress?: CurriculumProgressState;
   onResetProgress?: () => void;
   onImportWords?: (words: SavedWord[]) => void;
+  onNavigateToReview?: () => void;
+  onSelectWord?: (word: string, contextSentence?: string) => void;
 }
 
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   savedWords,
   streakDays,
   currentUser,
+  curriculumProgress,
   onResetProgress,
-  onImportWords
+  onImportWords,
+  onNavigateToReview,
+  onSelectWord
 }) => {
   const { toast, confirmDialog } = useNotify();
+  const [profileTab, setProfileTab] = useState<'overview' | 'garden'>('overview');
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [autoPlayAudio, setAutoPlayAudio] = useState(true);
   const [ankiStats, setAnkiStats] = useState<AnkiCollectionStats | null>(null);
   const [importNotification, setImportNotification] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const roadmapRecords = Object.values(curriculumProgress?.lessons || {});
+  const completedRoadmapCount = roadmapRecords.filter((r) => Boolean(r.quizPassed || r.stars > 0)).length;
+  const totalRoadmapStars = roadmapRecords.reduce((acc, r) => acc + (r.stars || 0), 0);
+  const unlockedUnitsCount = Object.values(curriculumProgress?.unlockedUnits || {}).filter(Boolean).length;
 
   const masteredWords = savedWords.filter(w => (w.interval ?? 0) >= 21).length;
   const learningWords = savedWords.filter(w => (w.interval ?? 0) < 3).length;
@@ -108,7 +124,44 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   return (
-    <div className="max-w-3xl mx-auto p-4 sm:p-6 space-y-6 animate-fade-in pb-16">
+    <div className="max-w-4xl mx-auto p-4 sm:p-6 space-y-6 animate-fade-in pb-16">
+      {/* 2-Pill Switcher: Overview & Word Garden */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex p-1 rounded-2xl bg-white border border-slate-200/90 shadow-xs">
+          <button
+            type="button"
+            onClick={() => setProfileTab('overview')}
+            className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
+              profileTab === 'overview' ? 'bg-teal-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Activity className="w-3.5 h-3.5" />
+            <span>Tổng quan & 4 Kỹ năng</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setProfileTab('garden')}
+            className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
+              profileTab === 'garden' ? 'bg-teal-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Sprout className="w-3.5 h-3.5" />
+            <span>Vườn từ vựng ({savedWords.length})</span>
+          </button>
+        </div>
+      </div>
+
+      {profileTab === 'garden' ? (
+        <React.Suspense fallback={<div className="p-10 text-center text-xs font-bold text-slate-500">Đang mở Vườn từ vựng...</div>}>
+          <WordGarden
+            savedWords={savedWords}
+            streakDays={streakDays}
+            onNavigateToReview={onNavigateToReview}
+            onSelectWord={onSelectWord}
+          />
+        </React.Suspense>
+      ) : (
+        <>
       {/* User Header Profile Card */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-teal-600 via-teal-700 to-emerald-700 text-white p-6 sm:p-8 shadow-xl">
         <div className="absolute -right-8 -bottom-8 w-48 h-48 bg-white/10 rounded-full blur-2xl pointer-events-none" />
@@ -176,6 +229,38 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           <span>{importNotification}</span>
         </div>
       )}
+
+      {/* Roadmap 4-Skill Progress Card */}
+      <div className="p-5 rounded-3xl bg-gradient-to-r from-teal-50 via-emerald-50 to-cyan-50 border border-teal-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <span className="p-2.5 rounded-2xl bg-teal-600 text-white shadow-xs">
+            <Compass className="w-5 h-5" />
+          </span>
+          <div>
+            <h3 className="text-sm font-black text-slate-900">Tiến độ Lộ trình 4 Kỹ năng (IELTS & CEFR)</h3>
+            <p className="text-[11px] text-slate-600 font-medium">
+              Liên thông đồng bộ Đọc – Nghe – Nói – Viết và tự động sao lưu lên Cloud
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 text-center">
+          <div className="px-3.5 py-2 rounded-2xl bg-white/90 border border-teal-100">
+            <p className="text-lg font-black text-teal-700">{completedRoadmapCount}</p>
+            <p className="text-[10px] font-bold text-slate-500">Bài đạt chuẩn</p>
+          </div>
+          <div className="px-3.5 py-2 rounded-2xl bg-white/90 border border-amber-100">
+            <p className="text-lg font-black text-amber-600 flex items-center justify-center gap-1">
+              <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
+              {totalRoadmapStars}
+            </p>
+            <p className="text-[10px] font-bold text-slate-500">Tổng sao</p>
+          </div>
+          <div className="px-3.5 py-2 rounded-2xl bg-white/90 border border-emerald-100">
+            <p className="text-lg font-black text-emerald-700">{unlockedUnitsCount}</p>
+            <p className="text-[10px] font-bold text-slate-500">Chặng mở khoá</p>
+          </div>
+        </div>
+      </div>
 
       {/* Main Stats Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
@@ -448,6 +533,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 };

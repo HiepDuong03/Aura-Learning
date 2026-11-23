@@ -1,0 +1,399 @@
+{
+  "version": "1.0.0",
+  "generatedAt": "2026-11-23T08:14:43.789Z",
+  "attributions": [
+    {
+      "name": "Word Atlas (IELTS & CEFR)",
+      "url": "https://github.com/designfuchen/word-atlas",
+      "license": "MIT / CC BY 4.0"
+    },
+    {
+      "name": "Oxford 3000 Multilingual Flashcards",
+      "url": "https://github.com/dnizfor/vocabulary-flashcard-dataset",
+      "license": "MIT"
+    },
+    {
+      "name": "CEFR-J Open Language Profiles",
+      "url": "https://github.com/openlanguageprofiles/olp-en-cefrj",
+      "license": "CC BY-SA 4.0"
+    }
+  ],
+  "stats": {
+    "totalIeltsTopics": 19,
+    "totalIeltsWords": 1900,
+    "totalCefrWords": 1700,
+    "totalGrammarLessons": 60
+  },
+  "ieltsTopics": [
+    {
+      "id": "topic-education",
+      "slug": "education",
+      "order": 1,
+      "titleEn": "Education & Learning",
+      "titleVi": "Giáo dục & Học tập",
+      "descVi": "Từ vựng về trường học, học thuật, nghiên cứu và phát triển kỹ năng.",
+      "color": "teal",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/education.json"
+    },
+    {
+      "id": "topic-work",
+      "slug": "work",
+      "order": 2,
+      "titleEn": "Work & Employment",
+      "titleVi": "Công việc & Sự nghiệp",
+      "descVi": "Giao tiếp công sở, phỏng vấn, thăng tiến và môi trường làm việc.",
+      "color": "indigo",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/work.json"
+    },
+    {
+      "id": "topic-environment",
+      "slug": "environment",
+      "order": 3,
+      "titleEn": "Environment & Climate",
+      "titleVi": "Môi trường & Khí hậu",
+      "descVi": "Biến đổi khí hậu, năng lượng xanh, bảo tồn sinh thái — chủ đề tủ IELTS.",
+      "color": "emerald",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/environment.json"
+    },
+    {
+      "id": "topic-technology",
+      "slug": "technology",
+      "order": 4,
+      "titleEn": "Technology & Digital Life",
+      "titleVi": "Công nghệ & Đời sống số",
+      "descVi": "AI, internet, đổi mới sáng tạo và tác động của công nghệ hiện đại.",
+      "color": "sky",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/technology.json"
+    },
+    {
+      "id": "topic-health",
+      "slug": "health",
+      "order": 5,
+      "titleEn": "Health & Well-being",
+      "titleVi": "Sức khỏe & Đời sống",
+      "descVi": "Y tế, dinh dưỡng, thể chất, sức khỏe tinh thần và lối sống lành mạnh.",
+      "color": "rose",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/health.json"
+    },
+    {
+      "id": "topic-society",
+      "slug": "society",
+      "order": 6,
+      "titleEn": "Society & Community",
+      "titleVi": "Xã hội & Cộng đồng",
+      "descVi": "Văn hóa, bình đẳng, cộng đồng, dân số và các vấn đề xã hội hiện đại.",
+      "color": "amber",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/society.json"
+    },
+    {
+      "id": "topic-economy",
+      "slug": "economy",
+      "order": 7,
+      "titleEn": "Economy & Finance",
+      "titleVi": "Kinh tế & Tài chính",
+      "descVi": "Thị trường, đầu tư, tiêu dùng, tăng trưởng và tài chính cá nhân.",
+      "color": "violet",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/economy.json"
+    },
+    {
+      "id": "topic-government",
+      "slug": "government",
+      "order": 8,
+      "titleEn": "Government & Law",
+      "titleVi": "Chính phủ & Pháp luật",
+      "descVi": "Chính sách công, luật pháp, quyền công dân và quản trị quốc gia.",
+      "color": "slate",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/government.json"
+    },
+    {
+      "id": "topic-media",
+      "slug": "media",
+      "order": 9,
+      "titleEn": "Media & Communication",
+      "titleVi": "Truyền thông & Báo chí",
+      "descVi": "Mạng xã hội, tin tức, quảng cáo và kỹ năng truyền đạt thông tin.",
+      "color": "pink",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/media.json"
+    },
+    {
+      "id": "topic-science",
+      "slug": "science",
+      "order": 10,
+      "titleEn": "Science & Research",
+      "titleVi": "Khoa học & Nghiên cứu",
+      "descVi": "Phương pháp khoa học, thí nghiệm, phát minh và tư duy phản biện.",
+      "color": "cyan",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/science.json"
+    },
+    {
+      "id": "topic-city",
+      "slug": "city",
+      "order": 11,
+      "titleEn": "Cities & Urbanization",
+      "titleVi": "Đô thị & Giao thông",
+      "descVi": "Quy hoạch thành phố, nhà ở, giao thông công cộng và đô thị hóa.",
+      "color": "orange",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/city.json"
+    },
+    {
+      "id": "topic-travel",
+      "slug": "travel",
+      "order": 12,
+      "titleEn": "Travel & Tourism",
+      "titleVi": "Du lịch & Khám phá",
+      "descVi": "Hành trình, văn hóa du lịch, khách sạn và trải nghiệm quốc tế.",
+      "color": "teal",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/travel.json"
+    },
+    {
+      "id": "topic-daily",
+      "slug": "daily",
+      "order": 13,
+      "titleEn": "Daily Life & Routines",
+      "titleVi": "Đời sống thường ngày",
+      "descVi": "Sinh hoạt hàng ngày, gia đình, mua sắm và giao tiếp tự nhiên.",
+      "color": "emerald",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/daily.json"
+    },
+    {
+      "id": "topic-emotion",
+      "slug": "emotion",
+      "order": 14,
+      "titleEn": "Emotions & Mindset",
+      "titleVi": "Cảm xúc & Tâm lý",
+      "descVi": "Diễn tả trạng thái cảm xúc, thái độ, động lực và giao tiếp tinh tế.",
+      "color": "rose",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/emotion.json"
+    },
+    {
+      "id": "topic-thinking",
+      "slug": "thinking",
+      "order": 15,
+      "titleEn": "Critical Thinking & Logic",
+      "titleVi": "Tư duy & Lập luận",
+      "descVi": "Phân tích, đánh giá, so sánh, bảo vệ quan điểm cho IELTS Writing/Speaking.",
+      "color": "indigo",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/thinking.json"
+    },
+    {
+      "id": "topic-arts",
+      "slug": "arts",
+      "order": 16,
+      "titleEn": "Arts & Culture",
+      "titleVi": "Nghệ thuật & Văn hóa",
+      "descVi": "Âm nhạc, điện ảnh, văn học, di sản văn hóa và sáng tạo nghệ thuật.",
+      "color": "purple",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/arts.json"
+    },
+    {
+      "id": "topic-nature",
+      "slug": "nature",
+      "order": 17,
+      "titleEn": "Nature & Wildlife",
+      "titleVi": "Thiên nhiên & Hoang dã",
+      "descVi": "Hệ sinh thái, động thực vật, địa lý và tài nguyên thiên nhiên.",
+      "color": "lime",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/nature.json"
+    },
+    {
+      "id": "topic-sport",
+      "slug": "sport",
+      "order": 18,
+      "titleEn": "Sports & Fitness",
+      "titleVi": "Thể thao & Rèn luyện",
+      "descVi": "Thi đấu, tinh thần đồng đội, kỷ luật và rèn luyện thể lực.",
+      "color": "sky",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/sport.json"
+    },
+    {
+      "id": "topic-history",
+      "slug": "history",
+      "order": 19,
+      "titleEn": "History & Heritage",
+      "titleVi": "Lịch sử & Di sản",
+      "descVi": "Các mốc lịch sử, truyền thống, tiến bộ nhân loại và bảo tồn văn hóa.",
+      "color": "amber",
+      "totalWords": 100,
+      "totalLessons": 10,
+      "dataPath": "/curriculum/topics/history.json"
+    }
+  ],
+  "cefrVocab": [
+    {
+      "id": "cefr-a1",
+      "slug": "a1",
+      "cefr": "A1",
+      "order": 1,
+      "titleEn": "CEFR A1 Core Vocabulary",
+      "titleVi": "Từ vựng cơ bản A1",
+      "descVi": "Nền tảng giao tiếp sinh tồn — những từ tiếng Anh thông dụng nhất hàng ngày.",
+      "totalWords": 300,
+      "totalLessons": 30,
+      "dataPath": "/curriculum/cefr/a1.json"
+    },
+    {
+      "id": "cefr-a2",
+      "slug": "a2",
+      "cefr": "A2",
+      "order": 2,
+      "titleEn": "CEFR A2 Core Vocabulary",
+      "titleVi": "Từ vựng sơ cấp A2",
+      "descVi": "Mở rộng diễn đạt đời sống, công việc cơ bản và du lịch tự tin.",
+      "totalWords": 300,
+      "totalLessons": 30,
+      "dataPath": "/curriculum/cefr/a2.json"
+    },
+    {
+      "id": "cefr-b1",
+      "slug": "b1",
+      "cefr": "B1",
+      "order": 3,
+      "titleEn": "CEFR B1 Core Vocabulary",
+      "titleVi": "Từ vựng trung cấp B1",
+      "descVi": "Giao tiếp độc lập, trình bày quan điểm và đạt nền IELTS 5.5–6.0.",
+      "totalWords": 300,
+      "totalLessons": 30,
+      "dataPath": "/curriculum/cefr/b1.json"
+    },
+    {
+      "id": "cefr-b2",
+      "slug": "b2",
+      "cefr": "B2",
+      "order": 4,
+      "titleEn": "CEFR B2 Core Vocabulary",
+      "titleVi": "Từ vựng trung cao cấp B2",
+      "descVi": "Từ vựng công sở chuyên nghiệp & học thuật cho mục tiêu IELTS 6.5–7.0.",
+      "totalWords": 300,
+      "totalLessons": 30,
+      "dataPath": "/curriculum/cefr/b2.json"
+    },
+    {
+      "id": "cefr-c1",
+      "slug": "c1",
+      "cefr": "C1",
+      "order": 5,
+      "titleEn": "CEFR C1 Core Vocabulary",
+      "titleVi": "Từ vựng cao cấp C1",
+      "descVi": "Diễn đạt sắc bén, chính xác và tự nhiên như bản xứ — IELTS 7.5–8.0.",
+      "totalWords": 300,
+      "totalLessons": 30,
+      "dataPath": "/curriculum/cefr/c1.json"
+    },
+    {
+      "id": "cefr-c2",
+      "slug": "c2",
+      "cefr": "C2",
+      "order": 6,
+      "titleEn": "CEFR C2 Core Vocabulary",
+      "titleVi": "Từ vựng tinh thông C2",
+      "descVi": "Sắc thái học thuật & ngôn từ tinh tế ở bậc cao nhất — IELTS 8.5+.",
+      "totalWords": 200,
+      "totalLessons": 20,
+      "dataPath": "/curriculum/cefr/c2.json"
+    }
+  ],
+  "grammar": [
+    {
+      "id": "grammar-a1",
+      "slug": "a1",
+      "cefr": "A1",
+      "order": 1,
+      "titleEn": "CEFR A1 Grammar",
+      "titleVi": "Nền tảng câu tiếng Anh (A1)",
+      "descVi": "Nhận diện thành phần câu, động từ to be, các thì cơ bản và cấu trúc sinh hoạt hàng ngày.",
+      "totalLessons": 10,
+      "dataPath": "/curriculum/grammar/a1.json"
+    },
+    {
+      "id": "grammar-a2",
+      "slug": "a2",
+      "cefr": "A2",
+      "order": 2,
+      "titleEn": "CEFR A2 Grammar",
+      "titleVi": "Mở rộng diễn đạt sơ cấp (A2)",
+      "descVi": "Nói về tương lai, so sánh, kinh nghiệm sống (Present Perfect) và động từ khuyết thiếu.",
+      "totalLessons": 10,
+      "dataPath": "/curriculum/grammar/a2.json"
+    },
+    {
+      "id": "grammar-b1",
+      "slug": "b1",
+      "cefr": "B1",
+      "order": 3,
+      "titleEn": "CEFR B1 Grammar",
+      "titleVi": "Ngữ pháp giao tiếp độc lập (B1)",
+      "descVi": "Mệnh đề quan hệ, câu bị động, điều kiện loại 2, quá khứ hoàn thành và tường thuật — nền tảng IELTS 6.0.",
+      "totalLessons": 10,
+      "dataPath": "/curriculum/grammar/b1.json"
+    },
+    {
+      "id": "grammar-b2",
+      "slug": "b2",
+      "cefr": "B2",
+      "order": 4,
+      "titleEn": "CEFR B2 Grammar",
+      "titleVi": "Ngữ pháp học thuật & Công sở (B2)",
+      "descVi": "Điều kiện loại 3 & hỗn hợp, mệnh đề rút gọn, bị động khách quan, cấu trúc giả định — mục tiêu IELTS 7.0.",
+      "totalLessons": 10,
+      "dataPath": "/curriculum/grammar/b2.json"
+    },
+    {
+      "id": "grammar-c1",
+      "slug": "c1",
+      "cefr": "C1",
+      "order": 5,
+      "titleEn": "CEFR C1 Grammar",
+      "titleVi": "Ngữ pháp sắc bén & Band 7.5–8.0 (C1)",
+      "descVi": "Đảo ngữ nhấn mạnh, câu chẻ (Cleft), ngôn ngữ rào đón học thuật (Hedging) và danh từ hóa.",
+      "totalLessons": 10,
+      "dataPath": "/curriculum/grammar/c1.json"
+    },
+    {
+      "id": "grammar-c2",
+      "slug": "c2",
+      "cefr": "C2",
+      "order": 6,
+      "titleEn": "CEFR C2 Grammar",
+      "titleVi": "Ngữ pháp tinh thông & Tu từ (C2)",
+      "descVi": "Cấu trúc tu từ học thuật, đảo ngữ phức hợp, sắc thái tinh tế cho mục tiêu IELTS 8.5+ và viết chuyên sâu.",
+      "totalLessons": 10,
+      "dataPath": "/curriculum/grammar/c2.json"
+    }
+  ]
+}

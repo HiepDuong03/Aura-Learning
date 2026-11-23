@@ -1054,17 +1054,21 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
     }
   }
 
-  // 5. POST /api/ai/evaluate-sentence (Active Production: evaluate learner's own sentence in Work or Daily context)
+  // 5. POST /api/ai/evaluate-sentence (Active Production: evaluate learner's sentence/short paragraph in IELTS, Work or Daily context)
   if (pathname === '/api/ai/evaluate-sentence' && req.method === 'POST') {
     try {
       const body = await parseJsonBody(req);
-      const targetWord = normalizeLookupQuery(body.targetWord || '');
-      const userSentence = String(body.userSentence || '').trim().slice(0, 320);
-      const scenario = body.scenario === 'work' ? 'work' : 'daily';
+      const targetWordsList = Array.isArray(body.targetWords)
+        ? body.targetWords.map((w) => normalizeLookupQuery(w || '')).filter(Boolean).slice(0, 8)
+        : [];
+      const targetWord = normalizeLookupQuery(body.targetWord || targetWordsList[0] || '');
+      const userSentence = String(body.userSentence || '').trim().slice(0, 800);
+      const scenario = body.scenario === 'work' ? 'work' : body.scenario === 'ielts' ? 'ielts' : 'daily';
       const contextSentence = String(body.contextSentence || '').trim().slice(0, 320);
+      const grammarFocus = String(body.grammarFocus || '').trim().slice(0, 180);
 
-      if (!targetWord) {
-        sendJson(req, res, 400, { error: 'Thiếu từ vựng mục tiêu cần luyện đặt câu.' });
+      if (!targetWord && !grammarFocus) {
+        sendJson(req, res, 400, { error: 'Thiếu từ vựng hoặc cấu trúc ngữ pháp mục tiêu cần luyện viết.' });
         return true;
       }
       if (!userSentence || userSentence.length < 4) {
@@ -1091,21 +1095,29 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
 
       if (apiKey) {
         try {
-          const contextLabel = scenario === 'work'
-            ? 'professional workplace communication (emails, meetings, Slack, presentations)'
-            : 'natural everyday spoken English with friends or colleagues';
+          const contextLabel =
+            scenario === 'ielts'
+              ? 'academic IELTS Writing Task 2 / Band 7.5+ formal essay style'
+              : scenario === 'work'
+                ? 'professional workplace communication (emails, meetings, Slack, presentations)'
+                : 'natural everyday spoken English with friends or colleagues';
           const prompt = [
-            `You are an elite English communication coach helping a Vietnamese learner turn passive vocabulary into active speaking/writing fluency.`,
-            `Target word or phrase: "${targetWord}"`,
-            contextSentence ? `Original video reference sentence: "${contextSentence}"` : '',
-            `Intended real-life context: ${contextLabel}`,
-            `Learner's sentence: "${userSentence}"`,
-            `Evaluate the learner's sentence and return strict JSON with exact keys:`,
+            `You are an elite English communication & IELTS Writing coach helping a Vietnamese learner turn passive vocabulary/grammar into active fluency.`,
+            targetWordsList.length > 1
+              ? `Target vocabulary list (try to use as many naturally): ${targetWordsList.map((w) => `"${w}"`).join(', ')}`
+              : targetWord
+                ? `Target word or phrase: "${targetWord}"`
+                : '',
+            grammarFocus ? `Target grammar structure to apply: "${grammarFocus}"` : '',
+            contextSentence ? `Reference context sentence: "${contextSentence}"` : '',
+            `Intended context: ${contextLabel}`,
+            `Learner's writing: "${userSentence}"`,
+            `Evaluate the learner's writing and return strict JSON with exact keys:`,
             `- "score": integer 1 to 10 (naturalness + grammatical & contextual accuracy).`,
-            `- "isCorrectUsage": boolean (true if targetWord is used accurately in meaning and grammar).`,
-            `- "feedbackVi": 1-2 concise Vietnamese sentences praising what works and pointing out any grammar/collocation/register mistake.`,
-            `- "naturalVersion": One polished, natural native-speaker rewrite of the learner's sentence tailored for ${contextLabel} that still uses "${targetWord}".`,
-            `- "collocationTip": One short Vietnamese tip showing a high-value collocation or pattern with "${targetWord}" for work/daily use.`
+            `- "isCorrectUsage": boolean (true if target vocabulary/grammar is used accurately in meaning and grammar).`,
+            `- "feedbackVi": 2 concise Vietnamese sentences praising what works and pointing out any grammar/collocation/register mistake.`,
+            `- "naturalVersion": One polished, natural rewrite tailored for ${contextLabel} keeping the learner's idea and target vocabulary/grammar.`,
+            `- "collocationTip": One short Vietnamese tip showing a high-value collocation or Band 7.5+ pattern.`
           ].filter(Boolean).join('\n');
 
           const parsed = await callGeminiJson(apiKey, prompt);

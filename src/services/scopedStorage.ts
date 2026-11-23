@@ -5,7 +5,8 @@
  * strictly by `userId`. Guest / anonymous sessions use a dedicated clean partition.
  */
 
-import { SavedWord, VideoLesson, AnkiUserProfile, DailyReelProgress } from '../types';
+import { SavedWord, VideoLesson, AnkiUserProfile, DailyReelProgress, CurriculumProgressState } from '../types';
+import { createEmptyCurriculumProgress, normalizeCurriculumProgress } from '../utils/curriculumEngine';
 
 export function getLocalDateKey(date: Date = new Date()): string {
   const year = date.getFullYear();
@@ -312,6 +313,32 @@ export class ScopedStorage {
       localStorage.setItem(key, JSON.stringify(progress));
     } catch (e) {
       console.warn('[ScopedStorage] Error writing daily reel progress:', e);
+    }
+  }
+
+  // --- Structured Curriculum Progress (IELTS Topics + CEFR Vocab + Grammar, Scoped per User) ---
+  public static getCurriculumProgress(userId?: string | null): CurriculumProgressState {
+    try {
+      const key = `${this.getPrefix(userId)}_curriculum_progress`;
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        return normalizeCurriculumProgress(JSON.parse(raw));
+      }
+    } catch {
+      return createEmptyCurriculumProgress();
+    }
+    return createEmptyCurriculumProgress();
+  }
+
+  public static setCurriculumProgress(
+    userId: string | null | undefined,
+    progress: CurriculumProgressState
+  ): void {
+    try {
+      const key = `${this.getPrefix(userId)}_curriculum_progress`;
+      localStorage.setItem(key, JSON.stringify(progress));
+    } catch (e) {
+      console.warn('[ScopedStorage] Error writing curriculum progress:', e);
     }
   }
 
