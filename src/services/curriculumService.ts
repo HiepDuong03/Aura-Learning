@@ -7,10 +7,18 @@ import {
 let manifestCache: CurriculumManifest | null = null;
 const unitCache = new Map<string, CurriculumVocabUnitData | CurriculumGrammarUnitData>();
 
+function withVersionQuery(url: string, version?: string): string {
+  const sep = url.includes('?') ? '&' : '?';
+  const v = encodeURIComponent(version || String(Date.now()));
+  return `${url}${sep}v=${v}`;
+}
+
 export const curriculumService = {
   async getManifest(): Promise<CurriculumManifest> {
     if (manifestCache) return manifestCache;
-    const res = await fetch('/curriculum/manifest.json');
+    const res = await fetch(`/curriculum/manifest.json?t=${Date.now()}`, {
+      cache: 'no-cache'
+    });
     if (!res.ok) {
       throw new Error(`Không thể tải mục lục Lộ trình (HTTP ${res.status}).`);
     }
@@ -24,7 +32,8 @@ export const curriculumService = {
     if (cached && cached.trackType !== 'grammar') {
       return cached;
     }
-    const res = await fetch(dataPath);
+    const url = withVersionQuery(dataPath, manifestCache?.version);
+    const res = await fetch(url, { cache: 'no-cache' });
     if (!res.ok) {
       throw new Error(`Không thể tải dữ liệu chặng học (${dataPath}).`);
     }
@@ -38,7 +47,8 @@ export const curriculumService = {
     if (cached && cached.trackType === 'grammar') {
       return cached;
     }
-    const res = await fetch(dataPath);
+    const url = withVersionQuery(dataPath, manifestCache?.version);
+    const res = await fetch(url, { cache: 'no-cache' });
     if (!res.ok) {
       throw new Error(`Không thể tải dữ liệu ngữ pháp (${dataPath}).`);
     }

@@ -290,12 +290,16 @@ export interface CurriculumWordItem {
   ipaUs: string;
   ipaUk?: string;
   pos: string;
+  partOfSpeechVi?: string;
+  label?: string;
+  pattern?: string;
   cefr: CefrLevel;
   topic: string;
   meaningVi: string;
   definitionEn: string;
   exampleDailyEn: string;
   exampleIeltsEn: string;
+  examples?: string[];
   collocations: string[];
   synonyms: string[];
   academicTag?: 'AWL' | 'NAWL';

@@ -3,12 +3,10 @@ import confetti from 'canvas-confetti';
 import {
   X,
   Volume2,
-  Film,
   CheckCircle2,
   XCircle,
   ArrowRight,
   ChevronLeft,
-  ChevronRight,
   Bookmark,
   Mic,
   MicOff,
@@ -16,7 +14,12 @@ import {
   RotateCcw,
   Sparkles,
   Trophy,
-  Headphones
+  Headphones,
+  Maximize2,
+  Minimize2,
+  Plus,
+  Play,
+  Check
 } from 'lucide-react';
 import {
   ActivePracticeMission,
@@ -79,6 +82,8 @@ export const RoadmapLessonRunner: React.FC<RoadmapLessonRunnerProps> = ({
   const [mode, setMode] = useState<LessonRunnerMode>(initialMode);
   const [cardIndex, setCardIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
+  const [frontSide, setFrontSide] = useState<'en' | 'vi'>('en');
+  const [isExpanded, setIsExpanded] = useState(false);
   const [hardWordIds, setHardWordIds] = useState<Set<string>>(() => new Set());
   const [videoModalWord, setVideoModalWord] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
@@ -277,7 +282,7 @@ export const RoadmapLessonRunner: React.FC<RoadmapLessonRunnerProps> = ({
         onClick={onClose}
       >
       <div
-        className="w-full max-w-2xl max-h-[92vh] bg-white rounded-3xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden"
+        className={`w-full ${isExpanded && mode === 'flashcards' ? 'max-w-4xl' : 'max-w-2xl'} max-h-[92vh] bg-white rounded-3xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden transition-all duration-200`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Header */}
@@ -336,158 +341,305 @@ export const RoadmapLessonRunner: React.FC<RoadmapLessonRunnerProps> = ({
           {/* MODE 1: FLASHCARDS */}
           {mode === 'flashcards' && currentWord && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between text-xs font-bold text-slate-500">
-                <span>
-                  Thẻ {cardIndex + 1} / {lesson.words.length}
-                </span>
+              {/* Progress + Front Side Toggle (Anh | Việt) */}
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-slate-500">
                 <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-200 text-[11px]">
+                  <span>
+                    Thẻ {cardIndex + 1} / {lesson.words.length}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200 text-[11px]">
                     {currentWord.cefr}
                   </span>
-                  <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[11px]">
-                    {currentWord.pos}
-                  </span>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-bold text-slate-500">Mặt trước:</span>
+                  <div className="inline-flex items-center p-0.5 rounded-full bg-slate-100 border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFrontSide('en');
+                        setIsFlipped(false);
+                      }}
+                      className={`px-3 py-1 rounded-full text-[11px] font-black transition-all cursor-pointer ${
+                        frontSide === 'en'
+                          ? 'bg-[#043e35] text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Anh
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFrontSide('vi');
+                        setIsFlipped(false);
+                      }}
+                      className={`px-3 py-1 rounded-full text-[11px] font-black transition-all cursor-pointer ${
+                        frontSide === 'vi'
+                          ? 'bg-[#043e35] text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Việt
+                    </button>
+                  </div>
                 </div>
               </div>
 
               <div className="w-full h-1.5 rounded-full bg-slate-100 overflow-hidden">
                 <div
-                  className="h-full bg-teal-500 transition-all duration-200"
+                  className="h-full bg-[#043e35] transition-all duration-200"
                   style={{ width: `${((cardIndex + 1) / lesson.words.length) * 100}%` }}
                 />
               </div>
 
-              {/* Interactive Card */}
+              {/* Interactive Dark Forest Green Flashcard (ForumFlash Collocation Style) */}
               {(() => {
                 const bandMeta = CEFR_BAND_META[currentWord.cefr] || CEFR_BAND_META.B2;
-                const preferIeltsFront = trackType === 'ielts_topics' || ['B2', 'C1', 'C2'].includes(currentWord.cefr);
-                const frontSentence = preferIeltsFront
-                  ? currentWord.exampleIeltsEn || currentWord.exampleDailyEn
-                  : currentWord.exampleDailyEn || currentWord.exampleIeltsEn;
-                const backComparisonSentence = preferIeltsFront
-                  ? currentWord.exampleDailyEn
-                  : currentWord.exampleIeltsEn;
+                const cardLabel =
+                  currentWord.label ||
+                  (trackType === 'ielts_topics' ? 'COLLOCATION · IELTS' : `CEFR · BẬC ${currentWord.cefr}`);
+                const posPill = (currentWord.partOfSpeechVi || currentWord.pos).toUpperCase();
+                const allExamples =
+                  currentWord.examples && currentWord.examples.length > 0
+                    ? currentWord.examples
+                    : [currentWord.exampleIeltsEn, currentWord.exampleDailyEn].filter(
+                        (s, i, arr) => Boolean(s) && arr.indexOf(s) === i
+                      );
 
                 return (
-              <div
-                onClick={() => setIsFlipped((prev) => !prev)}
-                className="p-6 rounded-3xl border-2 border-slate-200 hover:border-teal-300 bg-gradient-to-b from-white to-slate-50/70 shadow-sm cursor-pointer transition-all space-y-4 min-h-[260px] flex flex-col justify-between"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
-                      <span className={`px-2 py-0.5 rounded-md border text-[10px] font-black uppercase ${bandMeta.cls}`}>
-                        {bandMeta.label}
+                  <div
+                    onClick={() => setIsFlipped((prev) => !prev)}
+                    className={`rounded-3xl cursor-pointer transition-all duration-200 select-none flex flex-col justify-between ${
+                      isExpanded ? 'min-h-[380px] p-7 sm:p-10' : 'min-h-[290px] p-6 sm:p-8'
+                    } ${
+                      !isFlipped
+                        ? 'bg-gradient-to-br from-[#043e35] via-[#05463c] to-[#022c26] text-white shadow-xl border border-teal-900/40'
+                        : 'bg-white text-slate-900 shadow-lg border-2 border-[#043e35]/20'
+                    }`}
+                  >
+                    {/* Card Top Metadata Row */}
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className={`text-[11px] font-black uppercase tracking-[0.14em] ${
+                          !isFlipped ? 'text-teal-200/90' : 'text-[#043e35]'
+                        }`}
+                      >
+                        {cardLabel}
                       </span>
-                      {currentWord.academicTag && (
-                        <span className="px-2 py-0.5 rounded-md bg-violet-600 text-white text-[10px] font-black uppercase tracking-wide">
-                          {currentWord.academicTag === 'AWL' ? 'AWL 570' : 'NAWL'}
-                        </span>
-                      )}
-                      <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-bold">
-                        {currentWord.pos}
-                      </span>
-                    </div>
-                    <h2 className="text-3xl font-black text-slate-900 tracking-tight">
-                      {currentWord.word}
-                    </h2>
-                    <p className="text-sm font-mono font-bold text-teal-700 mt-1">
-                      {currentWord.ipaUs}
-                      {currentWord.ipaUk && currentWord.ipaUk !== currentWord.ipaUs ? ` · UK ${currentWord.ipaUk}` : ''}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        speakWord(currentWord.word, 'en', 0.95);
-                      }}
-                      className="p-2.5 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 cursor-pointer"
-                      title="Nghe phát âm"
-                    >
-                      <Volume2 className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setVideoModalWord(currentWord.word);
-                      }}
-                      className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                      title="Nghe người Mỹ nói từ này trong video thực tế"
-                    >
-                      <Film className="w-3.5 h-3.5 text-teal-600" />
-                      <span className="hidden sm:inline">Video Mỹ</span>
-                    </button>
-                  </div>
-                </div>
-
-                {!isFlipped ? (
-                  <div className="py-5 text-center space-y-2.5">
-                    <span className="inline-block px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase tracking-wider">
-                      {preferIeltsFront ? 'Ngữ cảnh IELTS học thuật' : 'Ví dụ ngữ cảnh'}
-                    </span>
-                    <p className="text-sm sm:text-base font-semibold text-slate-700 italic leading-relaxed">
-                      “{frontSentence}”
-                    </p>
-                    <p className="text-xs font-bold text-teal-600 pt-1">
-                      Nhấp vào thẻ để xem nghĩa Tiếng Việt, Collocation & từ đồng nghĩa
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3 pt-2 border-t border-slate-200/80 animate-fade-in">
-                    <div className="p-3.5 rounded-2xl bg-teal-50/80 border border-teal-100">
-                      <p className="text-lg font-black text-teal-900">{currentWord.meaningVi}</p>
-                      <p className="text-xs text-slate-600 mt-0.5">{currentWord.definitionEn}</p>
-                    </div>
-
-                    <div className="space-y-2 text-xs">
-                      {backComparisonSentence && backComparisonSentence !== frontSentence && (
-                        <div className="p-3 rounded-xl bg-white border border-slate-200/80">
-                          <span className="font-black text-indigo-700 uppercase text-[10px]">
-                            {preferIeltsFront ? 'Câu giao tiếp đời thường:' : 'Ngữ cảnh IELTS:'}
+                      <div className="flex items-center gap-1.5">
+                        {currentWord.academicTag && (
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wide ${
+                              !isFlipped
+                                ? 'bg-white/15 text-teal-100 border border-white/15'
+                                : 'bg-violet-600 text-white'
+                            }`}
+                          >
+                            {currentWord.academicTag === 'AWL' ? 'AWL 570' : 'NAWL'}
                           </span>
-                          <p className="font-semibold text-slate-800 mt-0.5 leading-relaxed">
-                            {backComparisonSentence}
+                        )}
+                        <span
+                          className={`px-2 py-0.5 rounded-md border text-[10px] font-black uppercase ${
+                            !isFlipped
+                              ? 'bg-white/10 text-teal-100 border-white/15'
+                              : bandMeta.cls
+                          }`}
+                        >
+                          {bandMeta.label}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Card Center Content */}
+                    {!isFlipped ? (
+                      <div className="my-auto py-8 text-center flex flex-col items-center justify-center gap-3">
+                        {frontSide === 'en' ? (
+                          <>
+                            <h2
+                              className={`${
+                                isExpanded ? 'text-4xl sm:text-5xl' : 'text-3xl sm:text-4xl'
+                              } font-black text-white tracking-tight leading-tight max-w-2xl`}
+                            >
+                              {currentWord.word}
+                            </h2>
+                            {currentWord.ipaUs && (
+                              <p className="text-sm sm:text-base font-mono font-medium text-teal-100/85">
+                                {currentWord.ipaUs}
+                                {currentWord.ipaUk && currentWord.ipaUk !== currentWord.ipaUs
+                                  ? ` · UK ${currentWord.ipaUk}`
+                                  : ''}
+                              </p>
+                            )}
+                            <span className="mt-1 px-4 py-1.5 rounded-full bg-white/10 border border-teal-300/25 text-teal-200 text-[11px] font-black tracking-wider uppercase">
+                              {posPill}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <h2
+                              className={`${
+                                isExpanded ? 'text-3xl sm:text-4xl' : 'text-2xl sm:text-3xl'
+                              } font-black text-white tracking-tight leading-snug max-w-xl`}
+                            >
+                              {currentWord.meaningVi}
+                            </h2>
+                            <span className="mt-1 px-4 py-1.5 rounded-full bg-white/10 border border-teal-300/25 text-teal-200 text-[11px] font-black tracking-wider uppercase">
+                              {posPill}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="my-4 space-y-3.5 animate-fade-in">
+                        {/* Term + Vietnamese Meaning */}
+                        <div className="p-4 rounded-2xl bg-[#043e35]/5 border border-[#043e35]/15">
+                          <div className="flex flex-wrap items-baseline justify-between gap-2">
+                            <h3 className="text-xl sm:text-2xl font-black text-[#043e35] tracking-tight">
+                              {currentWord.word}
+                            </h3>
+                            <span className="px-2.5 py-0.5 rounded-full bg-[#043e35]/10 text-[#043e35] text-[10px] font-black uppercase tracking-wider">
+                              {posPill}
+                            </span>
+                          </div>
+                          {currentWord.ipaUs && (
+                            <p className="text-xs font-mono font-bold text-teal-700 mt-0.5">
+                              {currentWord.ipaUs}
+                            </p>
+                          )}
+                          <p className="text-lg font-black text-slate-900 mt-2">
+                            {currentWord.meaningVi}
                           </p>
+                          {(currentWord.pattern || currentWord.definitionEn) && (
+                            <p className="text-xs font-medium text-slate-600 mt-1 leading-relaxed">
+                              {currentWord.pattern || currentWord.definitionEn}
+                            </p>
+                          )}
                         </div>
-                      )}
-                      {currentWord.collocations.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5 items-center">
-                          <span className="text-[11px] font-bold text-slate-500">Collocations:</span>
-                          {currentWord.collocations.map((col) => (
-                            <span
-                              key={col}
-                              className="px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 font-bold text-[11px]"
-                            >
-                              {col}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {currentWord.synonyms.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5 items-center">
-                          <span className="text-[11px] font-bold text-slate-500">Synonyms (Paraphrase):</span>
-                          {currentWord.synonyms.map((syn) => (
-                            <span
-                              key={syn}
-                              className="px-2 py-0.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-900 font-bold text-[11px]"
-                            >
-                              {syn}
-                            </span>
-                          ))}
-                        </div>
-                      )}
+
+                        {/* IELTS Context Sentences */}
+                        {allExamples.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                              Ví dụ ngữ cảnh IELTS
+                            </p>
+                            {allExamples.map((ex, idx) => (
+                              <div
+                                key={idx}
+                                className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-start justify-between gap-2.5"
+                              >
+                                <p className="text-xs sm:text-sm font-semibold text-slate-800 leading-relaxed">
+                                  “{ex}”
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    speakWord(ex, 'en', 0.92);
+                                  }}
+                                  className="p-1.5 rounded-lg bg-white hover:bg-teal-50 text-teal-700 border border-slate-200 shrink-0 cursor-pointer"
+                                  title="Nghe câu ví dụ"
+                                >
+                                  <Volume2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Collocations & Synonyms */}
+                        {(currentWord.collocations.length > 0 || currentWord.synonyms.length > 0) && (
+                          <div className="space-y-2 pt-1">
+                            {currentWord.collocations.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 items-center">
+                                <span className="text-[11px] font-bold text-slate-500">Kết hợp từ:</span>
+                                {currentWord.collocations.map((col) => (
+                                  <span
+                                    key={col}
+                                    className="px-2.5 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 font-bold text-[11px]"
+                                  >
+                                    {col}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {currentWord.synonyms.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 items-center">
+                                <span className="text-[11px] font-bold text-slate-500">Paraphrase:</span>
+                                {currentWord.synonyms.map((syn) => (
+                                  <span
+                                    key={syn}
+                                    className="px-2.5 py-0.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-900 font-bold text-[11px]"
+                                  >
+                                    {syn}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Card Bottom Flip Hint */}
+                    <div className="text-center pt-2">
+                      <span
+                        className={`inline-flex items-center gap-1.5 text-[11px] font-bold ${
+                          !isFlipped ? 'text-teal-200/75' : 'text-slate-400'
+                        }`}
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>{!isFlipped ? 'Lật thẻ' : 'Nhấp để lật lại mặt trước'}</span>
+                      </span>
                     </div>
                   </div>
-                )}
-              </div>
                 );
               })()}
 
-              {/* Navigation & Remember actions */}
-              <div className="flex items-center justify-between gap-2 pt-1">
+              {/* Center Action Pills: NGHE · ÔN TẬP · VIDEO · PHÓNG TO */}
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => speakWord(currentWord.word, 'en', 0.92)}
+                  className="px-4 py-2 rounded-full bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                >
+                  <Volume2 className="w-3.5 h-3.5 text-[#043e35]" />
+                  <span>Nghe</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSaveBatch([currentWord], currentWord.word)}
+                  className="px-4 py-2 rounded-full bg-white hover:bg-teal-50 border border-slate-200 text-slate-700 text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5 text-[#043e35]" />
+                  <span>Ôn tập</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVideoModalWord(currentWord.word)}
+                  className="px-4 py-2 rounded-full bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                  title="Nghe người bản xứ dùng cụm từ này trong video thực tế"
+                >
+                  <Play className="w-3.5 h-3.5 text-[#043e35] fill-[#043e35]" />
+                  <span>Video</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsExpanded((prev) => !prev)}
+                  className="px-4 py-2 rounded-full bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                >
+                  {isExpanded ? (
+                    <Minimize2 className="w-3.5 h-3.5 text-[#043e35]" />
+                  ) : (
+                    <Maximize2 className="w-3.5 h-3.5 text-[#043e35]" />
+                  )}
+                  <span>{isExpanded ? 'Thu gọn' : 'Phóng to'}</span>
+                </button>
+              </div>
+
+              {/* Bottom Review Bar: Trước | Cần ôn | Đã nhớ */}
+              <div className="flex items-center gap-2.5 pt-1">
                 <button
                   type="button"
                   disabled={cardIndex === 0}
@@ -495,31 +647,32 @@ export const RoadmapLessonRunner: React.FC<RoadmapLessonRunnerProps> = ({
                     setCardIndex((prev) => Math.max(0, prev - 1));
                     setIsFlipped(false);
                   }}
-                  className="px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1 cursor-pointer"
+                  className="px-3 py-3 rounded-2xl border border-slate-200 text-xs font-bold text-slate-500 hover:bg-slate-50 disabled:opacity-35 flex items-center justify-center cursor-pointer shrink-0"
+                  title="Thẻ trước"
                 >
-                  <ChevronLeft className="w-4 h-4" /> Trước
+                  <ChevronLeft className="w-4 h-4" />
                 </button>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      handleSaveBatch([currentWord], currentWord.word);
-                      handleAdvanceFlashcard(true);
-                    }}
-                    className="px-4 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-xs font-black cursor-pointer"
-                  >
-                    Chưa nhớ · Lưu SRS
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleAdvanceFlashcard(false)}
-                    className="px-5 py-2.5 rounded-xl btn-3d btn-3d-teal text-xs font-black flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <span>{cardIndex === lesson.words.length - 1 ? 'Sang Bài tập' : 'Đã nhớ'}</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSaveBatch([currentWord], currentWord.word);
+                    handleAdvanceFlashcard(true);
+                  }}
+                  className="flex-1 py-3 px-4 rounded-2xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-800 text-xs sm:text-sm font-black flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  <span>Cần ôn</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleAdvanceFlashcard(false)}
+                  className="flex-1 py-3 px-4 rounded-2xl bg-[#043e35] hover:bg-[#065246] text-white text-xs sm:text-sm font-black flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>{cardIndex === lesson.words.length - 1 ? 'Sang Bài tập' : 'Đã nhớ'}</span>
+                </button>
               </div>
             </div>
           )}
