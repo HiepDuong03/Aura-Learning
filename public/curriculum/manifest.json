@@ -1,6 +1,6 @@
 {
-  "version": "3.1.0",
-  "generatedAt": "2026-11-24T01:45:10.695Z",
+  "version": "3.2.0",
+  "generatedAt": "2026-11-24T04:23:15.316Z",
   "attributions": [
     {
       "name": "Word Atlas (IELTS & CEFR)",
@@ -26,7 +26,7 @@
   "stats": {
     "totalIeltsTopics": 25,
     "totalIeltsWords": 5000,
-    "totalCefrWords": 1700,
+    "totalCefrWords": 4922,
     "totalGrammarLessons": 101
   },
   "ieltsTopics": [
@@ -340,8 +340,8 @@
       "titleEn": "CEFR A1 Core Vocabulary",
       "titleVi": "Từ vựng cơ bản A1",
       "descVi": "Nền tảng giao tiếp sinh tồn — những từ tiếng Anh thông dụng nhất hàng ngày.",
-      "totalWords": 300,
-      "totalLessons": 30,
+      "totalWords": 890,
+      "totalLessons": 89,
       "dataPath": "/curriculum/cefr/a1.json"
     },
     {
@@ -350,10 +350,10 @@
       "cefr": "A2",
       "order": 2,
       "titleEn": "CEFR A2 Core Vocabulary",
-      "titleVi": "Từ vựng sơ cấp A2",
-      "descVi": "Mở rộng diễn đạt đời sống, công việc cơ bản và du lịch tự tin.",
-      "totalWords": 300,
-      "totalLessons": 30,
+      "titleVi": "Từ vựng sơ trung cấp A2",
+      "descVi": "Mở rộng vốn từ đời sống, mua sắm, công việc và các chủ đề quen thuộc.",
+      "totalWords": 792,
+      "totalLessons": 80,
       "dataPath": "/curriculum/cefr/a2.json"
     },
     {
@@ -363,9 +363,9 @@
       "order": 3,
       "titleEn": "CEFR B1 Core Vocabulary",
       "titleVi": "Từ vựng trung cấp B1",
-      "descVi": "Giao tiếp độc lập, trình bày quan điểm và đạt nền IELTS 5.5–6.0.",
-      "totalWords": 300,
-      "totalLessons": 30,
+      "descVi": "Giao tiếp độc lập, diễn đạt quan điểm cá nhân và đọc hiểu tin tức — IELTS 5.5–6.0.",
+      "totalWords": 688,
+      "totalLessons": 69,
       "dataPath": "/curriculum/cefr/b1.json"
     },
     {
@@ -375,9 +375,9 @@
       "order": 4,
       "titleEn": "CEFR B2 Core Vocabulary",
       "titleVi": "Từ vựng trung cao cấp B2",
-      "descVi": "Từ vựng công sở chuyên nghiệp & học thuật cho mục tiêu IELTS 6.5–7.0.",
-      "totalWords": 300,
-      "totalLessons": 30,
+      "descVi": "Tự tin tranh luận, đọc tài liệu chuyên ngành và viết luận học thuật — IELTS 6.5–7.0.",
+      "totalWords": 530,
+      "totalLessons": 53,
       "dataPath": "/curriculum/cefr/b2.json"
     },
     {
@@ -388,8 +388,8 @@
       "titleEn": "CEFR C1 Core Vocabulary",
       "titleVi": "Từ vựng cao cấp C1",
       "descVi": "Diễn đạt sắc bén, chính xác và tự nhiên như bản xứ — IELTS 7.5–8.0.",
-      "totalWords": 300,
-      "totalLessons": 30,
+      "totalWords": 1300,
+      "totalLessons": 130,
       "dataPath": "/curriculum/cefr/c1.json"
     },
     {
@@ -400,8 +400,8 @@
       "titleEn": "CEFR C2 Core Vocabulary",
       "titleVi": "Từ vựng tinh thông C2",
       "descVi": "Sắc thái học thuật & ngôn từ tinh tế ở bậc cao nhất — IELTS 8.5+.",
-      "totalWords": 200,
-      "totalLessons": 20,
+      "totalWords": 722,
+      "totalLessons": 73,
       "dataPath": "/curriculum/cefr/c2.json"
     }
   ],
