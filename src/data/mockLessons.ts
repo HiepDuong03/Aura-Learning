@@ -1,4 +1,4 @@
-import { VideoLesson, SavedWord } from '../types';
+import { VideoLesson } from '../types';
 
 export const MOCK_LESSONS: VideoLesson[] = [
   {
@@ -6053,62 +6053,4 @@ export const MOCK_SHORTS: VideoLesson[] = [
   }
 ];
 
-export const INITIAL_SAVED_WORDS: SavedWord[] = [
-  {
-    id: 'w1',
-    word: 'complicated',
-    phonetic: '/ˈkɑːm.plə.keɪ.t̬ɪd/',
-    partOfSpeech: 'adjective',
-    translation: 'phức tạp, rắc rối',
-    definitionEn: 'involving a lot of different parts, in a way that is difficult to understand',
-    exampleEn: 'We can transmit really complicated thoughts to one another.',
-    contextSentence: 'We can transmit really complicated thoughts to one another.',
-    videoTitle: 'How language shapes the way we think',
-    savedAt: Date.now() - 86400000 * 2,
-    easeFactor: 2.35,
-    interval: 3,
-    repetitions: 2,
-    lapses: 0,
-    state: 'review',
-    dueAt: Date.now() - 3600000,
-    lastReviewedAt: Date.now() - 86400000 * 3
-  },
-  {
-    id: 'w2',
-    word: 'vibration',
-    phonetic: '/vaɪˈbreɪ.ʃən/',
-    partOfSpeech: 'noun',
-    translation: 'sự rung động, dao động sóng âm',
-    definitionEn: 'continuous quick, slight shaking movement or air oscillation',
-    exampleEn: 'That creates air vibrations.',
-    contextSentence: 'That creates air vibrations.',
-    videoTitle: 'How language shapes the way we think',
-    savedAt: Date.now() - 86400000 * 8,
-    easeFactor: 2.65,
-    interval: 8,
-    repetitions: 4,
-    lapses: 0,
-    state: 'review',
-    dueAt: Date.now() + 86400000 * 4,
-    lastReviewedAt: Date.now() - 86400000 * 4
-  },
-  {
-    id: 'w3',
-    word: 'pastry',
-    phonetic: '/ˈpeɪ.stri/',
-    partOfSpeech: 'noun',
-    translation: 'bánh ngọt nướng',
-    definitionEn: 'a food made from a mixture of flour, fat, and water, rolled flat and baked',
-    exampleEn: 'Would you like anything from our bakery display today?',
-    contextSentence: 'Would you like anything from our bakery display today?',
-    videoTitle: 'Ordering Food at a Cozy American Cafe',
-    savedAt: Date.now() - 86400000 * 1,
-    easeFactor: 2.50,
-    interval: 1,
-    repetitions: 1,
-    lapses: 0,
-    state: 'learning',
-    dueAt: Date.now() - 1800000,
-    lastReviewedAt: Date.now() - 86400000
-  }
-];
+export { INITIAL_SAVED_WORDS } from './initialSavedWords';

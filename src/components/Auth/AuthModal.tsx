@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { AuthUser, SavedWord } from '../../types';
 import { authService } from '../../services/authService';
+import { detectInAppBrowser } from '../../utils/inAppBrowser';
 import { 
   X, 
   Mail, 
@@ -37,6 +38,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [googleClientId, setGoogleClientId] = useState<string>('');
+  const inAppBrowser = useMemo(() => detectInAppBrowser(), []);
 
   // Check if backend has GOOGLE_CLIENT_ID configured
   useEffect(() => {
@@ -116,6 +118,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const handleTriggerGoogle = () => {
     setError(null);
+
+    if (inAppBrowser.isInApp) {
+      setError(
+        `Trình duyệt nhúng trong ${inAppBrowser.appName} chặn đăng nhập Google. Vui lòng bấm dấu "..." góc trên phải → chọn "Mở bằng Safari / Chrome", hoặc đăng nhập bằng Email & Mật khẩu bên dưới.`
+      );
+      return;
+    }
 
     if (!googleClientId) {
       setError('Đăng nhập Google OAuth chưa được cấu hình (thiếu GOOGLE_CLIENT_ID trên máy chủ). Vui lòng dùng Email & Mật khẩu.');
@@ -250,6 +259,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             {/* Google OAuth Quick Button (only rendered when GOOGLE_CLIENT_ID is configured on backend) */}
             {Boolean(googleClientId) && (
               <>
+                {inAppBrowser.isInApp && (
+                  <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-[11px] leading-relaxed text-amber-900 font-medium flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <span>
+                      Bạn đang mở trong <strong>{inAppBrowser.appName}</strong>. Google chặn đăng nhập trong ứng dụng này — hãy bấm nút <strong>...</strong> góc trên → <strong>Mở bằng Safari / Chrome</strong>, hoặc dùng Email bên dưới.
+                    </span>
+                  </div>
+                )}
+
                 <button
                   type="button"
                   onClick={handleTriggerGoogle}

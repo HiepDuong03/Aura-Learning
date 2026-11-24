@@ -10,7 +10,7 @@ import {
   CurriculumProgressState,
   ActivePracticeMission
 } from './types';
-import { MOCK_LESSONS, MOCK_SHORTS, INITIAL_SAVED_WORDS } from './data/mockLessons';
+import { INITIAL_SAVED_WORDS } from './data/initialSavedWords';
 import { calculateFsrsSchedule } from './services/fsrsScheduler';
 import { lingqWordService } from './services/lingqWordService';
 import { Sidebar, ActiveTab } from './components/Navigation/Sidebar';
@@ -47,12 +47,14 @@ export const App: React.FC = () => {
   const [currentLessonMode, setCurrentLessonMode] = useState<'subtitles' | 'dictation' | 'shadowing' | 'quiz'>('subtitles');
   const [initialVideoTimestampSec, setInitialVideoTimestampSec] = useState<number | undefined>(undefined);
 
+  const mockLessonsRef = useRef<VideoLesson[]>([]);
+
   const handleSelectLesson = (
     lesson: VideoLesson, 
     mode: 'subtitles' | 'dictation' | 'shadowing' | 'quiz' = 'subtitles',
     startTimestampSec?: number
   ) => {
-    const mock = MOCK_LESSONS.find((m) => m.id === lesson.id);
+    const mock = mockLessonsRef.current.find((m) => m.id === lesson.id);
     const freshLesson = mock && (!lesson.subtitles || lesson.subtitles.length < mock.subtitles.length)
       ? { ...lesson, subtitles: mock.subtitles, quizzes: mock.quizzes, duration: mock.duration, durationSec: mock.durationSec }
       : lesson;
@@ -80,13 +82,35 @@ export const App: React.FC = () => {
     try {
       const user = authService.getCurrentUser();
       const customList = ScopedStorage.getCustomLessons(user?.id);
-      return [...customList, ...MOCK_LESSONS];
+      return [...customList];
     } catch {
-      return MOCK_LESSONS;
+      return [];
     }
   });
 
-  const [shorts, setShorts] = useState<VideoLesson[]>(MOCK_SHORTS);
+  const [shorts, setShorts] = useState<VideoLesson[]>([]);
+
+  // Lazy-load 200KB static video catalog out of the initial main bundle
+  useEffect(() => {
+    let active = true;
+    import('./data/mockLessons')
+      .then((mod) => {
+        if (!active) return;
+        mockLessonsRef.current = mod.MOCK_LESSONS;
+        setShorts(mod.MOCK_SHORTS);
+        setLessons((prev) => {
+          const existingIds = new Set(prev.map((l) => l.id));
+          const additions = mod.MOCK_LESSONS.filter((m) => !existingIds.has(m.id));
+          return additions.length > 0 ? [...prev, ...additions] : prev;
+        });
+      })
+      .catch((err) => {
+        console.warn('[App] Failed to lazy-load mockLessons:', err);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const [savedWords, setSavedWords] = useState<SavedWord[]>(() => {
     try {
@@ -200,7 +224,7 @@ export const App: React.FC = () => {
       if (l && l.id && l.title) mergedCustomMap.set(l.id, l);
     }
     const validCustom = Array.from(mergedCustomMap.values());
-    setLessons([...validCustom, ...MOCK_LESSONS]);
+    setLessons([...validCustom, ...mockLessonsRef.current]);
     ScopedStorage.setCustomLessons(user.id, validCustom);
 
     const nextScenarios =
@@ -279,7 +303,7 @@ export const App: React.FC = () => {
         ScopedStorage.setSavedWords(user.id, words || []);
         const dbCustom = await ankiDb.getCustomLessons();
         const validCustom = (dbCustom || []).filter(c => Boolean(c && typeof c === 'object' && c.id && c.title));
-        setLessons([...validCustom, ...MOCK_LESSONS]);
+        setLessons([...validCustom, ...mockLessonsRef.current]);
         ScopedStorage.setCustomLessons(user.id, validCustom);
         setScenarios(ScopedStorage.getScenarios(user.id) || SPEAKING_SCENARIOS);
         setStreakDays(ScopedStorage.getStreakDays(user.id));
@@ -311,7 +335,7 @@ export const App: React.FC = () => {
       setSavedWords(guestWords && guestWords.length > 0 ? guestWords : INITIAL_SAVED_WORDS);
       const guestCustom = await ankiDb.getCustomLessons();
       const validGuestCustom = (guestCustom || []).filter(c => Boolean(c && typeof c === 'object' && c.id && c.title));
-      setLessons([...validGuestCustom, ...MOCK_LESSONS]);
+      setLessons([...validGuestCustom, ...mockLessonsRef.current]);
       setScenarios(ScopedStorage.getScenarios(null) || SPEAKING_SCENARIOS);
       setStreakDays(ScopedStorage.getStreakDays(null));
       setRoleplayHistory(ScopedStorage.getRoleplayHistory(null));
@@ -355,7 +379,7 @@ export const App: React.FC = () => {
           if (cancelled) return;
           if (dbCustomLessons && dbCustomLessons.length > 0) {
             const validCustom = dbCustomLessons.filter(c => Boolean(c && typeof c === 'object' && c.id && c.title));
-            setLessons([...validCustom, ...MOCK_LESSONS]);
+            setLessons([...validCustom, ...mockLessonsRef.current]);
           }
           const dbWords = await ankiDb.getAllWords(active.id);
           if (cancelled) return;
@@ -1202,7 +1226,7 @@ export const App: React.FC = () => {
                     }
                     const emptyCurr = createEmptyCurriculumProgress();
                     setSavedWords(resetWords);
-                    setLessons(MOCK_LESSONS);
+                    setLessons(mockLessonsRef.current);
                     setStreakDays(1);
                     setCurriculumProgress(emptyCurr);
                     setActiveMission(null);

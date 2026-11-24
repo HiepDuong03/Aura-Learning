@@ -1,5 +1,5 @@
-// 4You Study PWA Service Worker (v2.0.0 - Deployment-Resilient Cache)
-const CACHE_NAME = '4you-study-v2';
+// 4You Study PWA Service Worker (v3.0.0 - Network-First Curriculum & Deployment-Resilient Cache)
+const CACHE_NAME = '4you-study-v3';
 const PRECACHE_ASSETS = [
   '/manifest.webmanifest',
   '/icon.svg',
@@ -63,6 +63,22 @@ self.addEventListener('fetch', (event) => {
           // Offline fallback
           return caches.match('/index.html') || caches.match('/');
         })
+    );
+    return;
+  }
+
+  // 2b. Curriculum JSON: NETWORK-FIRST (Always deliver latest CEFR/IELTS/Grammar updates)
+  if (url.pathname.startsWith('/curriculum/')) {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return networkResponse;
+        })
+        .catch(() => caches.match(event.request))
     );
     return;
   }

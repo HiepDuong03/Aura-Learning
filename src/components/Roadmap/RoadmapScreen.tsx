@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   BookOpen,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Compass,
   GraduationCap,
   Headphones,
@@ -10,6 +12,7 @@ import {
   Lock,
   Mic,
   PenTool,
+  Search,
   Sparkles,
   Star
 } from 'lucide-react';
@@ -49,6 +52,8 @@ interface RoadmapScreenProps {
   onLaunchMission: (mission: ActivePracticeMission) => void;
 }
 
+const LESSONS_PER_PAGE = 15;
+
 export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
   progress,
   searchQuery = '',
@@ -77,6 +82,8 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
     questions: CurriculumQuizQuestion[];
   } | null>(null);
   const [bannerToast, setBannerToast] = useState<string | null>(null);
+  const [lessonFilterQuery, setLessonFilterQuery] = useState<string>('');
+  const [lessonPage, setLessonPage] = useState<number>(1);
 
   // Load manifest once
   useEffect(() => {
@@ -129,6 +136,56 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
     () => currentUnits.find((u) => u.slug === selectedUnitSlug) || currentUnits[0] || null,
     [currentUnits, selectedUnitSlug]
   );
+
+  const progressLessonsRef = useRef(progress.lessons);
+  progressLessonsRef.current = progress.lessons;
+
+  // Reset pagination & search whenever the selected unit changes; jump to first incomplete lesson
+  useEffect(() => {
+    setLessonFilterQuery('');
+    if (!vocabUnitData) {
+      setLessonPage(1);
+      return;
+    }
+    const firstIncompleteIdx = vocabUnitData.lessons.findIndex(
+      (l) => !progressLessonsRef.current[l.id]?.quizPassed
+    );
+    const targetIdx = firstIncompleteIdx >= 0 ? firstIncompleteIdx : 0;
+    setLessonPage(Math.floor(targetIdx / LESSONS_PER_PAGE) + 1);
+  }, [vocabUnitData]);
+
+  const firstIncompleteVocabLesson = useMemo(() => {
+    if (!vocabUnitData || vocabUnitData.lessons.length === 0) return null;
+    const idx = vocabUnitData.lessons.findIndex((l) => !progress.lessons[l.id]?.quizPassed);
+    if (idx < 0) return null;
+    return {
+      idx,
+      lesson: vocabUnitData.lessons[idx],
+      page: Math.floor(idx / LESSONS_PER_PAGE) + 1
+    };
+  }, [vocabUnitData, progress.lessons]);
+
+  const filteredVocabLessons = useMemo(() => {
+    if (!vocabUnitData) return [];
+    const q = lessonFilterQuery.trim().toLowerCase();
+    const mapped = vocabUnitData.lessons.map((lesson, originalIdx) => ({ lesson, originalIdx }));
+    if (!q) return mapped;
+    return mapped.filter(
+      ({ lesson }) =>
+        lesson.title.toLowerCase().includes(q) ||
+        String(lesson.lessonNumber) === q ||
+        lesson.words.some(
+          (w) => w.word.toLowerCase().includes(q) || w.meaningVi.toLowerCase().includes(q)
+        )
+    );
+  }, [vocabUnitData, lessonFilterQuery]);
+
+  const totalVocabPages = Math.max(1, Math.ceil(filteredVocabLessons.length / LESSONS_PER_PAGE));
+  const safeLessonPage = Math.min(lessonPage, totalVocabPages);
+  const paginatedVocabLessons = useMemo(() => {
+    const start = (safeLessonPage - 1) * LESSONS_PER_PAGE;
+    return filteredVocabLessons.slice(start, start + LESSONS_PER_PAGE);
+  }, [filteredVocabLessons, safeLessonPage]);
 
   // Lazy load active unit JSON
   useEffect(() => {
@@ -505,7 +562,65 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
               {/* LESSON LIST: VOCABULARY (IELTS TOPICS OR CEFR) */}
               {vocabUnitData && (
                 <div className="space-y-3">
-                  {vocabUnitData.lessons.map((lesson, idx) => {
+                  {vocabUnitData.lessons.length > LESSONS_PER_PAGE && (
+                    <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div className="relative flex-1 max-w-sm">
+                        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <input
+                          type="text"
+                          value={lessonFilterQuery}
+                          onChange={(e) => {
+                            setLessonFilterQuery(e.target.value);
+                            setLessonPage(1);
+                          }}
+                          placeholder="Tìm số bài hoặc từ vựng (vd: 12, analogy)..."
+                          className="w-full h-9 pl-9 pr-3 rounded-xl bg-white border border-slate-200 text-xs font-semibold text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-teal-500"
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between sm:justify-end gap-2 flex-wrap">
+                        {firstIncompleteVocabLesson && !lessonFilterQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setLessonPage(firstIncompleteVocabLesson.page)}
+                            className="px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-[11px] font-black cursor-pointer transition-colors"
+                          >
+                            Tiếp tục {firstIncompleteVocabLesson.lesson.title}
+                          </button>
+                        )}
+                        <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-2 py-1">
+                          <button
+                            type="button"
+                            disabled={safeLessonPage <= 1}
+                            onClick={() => setLessonPage((p) => Math.max(1, p - 1))}
+                            className="p-1 rounded-lg hover:bg-slate-100 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                            aria-label="Trang trước"
+                          >
+                            <ChevronLeft className="w-4 h-4 text-slate-700" />
+                          </button>
+                          <span className="text-[11px] font-black text-slate-700 px-1 whitespace-nowrap">
+                            Trang {safeLessonPage}/{totalVocabPages}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={safeLessonPage >= totalVocabPages}
+                            onClick={() => setLessonPage((p) => Math.min(totalVocabPages, p + 1))}
+                            className="p-1 rounded-lg hover:bg-slate-100 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                            aria-label="Trang sau"
+                          >
+                            <ChevronRight className="w-4 h-4 text-slate-700" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {paginatedVocabLessons.length === 0 ? (
+                    <div className="p-8 rounded-2xl bg-slate-50 border border-slate-200 text-center text-xs font-semibold text-slate-500">
+                      Không tìm thấy bài học hoặc từ vựng nào khớp với &ldquo;{lessonFilterQuery}&rdquo;.
+                    </div>
+                  ) : (
+                    paginatedVocabLessons.map(({ lesson, originalIdx: idx }) => {
                     const unlocked = isLessonUnlocked(vocabUnitData.id, idx, activeLessonIds, progress);
                     const rec = progress.lessons[lesson.id];
                     const passed = Boolean(rec?.quizPassed);
@@ -687,7 +802,32 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
                         </div>
                       </div>
                     );
-                  })}
+                  })
+                  )}
+
+                  {totalVocabPages > 1 && (
+                    <div className="pt-2 flex items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        disabled={safeLessonPage <= 1}
+                        onClick={() => setLessonPage((p) => Math.max(1, p - 1))}
+                        className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 flex items-center gap-1 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        <ChevronLeft className="w-4 h-4" /> Trang trước
+                      </button>
+                      <span className="text-xs font-black text-slate-600 px-2">
+                        Trang {safeLessonPage} / {totalVocabPages} ({filteredVocabLessons.length} bài)
+                      </span>
+                      <button
+                        type="button"
+                        disabled={safeLessonPage >= totalVocabPages}
+                        onClick={() => setLessonPage((p) => Math.min(totalVocabPages, p + 1))}
+                        className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 flex items-center gap-1 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        Trang sau <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
