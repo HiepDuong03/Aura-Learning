@@ -330,12 +330,17 @@ export interface CurriculumGrammarLesson {
   formula: string;
   explanationVi: string;
   ieltsTipVi: string;
-  examples: Array<{ en: string; vi: string }>;
+  examples: Array<{ en: string; vi: string; note?: string; label?: string }>;
   commonMistake: {
     wrong: string;
     right: string;
     whyVi: string;
   };
+  useCases?: Array<{ title: string; detail: string; example: string }>;
+  forms?: Array<{ label: string; pattern: string; example: string }>;
+  formation?: Array<{ step: string; detail: string; example: string }>;
+  moreMistakes?: Array<{ wrong: string; right: string; whyVi: string }>;
+  checklist?: string[];
   exercises: CurriculumGrammarExercise[];
 }
 

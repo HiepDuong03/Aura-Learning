@@ -122,23 +122,69 @@ export const GrammarLessonModal: React.FC<GrammarLessonModalProps> = ({
                 </div>
               </div>
 
+              {lesson.forms && lesson.forms.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-black uppercase tracking-wider text-slate-500">Các dạng cấu trúc:</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {lesson.forms.map((f, idx) => (
+                      <div key={idx} className="p-3 rounded-xl bg-white border border-slate-200/90 space-y-1">
+                        <span className="inline-block px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 text-[10px] font-black uppercase">
+                          {f.label}
+                        </span>
+                        <p className="text-xs font-mono font-bold text-slate-900">{f.pattern}</p>
+                        {f.example && <p className="text-xs text-slate-500 italic">{f.example}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {lesson.useCases && lesson.useCases.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-black uppercase tracking-wider text-slate-500">Khi nào sử dụng:</p>
+                  <div className="space-y-2">
+                    {lesson.useCases.map((uc, idx) => (
+                      <div key={idx} className="p-3 rounded-xl bg-slate-50/80 border border-slate-200/80 space-y-1">
+                        <p className="text-xs font-black text-slate-900">{idx + 1}. {uc.title}</p>
+                        <p className="text-xs text-slate-600 leading-relaxed">{uc.detail}</p>
+                        {uc.example && (
+                          <p className="text-xs font-semibold text-teal-800 pt-0.5">{uc.example}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <p className="text-xs font-black uppercase tracking-wider text-slate-500">Ví dụ chuẩn ngữ cảnh:</p>
                 {lesson.examples.map((ex, idx) => (
-                  <div key={idx} className="p-3 rounded-xl bg-white border border-slate-200/80 space-y-0.5">
-                    <p className="text-sm font-bold text-slate-900">• {ex.en}</p>
-                    <p className="text-xs text-slate-500 italic pl-3">{ex.vi}</p>
+                  <div key={idx} className="p-3 rounded-xl bg-white border border-slate-200/80 space-y-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-bold text-slate-900">• {ex.en}</p>
+                      {ex.label && (
+                        <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-bold shrink-0">
+                          {ex.label}
+                        </span>
+                      )}
+                    </div>
+                    {ex.vi && <p className="text-xs text-slate-600 italic pl-3">{ex.vi}</p>}
+                    {ex.note && <p className="text-[11px] text-teal-700 bg-teal-50/60 px-2.5 py-1 rounded-lg">{ex.note}</p>}
                   </div>
                 ))}
               </div>
 
-              <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-200 space-y-1.5 text-xs">
+              <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-200 space-y-2.5 text-xs">
                 <p className="font-black text-amber-900 flex items-center gap-1.5">
-                  <AlertTriangle className="w-4 h-4 text-amber-600" /> Lỗi người Việt hay mắc:
+                  <AlertTriangle className="w-4 h-4 text-amber-600" /> Lỗi người học hay mắc:
                 </p>
-                <p className="text-rose-700 line-through font-semibold">❌ {lesson.commonMistake.wrong}</p>
-                <p className="text-emerald-800 font-bold">✅ {lesson.commonMistake.right}</p>
-                <p className="text-slate-600">{lesson.commonMistake.whyVi}</p>
+                {[lesson.commonMistake, ...(lesson.moreMistakes || [])].map((m, idx) => (
+                  <div key={idx} className={`space-y-1 ${idx > 0 ? 'pt-2 border-t border-amber-200/70' : ''}`}>
+                    <p className="text-rose-700 line-through font-semibold">❌ {m.wrong}</p>
+                    <p className="text-emerald-800 font-bold">✅ {m.right}</p>
+                    {m.whyVi && <p className="text-slate-600">{m.whyVi}</p>}
+                  </div>
+                ))}
               </div>
 
               <button

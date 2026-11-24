@@ -1,6 +1,6 @@
 {
-  "version": "3.0.0",
-  "generatedAt": "2026-11-23T16:37:30.042Z",
+  "version": "3.1.0",
+  "generatedAt": "2026-11-24T01:45:10.695Z",
   "attributions": [
     {
       "name": "Word Atlas (IELTS & CEFR)",
@@ -27,7 +27,7 @@
     "totalIeltsTopics": 25,
     "totalIeltsWords": 5000,
     "totalCefrWords": 1700,
-    "totalGrammarLessons": 60
+    "totalGrammarLessons": 101
   },
   "ieltsTopics": [
     {
@@ -411,10 +411,10 @@
       "slug": "a1",
       "cefr": "A1",
       "order": 1,
-      "titleEn": "CEFR A1 Grammar",
+      "titleEn": "CEFR A1 Grammar Foundation",
       "titleVi": "Nền tảng câu tiếng Anh (A1)",
       "descVi": "Nhận diện thành phần câu, động từ to be, các thì cơ bản và cấu trúc sinh hoạt hàng ngày.",
-      "totalLessons": 10,
+      "totalLessons": 19,
       "dataPath": "/curriculum/grammar/a1.json"
     },
     {
@@ -422,10 +422,10 @@
       "slug": "a2",
       "cefr": "A2",
       "order": 2,
-      "titleEn": "CEFR A2 Grammar",
-      "titleVi": "Mở rộng diễn đạt sơ cấp (A2)",
-      "descVi": "Nói về tương lai, so sánh, kinh nghiệm sống (Present Perfect) và động từ khuyết thiếu.",
-      "totalLessons": 10,
+      "titleEn": "CEFR A2 Everyday Grammar",
+      "titleVi": "Ngữ pháp giao tiếp mở rộng (A2)",
+      "descVi": "Quá khứ tiếp diễn, hiện tại hoàn thành cơ bản, so sánh, mệnh đề nối và kế hoạch tương lai.",
+      "totalLessons": 16,
       "dataPath": "/curriculum/grammar/a2.json"
     },
     {
@@ -433,10 +433,10 @@
       "slug": "b1",
       "cefr": "B1",
       "order": 3,
-      "titleEn": "CEFR B1 Grammar",
-      "titleVi": "Ngữ pháp giao tiếp độc lập (B1)",
-      "descVi": "Mệnh đề quan hệ, câu bị động, điều kiện loại 2, quá khứ hoàn thành và tường thuật — nền tảng IELTS 6.0.",
-      "totalLessons": 10,
+      "titleEn": "CEFR B1 Intermediate Grammar",
+      "titleVi": "Ngữ pháp trung cấp (B1 · IELTS 5.5–6.0)",
+      "descVi": "Câu bị động, mệnh đề quan hệ, câu điều kiện loại 1–2, câu tường thuật và động từ khuyết thiếu.",
+      "totalLessons": 21,
       "dataPath": "/curriculum/grammar/b1.json"
     },
     {
@@ -444,10 +444,10 @@
       "slug": "b2",
       "cefr": "B2",
       "order": 4,
-      "titleEn": "CEFR B2 Grammar",
-      "titleVi": "Ngữ pháp học thuật & Công sở (B2)",
-      "descVi": "Điều kiện loại 3 & hỗn hợp, mệnh đề rút gọn, bị động khách quan, cấu trúc giả định — mục tiêu IELTS 7.0.",
-      "totalLessons": 10,
+      "titleEn": "CEFR B2 Upper-Intermediate Grammar",
+      "titleVi": "Ngữ pháp trung cao cấp (B2 · IELTS 6.5–7.0)",
+      "descVi": "Điều kiện hỗn hợp, đảo ngữ, câu chẻ nhấn mạnh, mệnh đề phân từ và cấu trúc viết học thuật.",
+      "totalLessons": 16,
       "dataPath": "/curriculum/grammar/b2.json"
     },
     {
@@ -455,10 +455,10 @@
       "slug": "c1",
       "cefr": "C1",
       "order": 5,
-      "titleEn": "CEFR C1 Grammar",
-      "titleVi": "Ngữ pháp sắc bén & Band 7.5–8.0 (C1)",
-      "descVi": "Đảo ngữ nhấn mạnh, câu chẻ (Cleft), ngôn ngữ rào đón học thuật (Hedging) và danh từ hóa.",
-      "totalLessons": 10,
+      "titleEn": "CEFR C1 Advanced Grammar",
+      "titleVi": "Ngữ pháp cao cấp (C1 · IELTS 7.5–8.0)",
+      "descVi": "Danh từ hóa, cấu trúc giả định, nhượng bộ học thuật, rút gọn mệnh đề nâng cao và mạch lạc văn bản.",
+      "totalLessons": 21,
       "dataPath": "/curriculum/grammar/c1.json"
     },
     {
@@ -466,10 +466,10 @@
       "slug": "c2",
       "cefr": "C2",
       "order": 6,
-      "titleEn": "CEFR C2 Grammar",
-      "titleVi": "Ngữ pháp tinh thông & Tu từ (C2)",
-      "descVi": "Cấu trúc tu từ học thuật, đảo ngữ phức hợp, sắc thái tinh tế cho mục tiêu IELTS 8.5+ và viết chuyên sâu.",
-      "totalLessons": 10,
+      "titleEn": "CEFR C2 Mastery Grammar",
+      "titleVi": "Ngữ pháp tinh thông học thuật (C2 · IELTS 8.5+)",
+      "descVi": "Sắc thái học thuật, hedging chuẩn xác, chuyển mạch lập luận và kiểm soát văn phong như bản xứ.",
+      "totalLessons": 8,
       "dataPath": "/curriculum/grammar/c2.json"
     }
   ]
