@@ -1174,6 +1174,7 @@ export const App: React.FC = () => {
                   completedScenarios={completedScenarios}
                   onCompletedScenariosChange={(records) => setCompletedScenarios(records)}
                   onSavePhraseToSrs={handleSaveRoleplayPhraseToSrs}
+                  onWordClick={(word, contextSentence) => void handleSelectWord(word, contextSentence)}
                   activeMission={activeMission}
                   onClearMission={() => setActiveMission(null)}
                   savedWords={savedWords}

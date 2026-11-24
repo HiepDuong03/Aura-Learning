@@ -426,3 +426,40 @@ export interface ActivePracticeMission {
   grammarFocus?: { title: string; formula: string };
   createdAt: number;
 }
+
+// ==========================================
+// OUTPUT LAB (LANGUA + FLUENTLY ARCHITECTURE)
+// ==========================================
+export type CorrectionMode =
+  | 'off'
+  | 'written'
+  | 'verbal_subtle'
+  | 'verbal_explicit'
+  | 'verbal_repeat';
+
+export type ChatDisplayMode = 'text_audio' | 'audio_only';
+
+export type TurnQualityRating = 'perfect' | 'good' | 'revision_needed';
+
+export interface RoleplayFeedbackMistake {
+  original: string;
+  corrected: string;
+  explanationVi: string;
+  category: 'grammar' | 'vocabulary' | 'naturalness';
+}
+
+export interface RoleplayFeedbackVocab {
+  phrase: string;
+  meaningVi: string;
+  contextSentence: string;
+}
+
+export interface RoleplayFeedbackReport {
+  estimatedCefr: string;
+  overallScore: number;
+  summaryVi: string;
+  strengthsVi: string[];
+  mistakes: RoleplayFeedbackMistake[];
+  keyVocabulary: RoleplayFeedbackVocab[];
+  isFallback?: boolean;
+}

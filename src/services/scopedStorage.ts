@@ -22,9 +22,24 @@ export interface PersistedRoleplayMessage {
   sender: 'AI' | 'User';
   text: string;
   translation?: string;
+  correction?: string;
   nativeRephrase?: string;
   grammarTip?: string;
+  qualityRating?: 'perfect' | 'good' | 'revision_needed';
+  suggestedReplies?: string[];
   latencyMs?: number;
+}
+
+export interface PersistedCustomRoleplayPersona {
+  id: string;
+  name: string;
+  role: string;
+  avatar: string;
+  situation: string;
+  mission: string;
+  initialMessage: string;
+  initialTranslation: string;
+  isCustom?: boolean;
 }
 
 export class ScopedStorage {
@@ -339,6 +354,40 @@ export class ScopedStorage {
       localStorage.setItem(key, JSON.stringify(progress));
     } catch (e) {
       console.warn('[ScopedStorage] Error writing curriculum progress:', e);
+    }
+  }
+
+  // --- Custom Roleplay Personas (Scoped per User) ---
+  public static getCustomRoleplayPersonas(userId?: string | null): PersistedCustomRoleplayPersona[] {
+    try {
+      const key = `${this.getPrefix(userId)}_custom_roleplay_personas`;
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed
+            .filter(
+              (p): p is PersistedCustomRoleplayPersona =>
+                Boolean(p && typeof p === 'object' && typeof p.id === 'string' && typeof p.name === 'string' && typeof p.mission === 'string')
+            )
+            .slice(0, 20);
+        }
+      }
+    } catch (e) {
+      console.warn('[ScopedStorage] Error reading custom roleplay personas:', e);
+    }
+    return [];
+  }
+
+  public static setCustomRoleplayPersonas(
+    userId: string | null | undefined,
+    personas: PersistedCustomRoleplayPersona[]
+  ): void {
+    try {
+      const key = `${this.getPrefix(userId)}_custom_roleplay_personas`;
+      localStorage.setItem(key, JSON.stringify(personas.slice(0, 20)));
+    } catch (e) {
+      console.warn('[ScopedStorage] Error writing custom roleplay personas:', e);
     }
   }
 

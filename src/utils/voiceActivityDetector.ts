@@ -6,9 +6,21 @@
  * BR-15: Explicit error handling and clean resource teardown.
  */
 
+export const VAD_THRESHOLD_NORMAL = 0.035;
+export const VAD_THRESHOLD_NOISY = 0.068;
+
+export function resolveVadThreshold(noisyEnvironment: boolean, customThreshold?: number): number {
+  if (typeof customThreshold === 'number' && Number.isFinite(customThreshold) && customThreshold > 0) {
+    return customThreshold;
+  }
+  return noisyEnvironment ? VAD_THRESHOLD_NOISY : VAD_THRESHOLD_NORMAL;
+}
+
 export interface VADConfig {
-  /** RMS volume threshold to declare speech has started. Default: 0.035 */
+  /** RMS volume threshold to declare speech has started. Default: 0.035 (or 0.068 in noisy mode) */
   speechStartThreshold?: number;
+  /** Filter ambient cafe/public noise by raising speech threshold (Langua Noisy Mode) */
+  noisyEnvironment?: boolean;
   /** Silence duration in milliseconds to automatically conclude speaking. Default: 850ms */
   silenceTimeoutMs?: number;
   /** Minimum speech duration in ms to ignore brief noise pops/coughs. Default: 350ms */
@@ -37,7 +49,7 @@ export class VoiceActivityDetector {
   private speechStartTime: number = 0;
   private isDestroyed: boolean = false;
 
-  private readonly speechStartThreshold: number;
+  private speechStartThreshold: number;
   private readonly silenceTimeoutMs: number;
   private readonly minSpeechDurationMs: number;
   private readonly onSpeechStart?: () => void;
@@ -46,13 +58,24 @@ export class VoiceActivityDetector {
   private readonly onError?: (error: Error) => void;
 
   constructor(config: VADConfig = {}) {
-    this.speechStartThreshold = config.speechStartThreshold ?? 0.035;
+    this.speechStartThreshold = resolveVadThreshold(
+      Boolean(config.noisyEnvironment),
+      config.speechStartThreshold
+    );
     this.silenceTimeoutMs = config.silenceTimeoutMs ?? 850;
     this.minSpeechDurationMs = config.minSpeechDurationMs ?? 350;
     this.onSpeechStart = config.onSpeechStart;
     this.onSpeechEnd = config.onSpeechEnd;
     this.onVolumeChange = config.onVolumeChange;
     this.onError = config.onError;
+  }
+
+  public setNoisyEnvironment(noisy: boolean): void {
+    this.speechStartThreshold = resolveVadThreshold(noisy);
+  }
+
+  public getThreshold(): number {
+    return this.speechStartThreshold;
   }
 
   public getStatus(): VADStatus {

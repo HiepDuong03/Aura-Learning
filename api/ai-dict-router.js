@@ -49,29 +49,82 @@ function generateFallbackRephrase(text) {
   return `In natural conversation, try adding polite framing: "Excuse me, ${clean}"`;
 }
 
+export const VALID_CORRECTION_MODES = [
+  'off',
+  'written',
+  'verbal_subtle',
+  'verbal_explicit',
+  'verbal_repeat'
+];
+
+export function buildCorrectionModeInstruction(mode) {
+  switch (mode) {
+    case 'off':
+      return 'Correction Mode = OFF: Do NOT correct the learner inside "reply". Just keep the conversation flowing naturally.';
+    case 'verbal_subtle':
+      return 'Correction Mode = VERBAL SUBTLE (Recasting): In "reply", naturally rephrase any mistake the learner made inside your conversational response (e.g. Learner: "I go yesterday" -> You: "Oh, you went yesterday? What did you do?") without explicitly interrupting or lecturing.';
+    case 'verbal_explicit':
+      return 'Correction Mode = VERBAL EXPLICIT: If the learner makes a noticeable grammar/wording error, briefly mention the right phrasing at the start of "reply" in a warm, encouraging tone, then continue the conversation.';
+    case 'verbal_repeat':
+      return 'Correction Mode = VERBAL REPEAT: If the learner makes a noticeable grammar/wording error, gently give the correct phrasing in "reply" and invite them to repeat the corrected sentence before moving on. If they spoke accurately, praise briefly and continue.';
+    case 'written':
+    default:
+      return 'Correction Mode = WRITTEN BELOW: Keep "reply" completely natural and in-character without interrupting to correct; put any grammar fixes in "correction" and native upgrades in "nativeRephrase".';
+  }
+}
+
 function generateFallbackRoleplay(personaId, userMessage) {
   const input = String(userMessage || '').toLowerCase();
   const nativeRephrase = generateFallbackRephrase(userMessage);
+  const wordCount = String(userMessage || '').trim().split(/\s+/).filter(Boolean).length;
+  const qualityRating = wordCount >= 7 ? 'good' : 'revision_needed';
+  const correction = /\bi want\b/i.test(userMessage)
+    ? String(userMessage).replace(/\bi want\b/gi, "I'd like")
+    : '';
 
   if (personaId === 'cafe-barista') {
     if (input.includes('latte') || input.includes('coffee') || input.includes('oat')) {
       return {
         reply: "Got it! One iced oat milk latte, half-sweet. Anything else from our pastry case?",
+        replyTranslation: "Đã rõ! Một ly latte đá sữa yến mạch, giảm ngọt 50%. Bạn có muốn gọi thêm bánh ngọt không?",
+        correction,
         nativeRephrase,
-        grammarTip: "Khi gọi đồ uống ở Mỹ, dùng 'Could I get an iced oat latte, half-sweet?' nghe tự nhiên hơn."
+        grammarTip: "Khi gọi đồ uống ở Mỹ, dùng 'Could I get an iced oat latte, half-sweet?' nghe tự nhiên hơn.",
+        qualityRating,
+        suggestedReplies: [
+          "No thanks, just the latte. Could I also get the Wi-Fi password?",
+          "Yes, I'll take a butter croissant as well, please.",
+          "That's all for today. Can I pay by card?"
+        ]
       };
     }
     if (input.includes('wifi') || input.includes('password')) {
       return {
         reply: "Our Wi-Fi network is 'CentralRoast_Guest' and the passcode is printed at the bottom of your receipt.",
+        replyTranslation: "Mạng Wi-Fi của quán là 'CentralRoast_Guest' và mật khẩu có in ở cuối hóa đơn nhé.",
+        correction,
         nativeRephrase,
-        grammarTip: "Hỏi mật khẩu lịch sự: 'Could I have the Wi-Fi password, please?'"
+        grammarTip: "Hỏi mật khẩu lịch sự: 'Could I have the Wi-Fi password, please?'",
+        qualityRating,
+        suggestedReplies: [
+          "Awesome, thank you so much! Where can I pick up my drink?",
+          "Great, I'll pay by card now.",
+          "Thanks! Do you have any seats with power outlets?"
+        ]
       };
     }
     return {
       reply: "Sure thing! Your total comes to $5.50. Will that be card or cash today?",
+      replyTranslation: "Chắc chắn rồi! Tổng hóa đơn của bạn là $5.50. Bạn thanh toán bằng thẻ hay tiền mặt?",
+      correction,
       nativeRephrase,
-      grammarTip: "Dùng 'I'll pay by card' hoặc 'Tap to pay, please' khi thanh toán."
+      grammarTip: "Dùng 'I'll pay by card' hoặc 'Tap to pay, please' khi thanh toán.",
+      qualityRating,
+      suggestedReplies: [
+        "I'll pay by card, please. Could I also get the Wi-Fi password?",
+        "Could I get an iced oat milk latte, half-sweet?",
+        "Here's my card. Keep the receipt, thanks!"
+      ]
     };
   }
 
@@ -79,14 +132,30 @@ function generateFallbackRoleplay(personaId, userMessage) {
     if (input.includes('hotel') || input.includes('stay') || input.includes('days') || input.includes('vacation') || input.includes('holiday')) {
       return {
         reply: "Thank you. And do you have a confirmed return ticket and anything to declare?",
+        replyTranslation: "Cảm ơn. Bạn có vé khứ hồi đã xác nhận và có gì cần khai báo hải quan không?",
+        correction,
         nativeRephrase,
-        grammarTip: "Nêu thời gian lưu trú rõ ràng: 'I'm staying for ten days at the Hilton Hotel for sightseeing.'"
+        grammarTip: "Nêu thời gian lưu trú rõ ràng: 'I'm staying for ten days at the Hilton Hotel for sightseeing.'",
+        qualityRating,
+        suggestedReplies: [
+          "Yes, my return flight is on the 15th, and I have nothing to declare.",
+          "Here is my return ticket confirmation. Nothing to declare.",
+          "I'm flying back next Sunday and only have personal belongings."
+        ]
       };
     }
     return {
       reply: "Alright, passport stamped. Welcome to London—please proceed to baggage claim carousel 4.",
+      replyTranslation: "Được rồi, đã đóng dấu hộ chiếu. Chào mừng đến London—vui lòng đi tới băng chuyền hành lý số 4.",
+      correction,
       nativeRephrase,
-      grammarTip: "Khi xuất nhập cảnh hãy trả lời ngắn gọn, đúng trọng tâm câu hỏi."
+      grammarTip: "Khi xuất nhập cảnh hãy trả lời ngắn gọn, đúng trọng tâm câu hỏi.",
+      qualityRating,
+      suggestedReplies: [
+        "I'm here for a 10-day vacation and staying at a hotel in central London.",
+        "Thank you, officer! Have a great day.",
+        "Here is my passport. I'm visiting for sightseeing for ten days."
+      ]
     };
   }
 
@@ -94,14 +163,30 @@ function generateFallbackRoleplay(personaId, userMessage) {
     if (input.includes('minibar') || input.includes('charge') || input.includes('bill') || input.includes('mistake')) {
       return {
         reply: "I sincerely apologize for the mix-up on your bill. I'll remove the minibar charge right away. Would you like us to store your luggage until this afternoon?",
+        replyTranslation: "Tôi thành thật xin lỗi vì nhầm lẫn trên hóa đơn. Tôi sẽ gỡ phí minibar ngay. Bạn có muốn gửi hành lý đến chiều nay không?",
+        correction,
         nativeRephrase,
-        grammarTip: "Khiếu nại khéo léo: 'I believe there might be a billing error—I didn't use the minibar.'"
+        grammarTip: "Khiếu nại khéo léo: 'I believe there might be a billing error—I didn't use the minibar.'",
+        qualityRating,
+        suggestedReplies: [
+          "Yes, please! Could you hold my suitcase until around 5 PM?",
+          "Thank you for fixing that so quickly. I'd love to leave my bags here.",
+          "That would be super helpful. Is there any extra fee for luggage storage?"
+        ]
       };
     }
     return {
       reply: "Of course! We can safely hold your bags at the concierge desk until 6 PM. Here is your claim tag.",
+      replyTranslation: "Tất nhiên rồi! Chúng tôi sẽ giữ hành lý an toàn ở quầy lễ tân đến 6 giờ chiều. Đây là thẻ nhận đồ của bạn.",
+      correction,
       nativeRephrase,
-      grammarTip: "Nhờ giữ hành lý: 'Would it be possible to leave my luggage here until this afternoon?'"
+      grammarTip: "Nhờ giữ hành lý: 'Would it be possible to leave my luggage here until this afternoon?'",
+      qualityRating,
+      suggestedReplies: [
+        "Actually, I noticed a minibar charge on my bill that I didn't use.",
+        "Thanks a lot! I'll be back to pick them up before 6 PM.",
+        "Could you also help me call a taxi to the airport later?"
+      ]
     };
   }
 
@@ -109,21 +194,104 @@ function generateFallbackRoleplay(personaId, userMessage) {
     if (input.includes('project') || input.includes('deadline') || input.includes('delay') || input.includes('team')) {
       return {
         reply: "That's a structured approach. How did you communicate the timeline trade-offs to stakeholders when the deadline was at risk?",
+        replyTranslation: "Cách tiếp cận rất bài bản. Bạn đã trao đổi các đánh đổi về tiến độ với các bên liên quan thế nào khi deadline có nguy cơ trễ?",
+        correction,
         nativeRephrase,
-        grammarTip: "Phỏng vấn Tech nên dùng cấu trúc STAR (Situation - Task - Action - Result)."
+        grammarTip: "Phỏng vấn Tech nên dùng cấu trúc STAR (Situation - Task - Action - Result).",
+        qualityRating,
+        suggestedReplies: [
+          "I flagged the risk early and proposed cutting non-critical scope to hit the launch date.",
+          "We held a quick alignment sync and shared a revised milestone plan with clear options.",
+          "I prioritized the core user flow first and delivered the secondary features in the next sprint."
+        ]
       };
     }
     return {
       reply: "Thanks for sharing that background. Can you walk me through a specific technical bottleneck you resolved and its measurable impact?",
+      replyTranslation: "Cảm ơn bạn đã chia sẻ. Bạn có thể kể chi tiết về một nút thắt kỹ thuật bạn từng xử lý và tác động đo lường được không?",
+      correction,
       nativeRephrase,
-      grammarTip: "Nhấn mạnh kết quả định lượng: 'We reduced API latency by 40% after refactoring the cache layer.'"
+      grammarTip: "Nhấn mạnh kết quả định lượng: 'We reduced API latency by 40% after refactoring the cache layer.'",
+      qualityRating,
+      suggestedReplies: [
+        "Sure! On our last project, we cut page load time by 45% by optimizing API caching.",
+        "When our release faced a delay, I coordinated with QA and unblocked the critical path.",
+        "Let me walk you through how I led a migration with zero downtime."
+      ]
     };
   }
 
   return {
     reply: "Understood! Could you share a bit more detail so I can help you properly?",
+    replyTranslation: "Tôi hiểu rồi! Bạn có thể chia sẻ thêm một chút chi tiết để tôi hỗ trợ tốt hơn không?",
+    correction,
     nativeRephrase,
-    grammarTip: "Mở rộng câu trả lời thêm 1 chi tiết lý do hoặc ví dụ cụ thể."
+    grammarTip: "Mở rộng câu trả lời thêm 1 chi tiết lý do hoặc ví dụ cụ thể.",
+    qualityRating,
+    suggestedReplies: [
+      "Sure, let me explain what I'm looking for in more detail.",
+      "Actually, my main priority right now is finding a quick solution.",
+      "Could you walk me through the available options?"
+    ]
+  };
+}
+
+export function generateFallbackFeedbackReport({ messages = [], mission = '' }) {
+  const userMessages = (Array.isArray(messages) ? messages : [])
+    .filter((m) => m && m.sender === 'User' && typeof m.text === 'string' && m.text.trim());
+  const totalWords = userMessages.reduce((sum, m) => sum + m.text.trim().split(/\s+/).filter(Boolean).length, 0);
+  const avgWords = userMessages.length > 0 ? totalWords / userMessages.length : 0;
+
+  const estimatedCefr = avgWords >= 14 ? 'B2' : avgWords >= 9 ? 'B1' : avgWords >= 5 ? 'A2' : 'A1';
+  const overallScore = Math.max(55, Math.min(95, Math.round(62 + Math.min(28, avgWords * 2) + Math.min(8, userMessages.length * 1.5))));
+
+  const mistakes = userMessages
+    .filter((m) => m.correction || (m.nativeRephrase && m.nativeRephrase.toLowerCase() !== m.text.toLowerCase()))
+    .slice(0, 5)
+    .map((m) => ({
+      original: m.text,
+      corrected: m.correction || m.nativeRephrase || m.text,
+      explanationVi: m.grammarTip || 'Diễn đạt tự nhiên và lịch sự hơn theo văn phong người bản xứ.',
+      category: m.correction ? 'grammar' : 'naturalness'
+    }));
+
+  const keyVocabulary = userMessages
+    .filter((m) => m.nativeRephrase && m.nativeRephrase.length <= 120)
+    .slice(0, 4)
+    .map((m) => ({
+      phrase: m.nativeRephrase,
+      meaningVi: m.grammarTip || 'Cách diễn đạt chuẩn bản xứ trong tình huống thực tế',
+      contextSentence: m.text
+    }));
+
+  if (keyVocabulary.length === 0) {
+    keyVocabulary.push(
+      {
+        phrase: 'Could I please get...',
+        meaningVi: 'Cho tôi gọi / lấy... một cách lịch sự',
+        contextSentence: 'Could I please get an iced oat latte, half-sweet?'
+      },
+      {
+        phrase: 'Would it be possible to...',
+        meaningVi: 'Liệu có thể... được không (rất lịch sự)',
+        contextSentence: 'Would it be possible to leave my luggage here until this afternoon?'
+      }
+    );
+  }
+
+  return {
+    estimatedCefr,
+    overallScore,
+    summaryVi: `Bạn đã hoàn thành ${userMessages.length} lượt nói (${totalWords} từ, trung bình ${avgWords.toFixed(1)} từ/lượt)${mission ? ` cho nhiệm vụ "${mission}"` : ''}. Hãy bấm lưu các cụm từ bên dưới vào FSRS-6 để biến chúng thành phản xạ tự nhiên!`,
+    strengthsVi: [
+      `Chủ động duy trì mạch hội thoại qua ${userMessages.length} lượt tương tác.`,
+      avgWords >= 8
+        ? 'Độ dài câu khá tốt, truyền tải được nhiều ý trong một lượt nói.'
+        : 'Câu ngắn gọn, dễ hiểu — hãy thử mở rộng thêm lý do hoặc lời lịch sự.'
+    ],
+    mistakes,
+    keyVocabulary,
+    isFallback: true
   };
 }
 
@@ -703,6 +871,9 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
       const situation = String(body.situation || '');
       const mission = String(body.mission || '');
       const history = Array.isArray(body.history) ? body.history : [];
+      const correctionMode = VALID_CORRECTION_MODES.includes(body.correctionMode)
+        ? body.correctionMode
+        : 'written';
 
       const computeFallbackMissionProgress = () => {
         const allUserText = [
@@ -729,7 +900,7 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
       };
 
       if (options.aiResponder) {
-        const result = await options.aiResponder({ personaId, personaName, personaRole, situation, mission, history, userMessage });
+        const result = await options.aiResponder({ personaId, personaName, personaRole, situation, mission, history, userMessage, correctionMode });
         const fallbackMission = computeFallbackMissionProgress();
         const missionProgress = typeof result.missionProgress === 'number'
           ? Math.max(0, Math.min(100, Math.round(result.missionProgress)))
@@ -744,16 +915,22 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
       if (apiKey) {
         try {
           const recentHistory = history.slice(-6).map(m => `${m.sender === 'AI' ? personaName : 'Learner'}: ${m.text}`).join('\n');
+          const correctionRule = buildCorrectionModeInstruction(correctionMode);
           const prompt = [
-            `You are roleplaying as "${personaName}" (${personaRole}) in an interactive English speaking practice.`,
+            `You are roleplaying as "${personaName}" (${personaRole}) in an interactive English speaking practice (Langua + Fluently style).`,
             `Situation: ${situation}`,
             `Learner Mission: ${mission}`,
+            correctionRule,
             recentHistory ? `Recent Conversation:\n${recentHistory}` : '',
             `Learner just said: "${userMessage}"`,
-            `Respond in JSON with exact fields:`,
-            `- "reply": Natural, concise 1-3 sentence in-character English reply continuing the conversation.`,
-            `- "nativeRephrase": A more natural native-speaker way to say what the learner just said (in English).`,
-            `- "grammarTip": One short, helpful Vietnamese feedback tip (max 25 words) about phrasing or grammar.`,
+            `Respond in strict JSON with exact fields:`,
+            `- "reply": Natural, concise 1-3 sentence in-character English reply following the Correction Mode rule above.`,
+            `- "replyTranslation": Accurate, natural Vietnamese translation of your "reply".`,
+            `- "correction": Grammar/spelling fix of the learner's exact sentence in English (return "" empty string if grammatically correct).`,
+            `- "nativeRephrase": A more natural native-speaker way to say what the learner meant (in English, 1 sentence).`,
+            `- "grammarTip": One short, helpful Vietnamese feedback tip (max 28 words) explaining why the correction/rephrase sounds better.`,
+            `- "qualityRating": One of "perfect" (natural & error-free), "good" (clear with minor room to sound more native), or "revision_needed" (noticeable grammar/wording error).`,
+            `- "suggestedReplies": Array of exactly 3 short, natural English sentences the learner could say next to advance the conversation.`,
             `- "missionProgress": integer 0 to 100 estimating cumulative completion of the Learner Mission across the conversation so far.`,
             `- "missionCompleted": boolean (true if the learner has completed all key goals in the Learner Mission).`
           ].filter(Boolean).join('\n');
@@ -765,10 +942,20 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
           const missionCompleted = typeof parsed.missionCompleted === 'boolean'
             ? parsed.missionCompleted
             : missionProgress >= 100;
+          const validRating = ['perfect', 'good', 'revision_needed'].includes(parsed.qualityRating)
+            ? parsed.qualityRating
+            : (parsed.correction ? 'revision_needed' : 'good');
+          const suggestedReplies = Array.isArray(parsed.suggestedReplies)
+            ? parsed.suggestedReplies.map((s) => String(s || '').trim()).filter(Boolean).slice(0, 3)
+            : [];
           sendJson(req, res, 200, {
             reply: String(parsed.reply || '').trim() || 'Could you tell me a bit more?',
+            replyTranslation: String(parsed.replyTranslation || '').trim(),
+            correction: String(parsed.correction || '').trim(),
             nativeRephrase: String(parsed.nativeRephrase || '').trim() || generateFallbackRephrase(userMessage),
             grammarTip: String(parsed.grammarTip || '').trim(),
+            qualityRating: validRating,
+            suggestedReplies,
             missionProgress,
             missionCompleted,
             source: 'gemini',
@@ -787,6 +974,100 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
       return true;
     } catch (err) {
       sendJson(req, res, 500, { error: err.message || 'Lỗi xử lý AI Roleplay.' });
+      return true;
+    }
+  }
+
+  // 1.5 POST /api/ai/roleplay-feedback (Post-Chat Langua Feedback Report & SRS Vocab Extraction)
+  if (pathname === '/api/ai/roleplay-feedback' && req.method === 'POST') {
+    try {
+      const body = await parseJsonBody(req);
+      const messages = Array.isArray(body.messages) ? body.messages.slice(-30) : [];
+      const personaName = String(body.personaName || 'AI Tutor').slice(0, 80);
+      const personaRole = String(body.personaRole || 'English Partner').slice(0, 120);
+      const mission = String(body.mission || '').slice(0, 260);
+      const userCount = messages.filter((m) => m && m.sender === 'User' && String(m.text || '').trim()).length;
+
+      if (userCount < 1) {
+        sendJson(req, res, 400, { error: 'Hãy nói ít nhất 1 lượt để AI tổng hợp báo cáo hội thoại.' });
+        return true;
+      }
+
+      const quota = await consumeAiQuota({ db, currentUser, req, res, sendJson });
+      if (!quota) return true;
+
+      if (options.aiFeedbackResponder) {
+        const report = await options.aiFeedbackResponder({ personaName, personaRole, mission, messages });
+        sendJson(req, res, 200, { report: { ...report, isFallback: false }, source: 'gemini', isFallback: false, quota });
+        return true;
+      }
+
+      if (apiKey) {
+        try {
+          const transcript = messages
+            .map((m) => `${m.sender === 'User' ? 'Learner' : personaName}: ${String(m.text || '').trim()}`)
+            .join('\n')
+            .slice(0, 4000);
+          const prompt = [
+            `You are an expert English speaking coach creating a Post-Chat Feedback Report (Langua style) for a Vietnamese learner.`,
+            `Partner: ${personaName} (${personaRole})`,
+            mission ? `Mission: ${mission}` : '',
+            `Conversation Transcript:\n${transcript}`,
+            `Return strict JSON with exact keys:`,
+            `- "estimatedCefr": string ("A1"|"A2"|"B1"|"B2"|"C1") estimating the learner's spoken level in this chat.`,
+            `- "overallScore": integer 0 to 100.`,
+            `- "summaryVi": 2 encouraging, specific Vietnamese sentences summarizing performance and next focus.`,
+            `- "strengthsVi": array of 2-3 short Vietnamese bullet strings highlighting what the learner did well.`,
+            `- "mistakes": array of up to 5 objects { "original": "learner exact sentence", "corrected": "improved natural English", "explanationVi": "concise Vietnamese explanation", "category": "grammar"|"vocabulary"|"naturalness" }.`,
+            `- "keyVocabulary": array of 3-6 high-value English phrases/collocations from the conversation or upgrades { "phrase": "...", "meaningVi": "...", "contextSentence": "..." } ready to save as SRS flashcards.`
+          ].filter(Boolean).join('\n');
+
+          const parsed = await callGeminiJson(apiKey, prompt);
+          const mistakes = Array.isArray(parsed.mistakes)
+            ? parsed.mistakes.slice(0, 5).map((item) => ({
+                original: String(item?.original || '').trim(),
+                corrected: String(item?.corrected || '').trim(),
+                explanationVi: String(item?.explanationVi || '').trim(),
+                category: ['grammar', 'vocabulary', 'naturalness'].includes(item?.category)
+                  ? item.category
+                  : 'naturalness'
+              })).filter((m) => m.original && m.corrected)
+            : [];
+          const keyVocabulary = Array.isArray(parsed.keyVocabulary)
+            ? parsed.keyVocabulary.slice(0, 6).map((v) => ({
+                phrase: String(v?.phrase || '').trim(),
+                meaningVi: String(v?.meaningVi || '').trim(),
+                contextSentence: String(v?.contextSentence || '').trim()
+              })).filter((v) => v.phrase)
+            : [];
+          const strengthsVi = Array.isArray(parsed.strengthsVi)
+            ? parsed.strengthsVi.map((s) => String(s || '').trim()).filter(Boolean).slice(0, 3)
+            : [];
+
+          const report = {
+            estimatedCefr: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].includes(parsed.estimatedCefr)
+              ? parsed.estimatedCefr
+              : 'B1',
+            overallScore: Math.max(0, Math.min(100, Math.round(Number(parsed.overallScore) || 78))),
+            summaryVi: String(parsed.summaryVi || '').trim() || 'Bạn đã duy trì hội thoại rất tốt!',
+            strengthsVi,
+            mistakes,
+            keyVocabulary,
+            isFallback: false
+          };
+
+          sendJson(req, res, 200, { report, source: 'gemini', isFallback: false, quota });
+          return true;
+        } catch (aiErr) {
+          console.warn('[AI Roleplay Feedback] Gemini call failed, using fallback:', aiErr.message);
+        }
+      }
+
+      const fallbackReport = generateFallbackFeedbackReport({ messages, mission });
+      sendJson(req, res, 200, { report: fallbackReport, source: 'offline-fallback', isFallback: true, quota });
+      return true;
+    } catch (err) {
+      sendJson(req, res, 500, { error: err.message || 'Lỗi tổng hợp báo cáo hội thoại AI.' });
       return true;
     }
   }
