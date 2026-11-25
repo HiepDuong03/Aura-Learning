@@ -2639,12 +2639,15 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                     />
                   ) : null}
                   {currentShort.isAudioSrsCard || (!currentShort.videoUrl && !currentShort.youtubeId) ? (
-                    <div className="relative z-[4] w-full h-full bg-gradient-to-br from-slate-900 via-teal-950 to-slate-950 flex flex-col items-center justify-center p-6 pb-28 text-center space-y-4">
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="relative z-[8] w-full h-full bg-gradient-to-br from-slate-900 via-teal-950 to-slate-950 flex flex-col items-center justify-center px-6 pt-14 pb-36 text-center space-y-3.5"
+                    >
                       <span className="px-3 py-1 rounded-full bg-teal-500/20 border border-teal-400/30 text-teal-200 text-[11px] font-black uppercase tracking-wider">
                         Thẻ Nghe Ngữ Cảnh · FSRS-6
                       </span>
                       <div className="space-y-1.5 max-w-[280px]">
-                        <p className="text-lg font-black text-white tracking-tight">
+                        <p className="text-xl font-black text-white tracking-tight leading-snug">
                           {!isWordRevealed
                             ? '● ● ● ● ●'
                             : currentShort.targetWord || currentShort.expression}
@@ -2655,14 +2658,14 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                           </p>
                         )}
                       </div>
-                      <div className="flex flex-wrap items-center justify-center gap-2 pointer-events-auto">
+                      <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             speakWord(currentShort.targetContext || currentShort.description || currentShort.targetWord || '', 'en', 0.95);
                           }}
-                          className="px-4 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 text-xs font-black flex items-center gap-1.5 shadow-lg cursor-pointer transition-all"
+                          className="px-4 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 text-xs font-black flex items-center gap-1.5 shadow-lg cursor-pointer transition-all"
                         >
                           <Volume2 className="w-4 h-4" />
                           <span>Nghe câu mẫu</span>
@@ -2673,7 +2676,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                             e.stopPropagation();
                             speakWord(currentShort.targetContext || currentShort.description || currentShort.targetWord || '', 'en', 0.72);
                           }}
-                          className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white text-xs font-bold cursor-pointer transition-all"
+                          className="px-3.5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white text-xs font-bold cursor-pointer transition-all"
                         >
                           0.75x Chậm
                         </button>
@@ -2684,7 +2687,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                           e.stopPropagation();
                           setShowLiveYouglish(true);
                         }}
-                        className="pointer-events-auto px-3.5 py-1.5 rounded-xl bg-amber-400/15 hover:bg-amber-400/25 border border-amber-300/30 text-amber-200 text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-all"
+                        className="px-3.5 py-1.5 rounded-xl bg-amber-400/15 hover:bg-amber-400/25 border border-amber-300/30 text-amber-200 text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-all"
                       >
                         <Globe className="w-3.5 h-3.5" />
                         <span>Xem trong YouGlish / Video thực tế</span>
@@ -2915,7 +2918,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                   )}
 
                   {/* Prominent Unmute Prompt Pill (PLOS ONE 2024: sound-off hurts enjoyment & comprehension) */}
-                  {isGlobalMuted && !playerError && !activeMicroQuiz && !isVideoLoading && (
+                  {isGlobalMuted && !currentShort.isAudioSrsCard && !playerError && !activeMicroQuiz && !isVideoLoading && (
                     <button
                       type="button"
                       onClick={(e) => {
@@ -2937,18 +2940,20 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                     </div>
                   )}
 
-                  {/* Tap-to-Play/Pause Controller Click Area (z-[5] ABOVE player iframe z-[2], BELOW top/bottom UI z-10) */}
-                  <div
-                    onClick={handleCardTap}
-                    className="absolute inset-0 z-[5] cursor-pointer flex items-center justify-center"
-                    title="Chạm 1 lần để Dừng/Phát • Chạm 2 lần để thả tim • Nhấn giữ để tăng tốc 2x"
-                  >
-                    {!isPlaying && !isVideoLoading && !playerError && !activeMicroQuiz && (
-                      <div className="w-16 h-16 rounded-full bg-black/65 backdrop-blur-md flex items-center justify-center text-white shadow-2xl border border-white/25 animate-scale-up">
-                        <Play className="w-8 h-8 fill-white ml-1" />
-                      </div>
-                    )}
-                  </div>
+                  {/* Tap-to-Play/Pause Controller Click Area (hidden for Audio SRS Cards which have dedicated buttons) */}
+                  {!currentShort.isAudioSrsCard && (
+                    <div
+                      onClick={handleCardTap}
+                      className="absolute inset-0 z-[5] cursor-pointer flex items-center justify-center"
+                      title="Chạm 1 lần để Dừng/Phát • Chạm 2 lần để thả tim • Nhấn giữ để tăng tốc 2x"
+                    >
+                      {!isPlaying && !isVideoLoading && !playerError && !activeMicroQuiz && (
+                        <div className="w-16 h-16 rounded-full bg-black/65 backdrop-blur-md flex items-center justify-center text-white shadow-2xl border border-white/25 animate-scale-up">
+                          <Play className="w-8 h-8 fill-white ml-1" />
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* 2. Top Slim Video Overlay Bar (Unobtrusive) */}
@@ -2979,35 +2984,39 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                   </div>
 
                   <div className="flex items-center gap-1.5">
-                    {/* Unmute/Mute Toggle */}
-                    <button
-                      onClick={toggleMute}
-                      className={`px-2.5 py-1 rounded-full backdrop-blur-md text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
-                        isGlobalMuted ? 'bg-amber-500 text-white animate-pulse shadow-md' : 'bg-black/60 text-white hover:bg-black/80'
-                      }`}
-                      title={isGlobalMuted ? 'Bấm để bật âm thanh' : 'Tắt âm thanh'}
-                    >
-                      {isGlobalMuted ? (
-                        <>
-                          <VolumeX className="w-3.5 h-3.5" />
-                          <span>Bật tiếng</span>
-                        </>
-                      ) : (
-                        <>
-                          <Volume2 className="w-3.5 h-3.5 text-teal-400" />
-                          <span>Bật</span>
-                        </>
-                      )}
-                    </button>
+                    {/* Unmute/Mute Toggle (for video clips) */}
+                    {!currentShort.isAudioSrsCard && (
+                      <button
+                        onClick={toggleMute}
+                        className={`px-2.5 py-1 rounded-full backdrop-blur-md text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                          isGlobalMuted ? 'bg-amber-500 text-white animate-pulse shadow-md' : 'bg-black/60 text-white hover:bg-black/80'
+                        }`}
+                        title={isGlobalMuted ? 'Bấm để bật âm thanh' : 'Tắt âm thanh'}
+                      >
+                        {isGlobalMuted ? (
+                          <>
+                            <VolumeX className="w-3.5 h-3.5" />
+                            <span>Bật tiếng</span>
+                          </>
+                        ) : (
+                          <>
+                            <Volume2 className="w-3.5 h-3.5 text-teal-400" />
+                            <span>Bật</span>
+                          </>
+                        )}
+                      </button>
+                    )}
 
-                    <button
-                      onClick={() => onOpenLesson(currentShort)}
-                      className="px-2.5 py-1 rounded-full bg-white text-slate-900 text-[11px] font-black shadow-md hover:bg-teal-50 flex items-center gap-1 transition-transform active:scale-95 cursor-pointer"
-                      title="Mở toàn bộ phòng học video"
-                    >
-                      <span>Học full</span>
-                      <ArrowRight className="w-3 h-3" />
-                    </button>
+                    {!currentShort.isAudioSrsCard && currentShort.youtubeId && (
+                      <button
+                        onClick={() => onOpenLesson(currentShort)}
+                        className="px-2.5 py-1 rounded-full bg-white text-slate-900 text-[11px] font-black shadow-md hover:bg-teal-50 flex items-center gap-1 transition-transform active:scale-95 cursor-pointer"
+                        title="Mở toàn bộ phòng học video"
+                      >
+                        <span>Học full</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
                 </div>
 

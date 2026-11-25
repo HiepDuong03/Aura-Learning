@@ -85,7 +85,7 @@ describe('buildFullSrsShortsFeed (Bug #2 fix: 100% vault coverage)', () => {
       makeSavedWord('w7', 'private tuition', 'học phí tư thục'),
       makeSavedWord('w8', 'academic curriculum', 'chương trình học thuật'),
       makeSavedWord('w9', 'distance learning', 'học từ xa'),
-      makeSavedWord('w10', 'student loan', 'khoản vay sinh viên'),
+      makeSavedWord('w10', 'boarding school', 'trường nội trú'),
       makeSavedWord('w11', 'scholarship grant', 'học bổng tài trợ', {
         sourceYoutubeId: 'RKK7wGAYP6k',
         sourceTimestampSec: 42
@@ -114,6 +114,17 @@ describe('buildFullSrsShortsFeed (Bug #2 fix: 100% vault coverage)', () => {
     expect(sourceVideoItem?.srsMatchTier).toBe('source_video');
     expect(sourceVideoItem?.youtubeId).toBe('RKK7wGAYP6k');
     expect(sourceVideoItem?.startSeconds).toBe(42);
+
+    // Multi-word IELTS phrases must NOT mismatch partial tokens like "far distance" or "school environments"
+    const distanceLearningItem = fullFeed.find((c) => c.srsWordId === 'w9');
+    expect(distanceLearningItem?.isAudioSrsCard).toBe(true);
+    expect(distanceLearningItem?.srsMatchTier).toBe('audio_context');
+    expect(distanceLearningItem?.targetContext).toContain('distance learning');
+
+    const boardingSchoolItem = fullFeed.find((c) => c.srsWordId === 'w10');
+    expect(boardingSchoolItem?.isAudioSrsCard).toBe(true);
+    expect(boardingSchoolItem?.srsMatchTier).toBe('audio_context');
+    expect(boardingSchoolItem?.targetContext).toContain('boarding school');
 
     const audioCards = fullFeed.filter((c) => c.isAudioSrsCard);
     expect(audioCards.length).toBeGreaterThan(0);

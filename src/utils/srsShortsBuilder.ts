@@ -1,49 +1,9 @@
 import { SavedWord, VideoLesson } from '../types';
 import { ankiScheduler } from '../services/ankiScheduler';
 import { AccentZone, YouGlishOccurrence } from '../services/youglishEngine';
-import { YOUGLISH_CORPUS } from '../data/youglishCorpus';
-
-const STOP_WORDS = new Set([
-  'the',
-  'and',
-  'for',
-  'with',
-  'from',
-  'that',
-  'this',
-  'into',
-  'about',
-  'over',
-  'your',
-  'their',
-  'have',
-  'been',
-  'will',
-  'would',
-  'could',
-  'should',
-  'very',
-  'more',
-  'most',
-  'some',
-  'make',
-  'take',
-  'give',
-  'keep',
-  'work',
-  'good',
-  'high'
-]);
 
 function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function extractCoreTokens(phrase: string): string[] {
-  return phrase
-    .toLowerCase()
-    .split(/[^a-z]+/)
-    .filter((tok) => tok.length >= 4 && !STOP_WORDS.has(tok));
 }
 
 function isValidYoutubeId(id?: string): id is string {
@@ -70,11 +30,12 @@ export interface BuildFullSrsShortsParams {
 /**
  * 3-Tier SRS Shorts Coverage Builder:
  * Guarantees 100% coverage of the learner's SavedWord vault inside the Shorts "Ôn SRS" tab
- * (1 saved word = 1 review card/clip, zero silently dropped IELTS/CEFR words):
+ * (1 saved word = 1 review card/clip, zero silently dropped IELTS/CEFR words and ZERO false-positive
+ * partial word splits like matching "distance learning" -> "in the far distance"):
  *  - Tier 1a: Exact verified video occurrence from YouGlishEngine
  *  - Tier 1b: Original source YouTube video + timestamp stored on the SavedWord
- *  - Tier 2:  Unique related-token clip from YOUGLISH_CORPUS / lessons (clearly labeled)
- *  - Tier 3:  Interactive 9:16 Audio/Context SRS Card with Cloze + 0ms TTS + YouGlish Live button
+ *  - Tier 2:  Exact-phrase match inside user/catalog lesson subtitles (whole phrase, never split)
+ *  - Tier 3:  Interactive 9:16 Audio/Context SRS Card using the word's own authentic sentence + 0ms TTS + YouGlish Live
  */
 export function buildFullSrsShortsFeed(params: BuildFullSrsShortsParams): VideoLesson[] {
   const { savedWords, exactOccurrences, lessons, accentFilter = 'GLOBAL', selectedWordFilter = 'all' } = params;
@@ -208,117 +169,57 @@ export function buildFullSrsShortsFeed(params: BuildFullSrsShortsParams): VideoL
       continue;
     }
 
-    // --- TIER 2: Related core-token video clip (unique clip per word) ---
-    const coreTokens = extractCoreTokens(lowerWord);
-    let matchedRelated: VideoLesson | null = null;
-
-    if (coreTokens.length > 0) {
-      const tokenMatchers = coreTokens.map((tok) => ({
-        token: tok,
-        regex: new RegExp(`\\b${escapeRegExp(tok)}(?:s|es|ed|ing)?\\b`, 'i')
-      }));
-
-      for (const entry of YOUGLISH_CORPUS) {
-        if (!entry.youtubeId) continue;
-        if (accentFilter !== 'GLOBAL' && entry.zone !== accentFilter) continue;
-        const sig = `${entry.youtubeId}:${Math.floor(entry.start / 8)}`;
-        if (usedVideoSignatures.has(sig)) continue;
-
-        const hit = tokenMatchers.find((m) => m.regex.test(entry.text || ''));
-        if (hit) {
-          usedVideoSignatures.add(sig);
-          const clipStart = Math.max(0, Number(entry.start.toFixed(2)));
-          const clipEnd = Number((entry.end + 0.5).toFixed(2));
-          matchedRelated = {
-            id: `srs-rel-${wordObj.id}-${entry.id}`,
-            youtubeId: entry.youtubeId,
-            title: `Ôn "${cleanWord}" — Ngữ cảnh liên quan (${hit.token})`,
-            channel: `${entry.speaker} (${entry.channel})`,
-            thumbnail: entry.thumbnail || `https://img.youtube.com/vi/${entry.youtubeId}/hqdefault.jpg`,
-            level: 'B2',
-            topic: `Ôn từ: ${cleanWord}`,
-            duration: `00:${Math.max(6, Math.round(clipEnd - clipStart)).toString().padStart(2, '0')}`,
-            durationSec: Math.max(6, Math.round(clipEnd - clipStart)),
-            views: 'Ôn SRS',
-            description: entry.text,
-            subtitles: [
-              {
-                id: `sub-rel-${wordObj.id}`,
-                start: clipStart,
-                end: clipEnd,
-                text: entry.text,
-                translation: entry.translation || wordObj.translation || ''
-              }
-            ],
-            quizzes: [],
-            isShort: true,
-            startSeconds: clipStart,
-            endSeconds: clipEnd,
-            targetWord: cleanWord,
-            targetContext: wordObj.contextSentence || wordObj.exampleEn || entry.text,
-            expression: cleanWord,
-            expressionMeaningVi: wordObj.translation || '',
-            americanUsageNote: `Clip ngữ cảnh liên quan qua từ gốc "${hit.token}". Bấm "YouGlish trực tiếp" để xem thêm clip đúng cụm "${cleanWord}".`,
-            sourceLessonTitle: entry.sourceTitle,
-            initialSubIndex: 0,
-            srsWordId: wordObj.id,
-            isSrsReviewClip: true,
-            srsMatchTier: 'related_video'
-          };
-          break;
-        }
-      }
-
-      if (!matchedRelated && Array.isArray(lessons)) {
-        outerLessons: for (const lesson of lessons) {
-          if (!lesson?.youtubeId || !Array.isArray(lesson.subtitles)) continue;
-          for (const sub of lesson.subtitles) {
-            if (!sub?.text) continue;
-            const sig = `${lesson.youtubeId}:${Math.floor(sub.start / 8)}`;
-            if (usedVideoSignatures.has(sig)) continue;
-            const hit = tokenMatchers.find((m) => m.regex.test(sub.text));
-            if (hit) {
-              usedVideoSignatures.add(sig);
-              const clipStart = Math.max(0, Number(sub.start.toFixed(2)));
-              const clipEnd = Math.min(lesson.durationSec || 9999, Number((sub.end + 0.5).toFixed(2)));
-              matchedRelated = {
-                id: `srs-rel-l-${wordObj.id}-${lesson.id}`,
-                youtubeId: lesson.youtubeId,
-                title: `Ôn "${cleanWord}" — ${lesson.title}`,
-                channel: lesson.channel || 'YouTube',
-                thumbnail: lesson.thumbnail || `https://img.youtube.com/vi/${lesson.youtubeId}/hqdefault.jpg`,
-                level: lesson.level || 'B2',
-                topic: `Ôn từ: ${cleanWord}`,
-                duration: `00:${Math.max(6, Math.round(clipEnd - clipStart)).toString().padStart(2, '0')}`,
-                durationSec: Math.max(6, Math.round(clipEnd - clipStart)),
-                views: 'Ôn SRS',
-                description: sub.text,
-                subtitles: [sub],
-                quizzes: [],
-                isShort: true,
-                startSeconds: clipStart,
-                endSeconds: clipEnd,
-                targetWord: cleanWord,
-                targetContext: wordObj.contextSentence || wordObj.exampleEn || sub.text,
-                expression: cleanWord,
-                expressionMeaningVi: wordObj.translation || '',
-                americanUsageNote: `Clip ngữ cảnh liên quan qua từ gốc "${hit.token}". Bấm "YouGlish trực tiếp" để nghe thêm clip chứa nguyên cụm "${cleanWord}".`,
-                sourceLessonTitle: lesson.title,
-                subtitleOffset: lesson.subtitleOffset || 0,
-                initialSubIndex: 0,
-                srsWordId: wordObj.id,
-                isSrsReviewClip: true,
-                srsMatchTier: 'related_video'
-              };
-              break outerLessons;
-            }
+    // --- TIER 2: Exact whole-phrase match in lesson subtitles (NEVER split multi-word phrases) ---
+    let matchedExactLesson: VideoLesson | null = null;
+    if (Array.isArray(lessons) && accentFilter === 'GLOBAL') {
+      const exactPhraseRegex = new RegExp(`\\b${escapeRegExp(lowerWord)}(?:s|es|ed|ing)?\\b`, 'i');
+      outerLessons: for (const lesson of lessons) {
+        if (!lesson?.youtubeId || !Array.isArray(lesson.subtitles)) continue;
+        for (const sub of lesson.subtitles) {
+          if (!sub?.text) continue;
+          const sig = `${lesson.youtubeId}:${Math.floor(sub.start / 8)}`;
+          if (usedVideoSignatures.has(sig)) continue;
+          if (exactPhraseRegex.test(sub.text)) {
+            usedVideoSignatures.add(sig);
+            const clipStart = Math.max(0, Number(sub.start.toFixed(2)));
+            const clipEnd = Math.min(lesson.durationSec || 9999, Number((sub.end + 0.5).toFixed(2)));
+            matchedExactLesson = {
+              id: `srs-exact-l-${wordObj.id}-${lesson.id}`,
+              youtubeId: lesson.youtubeId,
+              title: `Ôn "${cleanWord}" — ${lesson.title}`,
+              channel: lesson.channel || 'YouTube',
+              thumbnail: lesson.thumbnail || `https://img.youtube.com/vi/${lesson.youtubeId}/hqdefault.jpg`,
+              level: lesson.level || 'B2',
+              topic: `Ôn từ: ${cleanWord}`,
+              duration: `00:${Math.max(6, Math.round(clipEnd - clipStart)).toString().padStart(2, '0')}`,
+              durationSec: Math.max(6, Math.round(clipEnd - clipStart)),
+              views: 'Ôn SRS',
+              description: sub.text,
+              subtitles: [sub],
+              quizzes: [],
+              isShort: true,
+              startSeconds: clipStart,
+              endSeconds: clipEnd,
+              targetWord: cleanWord,
+              targetContext: sub.text,
+              expression: cleanWord,
+              expressionMeaningVi: wordObj.translation || '',
+              americanUsageNote: `Từ trong Kho FSRS-6${wordObj.translation ? `: "${wordObj.translation}"` : ''}. Khớp đúng cụm từ trong bài học video.`,
+              sourceLessonTitle: lesson.title,
+              subtitleOffset: lesson.subtitleOffset || 0,
+              initialSubIndex: 0,
+              srsWordId: wordObj.id,
+              isSrsReviewClip: true,
+              srsMatchTier: 'exact_video'
+            };
+            break outerLessons;
           }
         }
       }
     }
 
-    if (matchedRelated) {
-      results.push(matchedRelated);
+    if (matchedExactLesson) {
+      results.push(matchedExactLesson);
       continue;
     }
 
