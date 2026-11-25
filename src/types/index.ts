@@ -48,6 +48,8 @@ export interface VideoLesson {
   register?: ReelRegister;
   srsWordId?: string;
   isSrsReviewClip?: boolean;
+  isAudioSrsCard?: boolean;
+  srsMatchTier?: 'exact_video' | 'source_video' | 'related_video' | 'audio_context';
 }
 
 export type ReelCategory = 'daily_life' | 'work_talk' | 'my_videos';

@@ -870,16 +870,33 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
       const personaRole = String(body.personaRole || 'English Partner');
       const situation = String(body.situation || '');
       const mission = String(body.mission || '');
+      const targetWords = Array.isArray(body.targetWords)
+        ? body.targetWords.map((w) => String(w || '').trim()).filter(Boolean).slice(0, 8)
+        : [];
+      const grammarFocus = String(body.grammarFocus || '').trim().slice(0, 180);
       const history = Array.isArray(body.history) ? body.history : [];
       const correctionMode = VALID_CORRECTION_MODES.includes(body.correctionMode)
         ? body.correctionMode
         : 'written';
 
+      const allUserTextLower = [
+        ...history.filter(m => m && m.sender === 'User').map(m => String(m.text || '')),
+        userMessage
+      ].join(' ').toLowerCase();
+
+      const usedTargetWords = targetWords.filter((tw) => {
+        const clean = tw.toLowerCase();
+        const root = clean.replace(/(ing|ed|s)$/, '');
+        return allUserTextLower.includes(clean) || (root.length >= 4 && allUserTextLower.includes(root));
+      });
+      const unusedTargetWords = targetWords.filter((tw) => !usedTargetWords.includes(tw));
+
       const computeFallbackMissionProgress = () => {
-        const allUserText = [
-          ...history.filter(m => m && m.sender === 'User').map(m => String(m.text || '')),
-          userMessage
-        ].join(' ').toLowerCase();
+        if (targetWords.length > 0) {
+          const required = Math.min(3, targetWords.length);
+          const pct = Math.min(100, Math.round((usedTargetWords.length / required) * 100));
+          return { missionProgress: pct, missionCompleted: pct >= 100 };
+        }
 
         const personaChecklists = {
           'cafe-barista': [['latte', 'coffee', 'iced'], ['oat', 'less sweet', '50%', 'half sweet', 'sugar'], ['wifi', 'wi-fi', 'password']],
@@ -894,7 +911,7 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
           const pct = Math.min(100, turns * 35);
           return { missionProgress: pct, missionCompleted: pct >= 100 };
         }
-        const matched = steps.filter(group => group.some(kw => allUserText.includes(kw))).length;
+        const matched = steps.filter(group => group.some(kw => allUserTextLower.includes(kw))).length;
         const pct = Math.round((matched / steps.length) * 100);
         return { missionProgress: pct, missionCompleted: pct >= 100 };
       };
@@ -920,6 +937,10 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
             `You are roleplaying as "${personaName}" (${personaRole}) in an interactive English speaking practice (Langua + Fluently style).`,
             `Situation: ${situation}`,
             `Learner Mission: ${mission}`,
+            targetWords.length > 0
+              ? `Target vocabulary from learner's lesson: ${targetWords.map((w) => `"${w}"`).join(', ')}. Already used: ${usedTargetWords.length > 0 ? usedTargetWords.join(', ') : 'none yet'}. Still unused: ${unusedTargetWords.length > 0 ? unusedTargetWords.join(', ') : 'all used!'}. Naturally steer your follow-up question to invite the learner to use one of the unused target words, and make sure suggestedReplies incorporate unused target words naturally.`
+              : '',
+            grammarFocus ? `Target grammar structure to encourage: ${grammarFocus}` : '',
             correctionRule,
             recentHistory ? `Recent Conversation:\n${recentHistory}` : '',
             `Learner just said: "${userMessage}"`,

@@ -37,6 +37,7 @@ import { RoleplayChatRoom, RoleplayPersona, ChatMessage } from './RoleplayChatRo
 import { RoleplayFeedbackModal } from './RoleplayFeedbackModal';
 import { WritingCoachPanel } from './WritingCoachPanel';
 import { detectUsedMissionWords } from '../../utils/curriculumEngine';
+import { buildMissionRoleplayPersona } from '../../utils/missionRoleplayBuilder';
 import { VoiceActivityDetector } from '../../utils/voiceActivityDetector';
 import { assessSpeech, DetailedSpeechAssessment } from '../../utils/speechAssessor';
 import { soundEffects } from '../../utils/audioFeedback';
@@ -205,24 +206,42 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
   const [countdownSeconds, setCountdownSeconds] = useState<number | null>(null);
 
   // Roleplay Mode States (Langua + Fluently Architecture)
+  const missionPersona = useMemo(
+    () => (activeMission ? buildMissionRoleplayPersona(activeMission) : null),
+    [activeMission]
+  );
+
   const [customPersonas, setCustomPersonas] = useState<RoleplayPersona[]>(() =>
     ScopedStorage.getCustomRoleplayPersonas(currentUser?.id)
   );
-  const allPersonas = useMemo(() => [...customPersonas, ...AI_PERSONAS], [customPersonas]);
+  const allPersonas = useMemo(
+    () => (missionPersona ? [missionPersona, ...customPersonas, ...AI_PERSONAS] : [...customPersonas, ...AI_PERSONAS]),
+    [missionPersona, customPersonas]
+  );
 
   useEffect(() => {
     setCustomPersonas(ScopedStorage.getCustomRoleplayPersonas(currentUser?.id));
   }, [currentUser?.id]);
-  const [selectedPersona, setSelectedPersona] = useState<RoleplayPersona>(AI_PERSONAS[0] || {
-    id: 'default',
-    name: 'AI Tutor',
-    role: 'Gia sư tiếng Anh',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop',
-    situation: 'Trò chuyện tự do',
-    mission: 'Thực hành hội thoại',
-    initialMessage: 'Hello! How can I help you today?',
-    initialTranslation: 'Xin chào! Tôi có thể giúp gì cho bạn hôm nay?'
-  });
+
+  const [selectedPersona, setSelectedPersona] = useState<RoleplayPersona>(() =>
+    missionPersona || AI_PERSONAS[0] || {
+      id: 'default',
+      name: 'AI Tutor',
+      role: 'Gia sư tiếng Anh',
+      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop',
+      situation: 'Trò chuyện tự do',
+      mission: 'Thực hành hội thoại',
+      initialMessage: 'Hello! How can I help you today?',
+      initialTranslation: 'Xin chào! Tôi có thể giúp gì cho bạn hôm nay?'
+    }
+  );
+
+  // Auto-switch to the dedicated mission persona whenever a Roadmap Speaking Mission launches
+  useEffect(() => {
+    if (activeMission?.mode === 'roleplay' && missionPersona) {
+      setSelectedPersona(missionPersona);
+    }
+  }, [activeMission?.id, activeMission?.mode, missionPersona]);
   const [roleplayMessages, setRoleplayMessages] = useState<ChatMessage[]>([]);
   const [roleplayInput, setRoleplayInput] = useState<string>('');
   const [isAiThinking, setIsAiThinking] = useState<boolean>(false);
@@ -685,6 +704,7 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
     setIsAiThinking(true);
 
     try {
+      const isMissionChat = Boolean(activeMission && missionPersona && selectedPersona.id === missionPersona.id);
       const res = await fetch('/api/ai/roleplay', {
         method: 'POST',
         headers: {
@@ -698,6 +718,14 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
           situation: selectedPersona.situation,
           mission: selectedPersona.mission,
           correctionMode,
+          ...(isMissionChat && activeMission
+            ? {
+                targetWords: activeMission.targetWords.map((w) => w.word),
+                grammarFocus: activeMission.grammarFocus
+                  ? `${activeMission.grammarFocus.title}: ${activeMission.grammarFocus.formula}`
+                  : undefined
+              }
+            : {}),
           history: nextHistory.slice(-6).map((m) => ({ sender: m.sender, text: m.text })),
           userMessage: trimmed
         })
@@ -1138,7 +1166,12 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
                   {onClearMission && (
                     <button
                       type="button"
-                      onClick={onClearMission}
+                      onClick={() => {
+                        onClearMission();
+                        if (missionPersona && selectedPersona.id === missionPersona.id && AI_PERSONAS[0]) {
+                          setSelectedPersona(AI_PERSONAS[0]);
+                        }
+                      }}
                       className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-white cursor-pointer"
                       title="Đóng nhiệm vụ"
                     >
@@ -1150,21 +1183,23 @@ export const RapidSpeakingRoom: React.FC<RapidSpeakingRoomProps> = ({
                   {activeMission.targetWords.map((tw) => {
                     const isUsed = usedSet.has(tw.word);
                     return (
-                      <span
+                      <button
                         key={tw.word}
-                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border transition-all ${
+                        type="button"
+                        onClick={() => speakWithVadGuard(tw.word, 0.92)}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border transition-all cursor-pointer ${
                           isUsed
                             ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
-                            : 'bg-white text-slate-700 border-teal-200'
+                            : 'bg-white hover:bg-teal-50 text-slate-700 border-teal-200'
                         }`}
-                        title={tw.meaningVi}
+                        title={tw.pattern ? `${tw.meaningVi} — ${tw.pattern} (Bấm để nghe phát âm)` : `${tw.meaningVi} (Bấm để nghe phát âm)`}
                       >
                         {isUsed && <CheckCircle2 className="w-3.5 h-3.5" />}
                         <span>{tw.word}</span>
                         <span className={`text-[10px] ${isUsed ? 'text-emerald-100' : 'text-slate-400'}`}>
                           · {tw.meaningVi}
                         </span>
-                      </span>
+                      </button>
                     );
                   })}
                 </div>

@@ -48,7 +48,8 @@ import {
   RefreshCw
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { batchTranslateSubtitles, explainInContext } from '../../services/dictionaryService';
+import { batchTranslateSubtitles, explainInContext, speakWord } from '../../services/dictionaryService';
+import { buildFullSrsShortsFeed } from '../../utils/srsShortsBuilder';
 import { authService } from '../../services/authService';
 import { getLocalDateKey } from '../../services/scopedStorage';
 import { tokenizeText } from '../../utils/textTokenizer';
@@ -707,52 +708,16 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     });
   }, [savedWords, lessons, selectedWordFilter, accentFilter, registerFilter]);
 
-  // Convert verified SRS occurrences from the user's lessons into uniform SRS review clips.
-  // Excludes fuzzy YouTube Search API clips (which do not guarantee the target word in their transcript).
+  // 3-Tier SRS Shorts feed: covers 100% of savedWords (1 word = 1 review card/clip)
   const srsReviewClips: VideoLesson[] = useMemo(() => {
-    const minedSrsClips: VideoLesson[] = youglishOccurrences.map((occ) => {
-      const vaultMatch = savedWords.find(
-        (w) => w?.word && occ.targetWord && w.word.toLowerCase().trim() === occ.targetWord.toLowerCase().trim()
-      );
-      return {
-        id: occ.id,
-        youtubeId: occ.vid,
-        title: occ.sourceLessonTitle ? `Ôn từ "${occ.targetWord}" — ${occ.sourceLessonTitle}` : `Ôn từ "${occ.targetWord}"`,
-        channel: occ.channel,
-        thumbnail: occ.thumbnail,
-        level: 'B1',
-        topic: `Ôn từ: ${occ.targetWord}`,
-        duration: `00:${Math.max(5, Math.round(occ.clipEnd - occ.clipStart)).toString().padStart(2, '0')}`,
-        durationSec: Math.max(5, Math.round(occ.clipEnd - occ.clipStart)),
-        views: 'Ôn SRS',
-        description: occ.display,
-        subtitles: occ.subtitles,
-        quizzes: [],
-        isShort: true,
-        startSeconds: occ.clipStart,
-        endSeconds: occ.clipEnd,
-        targetWord: occ.targetWord,
-        targetContext: occ.display,
-        expression: occ.targetWord,
-        expressionMeaningVi: vaultMatch?.translation || '',
-        americanUsageNote: `Từ bạn đã lưu trong Kho từ vựng${vaultMatch?.translation ? `: "${vaultMatch.translation}"` : ''}. Hãy nghe lại trong ngữ cảnh thật và chọn mức nhớ FSRS-6 bên dưới.`,
-        sourceLessonTitle: occ.sourceLessonTitle,
-        subtitleOffset: occ.subtitleOffset,
-        initialSubIndex: 0,
-        srsWordId: vaultMatch?.id,
-        isSrsReviewClip: true
-      };
+    return buildFullSrsShortsFeed({
+      savedWords,
+      exactOccurrences: youglishOccurrences,
+      lessons,
+      accentFilter,
+      selectedWordFilter
     });
-
-    const seen = new Set<string>();
-    const combined: VideoLesson[] = [];
-    for (const clip of minedSrsClips) {
-      if (!clip.id || seen.has(clip.id)) continue;
-      seen.add(clip.id);
-      combined.push(clip);
-    }
-    return combined;
-  }, [youglishOccurrences, savedWords]);
+  }, [savedWords, youglishOccurrences, lessons, accentFilter, selectedWordFilter]);
 
   const thematicReelsFeed: VideoLesson[] = useMemo(() => {
     const nonSrsCurated = curatedReels.filter((r) => !r.isSrsReviewClip);
@@ -1212,6 +1177,21 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
       return;
     }
 
+    // Tier-3 Audio/Context SRS Card (no YouTube video ID): pause any active YT slots and clear spinner immediately
+    if (currentShort.isAudioSrsCard || !currentShort.youtubeId) {
+      ([0, 1, 2] as PoolSlotId[]).forEach((sid) => {
+        try {
+          poolPlayersRef.current[sid]?.pauseVideo?.();
+        } catch {
+          // Ignore inactive slot pause errors
+        }
+      });
+      clearLoadingOverlay();
+      setPlayerError(null);
+      setIsPlaying(false);
+      return;
+    }
+
     if (useDirectIframe) {
       clearLoadingOverlay();
       setPlayerError(null);
@@ -1450,7 +1430,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
         .map((sid) => assignments[sid])
         .find((a) => a.role === 'next' && a.clip);
 
-      if (nextSlotEntry?.clip) {
+      if (nextSlotEntry?.clip && nextSlotEntry.clip.youtubeId) {
         const nextSlotId = nextSlotEntry.slotId;
         const nextClip = nextSlotEntry.clip;
         prewarmTimerRef.current = setTimeout(() => {
@@ -2618,13 +2598,67 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
               >
                 {/* 1. Underlying YouTube Video Player + Soft Ambient Poster Backdrop (Never harsh black screen) */}
                 <div className="absolute inset-0 overflow-hidden bg-slate-950 flex items-center justify-center">
-                  <img
-                    src={currentShort.thumbnail || `https://img.youtube.com/vi/${currentShort.youtubeId}/hqdefault.jpg`}
-                    alt=""
-                    aria-hidden="true"
-                    className="absolute inset-0 w-full h-full object-cover opacity-30 blur-md scale-110 pointer-events-none"
-                  />
-                  {currentShort.videoUrl ? (
+                  {currentShort.thumbnail || currentShort.youtubeId ? (
+                    <img
+                      src={currentShort.thumbnail || `https://img.youtube.com/vi/${currentShort.youtubeId}/hqdefault.jpg`}
+                      alt=""
+                      aria-hidden="true"
+                      className="absolute inset-0 w-full h-full object-cover opacity-30 blur-md scale-110 pointer-events-none"
+                    />
+                  ) : null}
+                  {currentShort.isAudioSrsCard || (!currentShort.videoUrl && !currentShort.youtubeId) ? (
+                    <div className="relative z-[4] w-full h-full bg-gradient-to-br from-slate-900 via-teal-950 to-slate-950 flex flex-col items-center justify-center p-6 pb-28 text-center space-y-4">
+                      <span className="px-3 py-1 rounded-full bg-teal-500/20 border border-teal-400/30 text-teal-200 text-[11px] font-black uppercase tracking-wider">
+                        Thẻ Nghe Ngữ Cảnh · FSRS-6
+                      </span>
+                      <div className="space-y-1.5 max-w-[280px]">
+                        <p className="text-lg font-black text-white tracking-tight">
+                          {!isWordRevealed
+                            ? '● ● ● ● ●'
+                            : currentShort.targetWord || currentShort.expression}
+                        </p>
+                        {currentShort.expressionMeaningVi && isWordRevealed && (
+                          <p className="text-xs font-semibold text-teal-200/90">
+                            {currentShort.expressionMeaningVi}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center justify-center gap-2 pointer-events-auto">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            speakWord(currentShort.targetContext || currentShort.description || currentShort.targetWord || '', 'en', 0.95);
+                          }}
+                          className="px-4 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 text-xs font-black flex items-center gap-1.5 shadow-lg cursor-pointer transition-all"
+                        >
+                          <Volume2 className="w-4 h-4" />
+                          <span>Nghe câu mẫu</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            speakWord(currentShort.targetContext || currentShort.description || currentShort.targetWord || '', 'en', 0.72);
+                          }}
+                          className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white text-xs font-bold cursor-pointer transition-all"
+                        >
+                          0.75x Chậm
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowLiveYouglish(true);
+                        }}
+                        className="pointer-events-auto px-3.5 py-1.5 rounded-xl bg-amber-400/15 hover:bg-amber-400/25 border border-amber-300/30 text-amber-200 text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-all"
+                      >
+                        <Globe className="w-3.5 h-3.5" />
+                        <span>Xem trong YouGlish / Video thực tế</span>
+                      </button>
+                    </div>
+                  ) : currentShort.videoUrl ? (
                     <>
                       <video
                         ref={nativeVideoRef}
