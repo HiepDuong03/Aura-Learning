@@ -75,6 +75,7 @@ import { AMERICAN_REELS_CORPUS, mapCuratedReelToVideoLesson } from '../../data/a
 import { shortsFeedService } from '../../services/shortsFeedService';
 import { youglishEngine, AccentZone, ContextRegister, YouGlishOccurrence } from '../../services/youglishEngine';
 import { speechScoringService, SpeechScoreResult } from '../../services/speechScoringService';
+import { ankiScheduler } from '../../services/ankiScheduler';
 import { YouGlishLiveWidget } from './YouGlishLiveWidget';
 import { useNotify } from '../Common/ToastProvider';
 
@@ -730,20 +731,24 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     });
   }, [curatedReels, minedReels, reelTopicFilter, sessionWatchedSnapshot, sessionSeed, srsReviewClips]);
 
-  // List of words that have YouGlish video occurrences
+  // List of words available in the 3-tier SRS Shorts deck
   const availableWordsWithCount = useMemo(() => {
     const map = new Map<string, { count: number; isDue: boolean }>();
-    youglishOccurrences.forEach(o => {
-      if (!o || !o.targetWord) return;
-      const w = o.targetWord.toLowerCase().trim();
+    const now = Date.now();
+    srsReviewClips.forEach((clip) => {
+      const rawWord = clip.targetWord || clip.expression || '';
+      if (!rawWord) return;
+      const w = rawWord.toLowerCase().trim();
+      const matched = clip.srsWordId ? savedWords.find((sw) => sw?.id === clip.srsWordId) : undefined;
+      const isDue = matched ? ankiScheduler.isCardDue(matched, now) : false;
       const existing = map.get(w);
       map.set(w, {
         count: (existing?.count || 0) + 1,
-        isDue: existing?.isDue || o.isDueToday
+        isDue: existing?.isDue || isDue
       });
     });
     return Array.from(map.entries()).map(([word, meta]) => ({ word, ...meta }));
-  }, [youglishOccurrences]);
+  }, [srsReviewClips, savedWords]);
 
   // --- 2. Convert Active Feed items into Uniform VideoLesson Array ---
   const activeFeed: VideoLesson[] = useMemo(() => {
@@ -917,6 +922,16 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
     feedMode === 'youglish'
       ? youglishOccurrences.find((o) => o.id === currentShort.id) || null
       : null;
+  const currentSrsWord = useMemo(() => {
+    if (currentShort.srsWordId) {
+      return savedWords.find((w) => w?.id === currentShort.srsWordId) || null;
+    }
+    const expr = (currentShort.expression || currentShort.targetWord || '').trim().toLowerCase();
+    return expr ? savedWords.find((w) => w?.word && w.word.toLowerCase().trim() === expr) || null : null;
+  }, [currentShort.srsWordId, currentShort.expression, currentShort.targetWord, savedWords]);
+  const isCurrentSrsDue = Boolean(
+    currentOccurrence?.isDueToday || (currentSrsWord && ankiScheduler.isCardDue(currentSrsWord))
+  );
   const activeExpression = (currentShort.expression || currentShort.targetWord || '').trim();
   const isCurrentExpressionSaved = useMemo(() => {
     if (!activeExpression) return false;
@@ -1768,6 +1783,23 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
   }, [handleNext, handlePrev]);
 
   const togglePlayPause = useCallback(() => {
+    if (currentShort.isAudioSrsCard || (!currentShort.videoUrl && !currentShort.youtubeId)) {
+      const sampleText = currentShort.targetContext || currentShort.description || currentShort.targetWord || '';
+      if (sampleText) {
+        speakWord(sampleText, 'en', playbackRateRef.current, {
+          onStart: () => {
+            isPlayingRef.current = true;
+            setIsPlaying(true);
+          },
+          onEnd: () => {
+            isPlayingRef.current = false;
+            setIsPlaying(false);
+          }
+        });
+      }
+      return;
+    }
+
     const currentlyPlaying = isPlayingRef.current;
 
     if (currentShort.videoUrl && nativeVideoRef.current) {
@@ -1798,7 +1830,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
       isPlayingRef.current = true;
       setIsPlaying(true);
     }
-  }, [currentShort.videoUrl]);
+  }, [currentShort.videoUrl, currentShort.isAudioSrsCard, currentShort.youtubeId, currentShort.targetContext, currentShort.description, currentShort.targetWord]);
 
   // Global Mute Toggle (Persistent across all shorts — supports HTML5 <video> & YouTube)
   const toggleMute = useCallback(() => {
@@ -2187,11 +2219,11 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
           >
             <Target className="w-3.5 h-3.5" />
             <span>Ôn SRS</span>
-            {youglishOccurrences.length > 0 && (
+            {srsReviewClips.length > 0 && (
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
                 feedMode === 'youglish' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
               }`}>
-                {youglishOccurrences.length}
+                {srsReviewClips.length}
               </span>
             )}
           </button>
@@ -3327,7 +3359,7 @@ export const ShortsView: React.FC<ShortsViewProps> = ({
                           <span className="text-xs font-black uppercase tracking-wider text-teal-700">
                             {!isWordRevealed ? '🎯 Ôn tập FSRS-6' : '🎯 Từ mục tiêu'}
                           </span>
-                          {currentOccurrence?.isDueToday && (
+                          {isCurrentSrsDue && (
                             <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-50 text-rose-700 border border-rose-200 font-bold">
                               Cần ôn hôm nay
                             </span>
