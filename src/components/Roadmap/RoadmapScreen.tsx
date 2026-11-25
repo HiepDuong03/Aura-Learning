@@ -765,7 +765,10 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
                                     targetWords: lesson.words.slice(0, 5).map((w) => ({
                                       word: w.word,
                                       meaningVi: w.meaningVi,
-                                      exampleEn: w.exampleIeltsEn || w.exampleDailyEn
+                                      exampleEn: w.exampleIeltsEn || w.exampleDailyEn,
+                                      pos: w.pos,
+                                      pattern: w.pattern,
+                                      collocations: w.collocations
                                     })),
                                     createdAt: Date.now()
                                   })
@@ -788,7 +791,10 @@ export const RoadmapScreen: React.FC<RoadmapScreenProps> = ({
                                     targetWords: lesson.words.slice(0, 5).map((w) => ({
                                       word: w.word,
                                       meaningVi: w.meaningVi,
-                                      exampleEn: w.exampleIeltsEn || w.exampleDailyEn
+                                      exampleEn: w.exampleIeltsEn || w.exampleDailyEn,
+                                      pos: w.pos,
+                                      pattern: w.pattern,
+                                      collocations: w.collocations
                                     })),
                                     createdAt: Date.now()
                                   })

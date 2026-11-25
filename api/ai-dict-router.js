@@ -1335,7 +1335,7 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
     }
   }
 
-  // 5. POST /api/ai/evaluate-sentence (Active Production: evaluate learner's sentence/short paragraph in IELTS, Work or Daily context)
+  // 5. POST /api/ai/evaluate-sentence (Active Production: evaluate learner's sentence/paragraph/essay in IELTS, Work or Daily context)
   if (pathname === '/api/ai/evaluate-sentence' && req.method === 'POST') {
     try {
       const body = await parseJsonBody(req);
@@ -1343,13 +1343,16 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
         ? body.targetWords.map((w) => normalizeLookupQuery(w || '')).filter(Boolean).slice(0, 8)
         : [];
       const targetWord = normalizeLookupQuery(body.targetWord || targetWordsList[0] || '');
-      const userSentence = String(body.userSentence || '').trim().slice(0, 800);
+      const userSentence = String(body.userSentence || '').trim().slice(0, 2500);
       const scenario = body.scenario === 'work' ? 'work' : body.scenario === 'ielts' ? 'ielts' : 'daily';
+      const writingMode =
+        body.writingMode === 'essay' ? 'essay' : body.writingMode === 'paragraph' ? 'paragraph' : 'sentence';
+      const promptText = String(body.promptText || '').trim().slice(0, 500);
       const contextSentence = String(body.contextSentence || '').trim().slice(0, 320);
       const grammarFocus = String(body.grammarFocus || '').trim().slice(0, 180);
 
-      if (!targetWord && !grammarFocus) {
-        sendJson(req, res, 400, { error: 'Thiếu từ vựng hoặc cấu trúc ngữ pháp mục tiêu cần luyện viết.' });
+      if (!targetWord && !grammarFocus && !promptText) {
+        sendJson(req, res, 400, { error: 'Thiếu từ vựng, đề bài hoặc cấu trúc ngữ pháp mục tiêu cần luyện viết.' });
         return true;
       }
       if (!userSentence || userSentence.length < 4) {
@@ -1361,11 +1364,19 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
       if (!quota) return true;
 
       if (options.aiSentenceResponder) {
-        const result = await options.aiSentenceResponder({ targetWord, userSentence, scenario, contextSentence });
+        const result = await options.aiSentenceResponder({
+          targetWord,
+          userSentence,
+          scenario,
+          writingMode,
+          promptText,
+          contextSentence
+        });
         sendJson(req, res, 200, {
           targetWord,
           userSentence,
           scenario,
+          writingMode,
           ...result,
           source: 'gemini',
           isFallback: false,
@@ -1373,6 +1384,25 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
         });
         return true;
       }
+
+      const criteriaLabels =
+        scenario === 'ielts'
+          ? ['Task Response', 'Coherence & Cohesion', 'Lexical Resource', 'Grammar Range & Accuracy']
+          : scenario === 'work'
+            ? ['Rõ ý (Clarity)', 'Tông chuyên nghiệp', 'Từ vựng công sở', 'Ngữ pháp']
+            : ['Độ tự nhiên', 'Mạch lạc', 'Từ vựng đời sống', 'Ngữ pháp'];
+
+      const roundHalfBand = (val, fallbackVal) => {
+        const num = Number(val);
+        if (!Number.isFinite(num)) return fallbackVal;
+        return Math.max(4, Math.min(9, Math.round(num * 2) / 2));
+      };
+
+      const clampTen = (val, fallbackVal) => {
+        const num = Number(val);
+        if (!Number.isFinite(num)) return fallbackVal;
+        return Math.max(1, Math.min(10, Math.round(num * 10) / 10));
+      };
 
       if (apiKey) {
         try {
@@ -1382,34 +1412,113 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
               : scenario === 'work'
                 ? 'professional workplace communication (emails, meetings, Slack, presentations)'
                 : 'natural everyday spoken English with friends or colleagues';
+          const modeLabel =
+            writingMode === 'essay'
+              ? 'a mini essay (160-260 words)'
+              : writingMode === 'paragraph'
+                ? 'a cohesive PEEL body paragraph (80-130 words)'
+                : '1-2 targeted sentences';
+
           const prompt = [
-            `You are an elite English communication & IELTS Writing coach helping a Vietnamese learner turn passive vocabulary/grammar into active fluency.`,
+            `You are an elite IELTS Writing examiner (Band 9.0) and English communication coach helping a Vietnamese learner turn passive vocabulary/grammar into active fluency.`,
+            promptText ? `Assigned writing prompt: "${promptText}"` : '',
             targetWordsList.length > 1
-              ? `Target vocabulary list (try to use as many naturally): ${targetWordsList.map((w) => `"${w}"`).join(', ')}`
+              ? `Target vocabulary pool (learner only needs to use 1-3 naturally — NEVER reward unnatural stuffing): ${targetWordsList.map((w) => `"${w}"`).join(', ')}`
               : targetWord
                 ? `Target word or phrase: "${targetWord}"`
                 : '',
             grammarFocus ? `Target grammar structure to apply: "${grammarFocus}"` : '',
             contextSentence ? `Reference context sentence: "${contextSentence}"` : '',
-            `Intended context: ${contextLabel}`,
+            `Intended context: ${contextLabel} (${modeLabel})`,
             `Learner's writing: "${userSentence}"`,
-            `Evaluate the learner's writing and return strict JSON with exact keys:`,
-            `- "score": integer 1 to 10 (naturalness + grammatical & contextual accuracy).`,
-            `- "isCorrectUsage": boolean (true if target vocabulary/grammar is used accurately in meaning and grammar).`,
-            `- "feedbackVi": 2 concise Vietnamese sentences praising what works and pointing out any grammar/collocation/register mistake.`,
-            `- "naturalVersion": One polished, natural rewrite tailored for ${contextLabel} keeping the learner's idea and target vocabulary/grammar.`,
-            `- "collocationTip": One short Vietnamese tip showing a high-value collocation or Band 7.5+ pattern.`
+            `Evaluate strictly and return ONLY valid JSON with exact keys:`,
+            `- "score": integer 1 to 10 (overall quality).`,
+            scenario === 'ielts'
+              ? `- "bandOverall": number in 0.5 increments from 4.0 to 9.0 (realistic IELTS Band estimate).`
+              : `- "bandOverall": null`,
+            `- "criteria": object with numeric keys "c1", "c2", "c3", "c4" (${scenario === 'ielts' ? 'each on IELTS 4.0-9.0 scale in 0.5 steps for TR, CC, LR, GRA' : 'each on 1-10 scale for Clarity/Naturalness, Tone/Coherence, Vocabulary, Grammar'}).`,
+            `- "isCorrectUsage": boolean (true if target vocabulary/grammar is used accurately in meaning, collocation, and grammar).`,
+            `- "feedbackVi": 2-3 concise Vietnamese sentences stating 1 clear strength and the top 1-2 actionable fixes to jump +0.5/+1.0 level.`,
+            `- "naturalVersion": Polished rewrite (+1.0 Band / native-level) tailored for ${contextLabel} that PRESERVES the learner's exact core arguments/ideas rather than inventing an unrelated essay.`,
+            `- "collocationTip": One short Vietnamese tip highlighting a high-value collocation or Band 7.5+ upgrade pattern.`,
+            `- "inlineCorrections": array of 0 to 5 objects {"original": "exact weak/wrong substring from learner writing", "corrected": "improved replacement", "explanationVi": "short 1-line Vietnamese reason"}.`,
+            `- "upgradedChunks": array of 2 to 4 short reusable lexical chunks (2 to 6 English words ONLY, never full sentences) extracted from naturalVersion: {"weak": "learner original phrase or empty string", "upgraded": "2-6 word high-value collocation", "meaningVi": "Vietnamese meaning", "contextSentence": "one concise English sentence containing the chunk"}.`,
+            `- "targetWordsAudit": array auditing up to 5 words from the target list that the learner attempted or missed: {"word": "...", "usedCorrectly": boolean, "noteVi": "very short Vietnamese note on collocation/grammar accuracy"}.`
           ].filter(Boolean).join('\n');
 
           const parsed = await callGeminiJson(apiKey, prompt);
           const scoreNum = Math.max(1, Math.min(10, Math.round(Number(parsed.score) || 7)));
+
+          const rawCriteria = parsed.criteria && typeof parsed.criteria === 'object' ? parsed.criteria : null;
+          const fallbackCriterion = scenario === 'ielts' ? roundHalfBand(4 + scoreNum * 0.45, 6.0) : scoreNum;
+          const normalizeCrit = (v) =>
+            scenario === 'ielts' ? roundHalfBand(v, fallbackCriterion) : clampTen(v, fallbackCriterion);
+
+          const criteria = {
+            c1: normalizeCrit(rawCriteria?.c1),
+            c2: normalizeCrit(rawCriteria?.c2),
+            c3: normalizeCrit(rawCriteria?.c3),
+            c4: normalizeCrit(rawCriteria?.c4),
+            labels: criteriaLabels
+          };
+
+          const computedBand =
+            scenario === 'ielts'
+              ? roundHalfBand(
+                  parsed.bandOverall ?? (criteria.c1 + criteria.c2 + criteria.c3 + criteria.c4) / 4,
+                  fallbackCriterion
+                )
+              : undefined;
+
+          const inlineCorrections = Array.isArray(parsed.inlineCorrections)
+            ? parsed.inlineCorrections
+                .filter((item) => item && typeof item.original === 'string' && typeof item.corrected === 'string')
+                .map((item) => ({
+                  original: String(item.original).trim().slice(0, 180),
+                  corrected: String(item.corrected).trim().slice(0, 220),
+                  explanationVi: String(item.explanationVi || '').trim().slice(0, 220)
+                }))
+                .filter((item) => item.original && item.corrected && item.original.toLowerCase() !== item.corrected.toLowerCase())
+                .slice(0, 5)
+            : [];
+
+          const upgradedChunks = Array.isArray(parsed.upgradedChunks)
+            ? parsed.upgradedChunks
+                .filter((item) => item && typeof item.upgraded === 'string' && item.upgraded.trim().length > 0)
+                .map((item) => ({
+                  weak: item.weak ? String(item.weak).trim().slice(0, 80) : undefined,
+                  upgraded: String(item.upgraded).trim().slice(0, 80),
+                  meaningVi: String(item.meaningVi || '').trim().slice(0, 140),
+                  contextSentence: String(item.contextSentence || parsed.naturalVersion || userSentence).trim().slice(0, 260)
+                }))
+                .filter((item) => item.upgraded.split(/\s+/).length <= 8)
+                .slice(0, 4)
+            : [];
+
+          const targetWordsAudit = Array.isArray(parsed.targetWordsAudit)
+            ? parsed.targetWordsAudit
+                .filter((item) => item && typeof item.word === 'string' && item.word.trim().length > 0)
+                .map((item) => ({
+                  word: String(item.word).trim().slice(0, 60),
+                  usedCorrectly: Boolean(item.usedCorrectly),
+                  noteVi: item.noteVi ? String(item.noteVi).trim().slice(0, 160) : undefined
+                }))
+                .slice(0, 5)
+            : [];
+
           sendJson(req, res, 200, {
             targetWord,
             userSentence,
             scenario,
+            writingMode,
             score: scoreNum,
+            ...(computedBand !== undefined ? { bandOverall: computedBand } : {}),
+            criteria,
+            inlineCorrections,
+            upgradedChunks,
+            targetWordsAudit,
             isCorrectUsage: Boolean(parsed.isCorrectUsage),
-            feedbackVi: String(parsed.feedbackVi || '').trim() || 'Câu của bạn khá rõ ý!',
+            feedbackVi: String(parsed.feedbackVi || '').trim() || 'Bài viết của bạn khá rõ ý!',
             naturalVersion: String(parsed.naturalVersion || '').trim() || userSentence,
             collocationTip: String(parsed.collocationTip || '').trim(),
             source: 'gemini',
@@ -1424,31 +1533,71 @@ export async function handleAuthenticatedAiRoutes({ req, res, pathname, db, curr
 
       // Deterministic offline fallback evaluator (honest, clear isFallback: true)
       const lowerSent = userSentence.toLowerCase();
-      const targetRoot = targetWord.toLowerCase().replace(/(ing|ed|s)$/, '');
-      const hasTarget = lowerSent.includes(targetWord.toLowerCase()) || (targetRoot.length >= 4 && lowerSent.includes(targetRoot));
+      const checkWords = targetWordsList.length > 0 ? targetWordsList : targetWord ? [targetWord] : [];
+      const auditList = checkWords.slice(0, 5).map((w) => {
+        const clean = w.toLowerCase();
+        const root = clean.replace(/(ing|ed|s)$/, '');
+        const matched = lowerSent.includes(clean) || (root.length >= 4 && lowerSent.includes(root));
+        return {
+          word: w,
+          usedCorrectly: matched,
+          noteVi: matched ? 'Đã xuất hiện trong bài viết (chế độ Offline).' : 'Chưa xuất hiện trong bài.'
+        };
+      });
+      const matchedCount = auditList.filter((a) => a.usedCorrectly).length;
+      const hasTarget = matchedCount > 0;
       const wordCount = userSentence.split(/\s+/).filter(Boolean).length;
       const endsWithPunct = /[.!?]$/.test(userSentence);
-      const score = !hasTarget ? 4 : wordCount >= 6 && endsWithPunct ? 8 : 7;
+      const minExpectedWords = writingMode === 'essay' ? 140 : writingMode === 'paragraph' ? 70 : 6;
+      const score = !hasTarget && checkWords.length > 0 ? 4 : wordCount >= minExpectedWords && endsWithPunct ? 8 : 6;
+      const offlineBand = scenario === 'ielts' ? roundHalfBand(4.5 + score * 0.3, 6.0) : undefined;
+      const offlineCritVal = scenario === 'ielts' ? offlineBand : score;
 
-      const naturalSuggestion = scenario === 'work'
-        ? `In today's team update, I want to highlight "${targetWord}" so we stay aligned on the timeline.`
-        : `Honestly, "${targetWord}" really came up in my day today and made me think twice.`;
+      const naturalSuggestion =
+        scenario === 'ielts'
+          ? `Investing strategically in ${targetWord || 'this sector'} can yield measurable long-term benefits for society as a whole.`
+          : scenario === 'work'
+            ? `In today's team update, I want to highlight "${targetWord}" so we stay aligned on the timeline.`
+            : `Honestly, "${targetWord}" really came up in my day today and made me think twice.`;
 
       sendJson(req, res, 200, {
         targetWord,
         userSentence,
         scenario,
+        writingMode,
         score,
-        isCorrectUsage: hasTarget && wordCount >= 4,
-        feedbackVi: !hasTarget
-          ? `Câu của bạn chưa chứa từ/cụm "${targetWord}". Hãy thử đưa trực tiếp "${targetWord}" vào câu để luyện phản xạ chủ động nhé! (Chế độ Offline — cần GEMINI_API_KEY để chấm sâu ngữ pháp)`
-          : wordCount < 5
-          ? `Bạn đã dùng đúng "${targetWord}", nhưng câu hơi ngắn (${wordCount} từ). Hãy thêm bối cảnh cụ thể (thời gian, mục tiêu hoặc lý do) để dùng tự nhiên hơn ngoài thực tế.`
-          : `Tốt lắm! Bạn đã chủ động dùng "${targetWord}" trong câu ${wordCount} từ. Cấu hình GEMINI_API_KEY trên server để nhận nhận xét sắc thái ngữ pháp chi tiết hơn.`,
+        ...(offlineBand !== undefined ? { bandOverall: offlineBand } : {}),
+        criteria: {
+          c1: offlineCritVal,
+          c2: offlineCritVal,
+          c3: offlineCritVal,
+          c4: offlineCritVal,
+          labels: criteriaLabels
+        },
+        inlineCorrections: [],
+        upgradedChunks: targetWord
+          ? [
+              {
+                upgraded: targetWord,
+                meaningVi: 'Từ/cụm mục tiêu đang luyện',
+                contextSentence: naturalSuggestion
+              }
+            ]
+          : [],
+        targetWordsAudit: auditList,
+        isCorrectUsage: (hasTarget || checkWords.length === 0) && wordCount >= 4,
+        feedbackVi: !hasTarget && checkWords.length > 0
+          ? `Bài viết chưa chứa từ/cụm mục tiêu ("${targetWord}"). Hãy thử đưa tự nhiên từ mục tiêu vào bài nhé! (Chế độ Offline — cần GEMINI_API_KEY để chấm sâu 4 tiêu chí)`
+          : wordCount < minExpectedWords
+            ? `Bạn đã dùng ${matchedCount}/${checkWords.length || 1} từ mục tiêu nhưng độ dài mới đạt ${wordCount} từ (khuyến nghị ≥ ${minExpectedWords} từ). Hãy bổ sung lý do & ví dụ cụ thể theo khung PEEL.`
+            : `Tốt lắm! Bài viết đạt ${wordCount} từ và đã dùng ${matchedCount} từ mục tiêu. Cấu hình GEMINI_API_KEY trên server để nhận nhận xét sâu 4 tiêu chí & sửa lỗi từng cụm.`,
         naturalVersion: hasTarget ? userSentence : naturalSuggestion,
-        collocationTip: scenario === 'work'
-          ? `Mẹo công sở: Hãy gắn "${targetWord}" vào câu đề xuất, cập nhật tiến độ hoặc email phản hồi sếp/đồng nghiệp.`
-          : `Mẹo đời sống: Nói to câu chứa "${targetWord}" 2 lần (Production Effect) để lần sau bật ra tự nhiên không cần dịch.`,
+        collocationTip:
+          scenario === 'ielts'
+            ? `Mẹo IELTS: Kết hợp "${targetWord || 'từ mục tiêu'}" với các động từ học thuật (invest in, prioritize, address, foster) và từ nối nhân–quả (Consequently, Furthermore).`
+            : scenario === 'work'
+              ? `Mẹo công sở: Hãy gắn "${targetWord}" vào câu đề xuất, cập nhật tiến độ hoặc email phản hồi sếp/đồng nghiệp.`
+              : `Mẹo đời sống: Nói to câu chứa "${targetWord}" 2 lần (Production Effect) để lần sau bật ra tự nhiên không cần dịch.`,
         source: 'offline-fallback',
         isFallback: true,
         quota

@@ -391,6 +391,52 @@ export class ScopedStorage {
     }
   }
 
+  // --- Writing Coach Auto-Save Drafts (Scoped per User, LRU max 10) ---
+  public static getWritingDraft(userId: string | null | undefined, draftKey: string): string {
+    try {
+      const cleanKey = draftKey.trim();
+      if (!cleanKey) return '';
+      const storageKey = `${this.getPrefix(userId)}_writing_drafts`;
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return '';
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && typeof parsed[cleanKey]?.text === 'string') {
+        return parsed[cleanKey].text;
+      }
+    } catch (e) {
+      console.warn('[ScopedStorage] Error reading writing draft:', e);
+    }
+    return '';
+  }
+
+  public static setWritingDraft(userId: string | null | undefined, draftKey: string, text: string): void {
+    try {
+      const cleanKey = draftKey.trim();
+      if (!cleanKey) return;
+      const storageKey = `${this.getPrefix(userId)}_writing_drafts`;
+      const raw = localStorage.getItem(storageKey);
+      let drafts: Record<string, { text: string; updatedAt: number }> = {};
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          drafts = parsed;
+        }
+      }
+      if (!text.trim()) {
+        delete drafts[cleanKey];
+      } else {
+        drafts[cleanKey] = { text: text.slice(0, 4000), updatedAt: Date.now() };
+      }
+      // Keep only the 10 most recently edited drafts
+      const entries = Object.entries(drafts)
+        .sort((a, b) => (b[1]?.updatedAt || 0) - (a[1]?.updatedAt || 0))
+        .slice(0, 10);
+      localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(entries)));
+    } catch (e) {
+      console.warn('[ScopedStorage] Error writing writing draft:', e);
+    }
+  }
+
   // --- Clean User Session Partition Caches ---
   public static clearPartitionCaches(userId?: string | null): void {
     try {

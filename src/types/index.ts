@@ -87,15 +87,50 @@ export interface ContextExplanation {
   };
 }
 
+export type WritingCoachMode = 'sentence' | 'paragraph' | 'essay';
+
+export interface WritingInlineCorrection {
+  original: string;
+  corrected: string;
+  explanationVi: string;
+}
+
+export interface WritingUpgradedChunk {
+  weak?: string;
+  upgraded: string;
+  meaningVi: string;
+  contextSentence: string;
+}
+
+export interface WritingTargetWordAudit {
+  word: string;
+  usedCorrectly: boolean;
+  noteVi?: string;
+}
+
+export interface WritingCriteriaBreakdown {
+  c1: number;
+  c2: number;
+  c3: number;
+  c4: number;
+  labels: [string, string, string, string];
+}
+
 export interface SentenceEvaluationResult {
   targetWord: string;
   userSentence: string;
-  scenario: 'work' | 'daily';
+  scenario: 'ielts' | 'work' | 'daily';
   score: number;
   isCorrectUsage: boolean;
   feedbackVi: string;
   naturalVersion: string;
   collocationTip: string;
+  writingMode?: WritingCoachMode;
+  bandOverall?: number;
+  criteria?: WritingCriteriaBreakdown;
+  inlineCorrections?: WritingInlineCorrection[];
+  upgradedChunks?: WritingUpgradedChunk[];
+  targetWordsAudit?: WritingTargetWordAudit[];
   source?: string;
   isFallback?: boolean;
   quota?: {
@@ -422,7 +457,14 @@ export interface ActivePracticeMission {
   sourceTitle: string;
   topicName: string;
   cefr: CefrLevel;
-  targetWords: Array<{ word: string; meaningVi: string; exampleEn?: string }>;
+  targetWords: Array<{
+    word: string;
+    meaningVi: string;
+    exampleEn?: string;
+    pos?: string;
+    pattern?: string;
+    collocations?: string[];
+  }>;
   grammarFocus?: { title: string; formula: string };
   createdAt: number;
 }

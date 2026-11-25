@@ -134,7 +134,10 @@ export const RoadmapLessonRunner: React.FC<RoadmapLessonRunnerProps> = ({
     const picked = lesson.words.slice(0, 5).map((w) => ({
       word: w.word,
       meaningVi: w.meaningVi,
-      exampleEn: w.exampleIeltsEn || w.exampleDailyEn
+      exampleEn: w.exampleIeltsEn || w.exampleDailyEn,
+      pos: w.pos,
+      pattern: w.pattern,
+      collocations: w.collocations
     }));
     return {
       id: `mission-${lesson.id}-${Date.now()}`,
