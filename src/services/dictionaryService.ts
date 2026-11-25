@@ -314,8 +314,61 @@ export async function batchTranslateSubtitles(
   return results;
 }
 
-// Current active audio instance to prevent overlapping speech
-let currentAudio: HTMLAudioElement | null = null;
+// Active session token & cached voice list for zero-latency, non-overlapping TTS
+let activeSpeakSessionId = 0;
+let cachedVoices: SpeechSynthesisVoice[] = [];
+let voiceListenerBound = false;
+
+function getAvailableVoices(): SpeechSynthesisVoice[] {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+    return [];
+  }
+  const synth = window.speechSynthesis;
+  if (!voiceListenerBound && typeof synth.addEventListener === 'function') {
+    voiceListenerBound = true;
+    synth.addEventListener('voiceschanged', () => {
+      cachedVoices = synth.getVoices();
+    });
+  }
+  const live = synth.getVoices();
+  if (live.length > 0) {
+    cachedVoices = live;
+  }
+  return cachedVoices;
+}
+
+function selectPreferredVoice(voices: SpeechSynthesisVoice[], lang: 'en' | 'zh'): SpeechSynthesisVoice | undefined {
+  if (voices.length === 0) return undefined;
+  const targetPrefix = lang === 'zh' ? 'zh' : 'en';
+  const langVoices = voices.filter((v) => v.lang.toLowerCase().startsWith(targetPrefix));
+  if (langVoices.length === 0) return undefined;
+
+  const scoreVoice = (v: SpeechSynthesisVoice): number => {
+    const name = v.name.toLowerCase();
+    const locale = v.lang.toLowerCase();
+    let score = 0;
+    if (name.includes('natural') || name.includes('neural')) score += 100;
+    if (name.includes('google us english') || name.includes('google uk english')) score += 90;
+    else if (name.includes('google')) score += 75;
+    if (
+      name.includes('aria') ||
+      name.includes('jenny') ||
+      name.includes('guy') ||
+      name.includes('samantha') ||
+      name.includes('daniel') ||
+      name.includes('xiaoxiao') ||
+      name.includes('yunxi')
+    ) {
+      score += 60;
+    }
+    if (name.includes('enhanced') || name.includes('premium')) score += 40;
+    if (lang === 'en' && locale === 'en-us') score += 15;
+    if (lang === 'zh' && locale === 'zh-cn') score += 15;
+    return score;
+  };
+
+  return [...langVoices].sort((a, b) => scoreVoice(b) - scoreVoice(a))[0];
+}
 
 export interface SpeakCallbacks {
   onStart?: () => void;
@@ -323,10 +376,9 @@ export interface SpeakCallbacks {
 }
 
 /**
- * Phát âm tiếng Anh tự nhiên (Natural Human-like Audio)
- * Ưu tiên:
- * 1. Google Neural Speech Stream (Âm thanh tự nhiên, ngữ điệu chuẩn bản xứ)
- * 2. Microsoft Natural Online / Google US English Neural Voices (không bị máy móc như David Desktop)
+ * Phát âm tiếng Anh tự nhiên với độ trễ ~0ms, không lặp 2 lần.
+ * Dùng trực tiếp Web Speech API (ưu tiên giọng Microsoft Natural Online / Google US English / Apple Enhanced)
+ * thay vì gọi hotlink translate.google.com (vốn bị chặn 403/timeout 3-4s và bắn trùng onerror + play.catch).
  */
 export function speakWord(
   text: string,
@@ -340,94 +392,38 @@ export function speakWord(
   }
 
   const cleanText = text.trim();
+  const sessionId = ++activeSpeakSessionId;
+
   let ended = false;
   const finishOnce = () => {
-    if (ended) return;
+    if (ended || sessionId !== activeSpeakSessionId) return;
     ended = true;
     callbacks?.onEnd?.();
   };
 
-  // Dừng âm thanh đang phát trước đó nếu có
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio.currentTime = 0;
-  }
-  if ('speechSynthesis' in window) {
-    window.speechSynthesis.cancel();
-  }
-
-  callbacks?.onStart?.();
-
-  // 1. Phương án 1: Google Neural High-Definition Audio (Giọng tự nhiên nhất, không máy móc)
-  try {
-    const encoded = encodeURIComponent(cleanText.slice(0, 200));
-    const targetLang = lang === 'zh' ? 'zh-CN' : 'en-US';
-    const googleTtsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encoded}&tl=${targetLang}&client=tw-ob`;
-
-    const audio = new Audio(googleTtsUrl);
-    audio.playbackRate = rate; // Tốc độ tùy chỉnh (0.75x chậm, 0.95x tự nhiên, 1.0x chuẩn)
-    currentAudio = audio;
-
-    audio.onended = finishOnce;
-    audio.onerror = () => {
-      speakWithNeuralBrowserVoice(cleanText, lang, rate, finishOnce);
-    };
-
-    const playPromise = audio.play();
-    if (playPromise !== undefined) {
-      playPromise.catch((err) => {
-        console.warn('Google TTS audio playback blocked, falling back to Neural Browser Voice', err);
-        speakWithNeuralBrowserVoice(cleanText, lang, rate, finishOnce);
-      });
-      return;
-    }
-  } catch (e) {
-    console.warn('Neural audio stream error', e);
-  }
-
-  // 2. Phương án 2: Lọc giọng Neural Browser (Jenny, Guy, Aria Natural)
-  speakWithNeuralBrowserVoice(cleanText, lang, rate, finishOnce);
-}
-
-function speakWithNeuralBrowserVoice(
-  text: string,
-  lang: 'en' | 'zh',
-  rate: number = 0.95,
-  onFinished?: () => void
-) {
-  if (!('speechSynthesis' in window)) {
-    onFinished?.();
+  if (typeof window === 'undefined' || !('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') {
+    callbacks?.onStart?.();
+    finishOnce();
     return;
   }
 
-  const utterance = new SpeechSynthesisUtterance(text);
+  // Hủy sạch câu đang đọc trước đó để không bao giờ xếp hàng đọc lặp
+  window.speechSynthesis.cancel();
+
+  const utterance = new SpeechSynthesisUtterance(cleanText);
   utterance.lang = lang === 'zh' ? 'zh-CN' : 'en-US';
-  utterance.rate = rate;
+  utterance.rate = Math.min(2, Math.max(0.5, rate));
   utterance.pitch = 1.0;
-  utterance.onend = () => onFinished?.();
-  utterance.onerror = () => onFinished?.();
 
-  const voices = window.speechSynthesis.getVoices();
-
-  // Tìm kiếm các giọng AI Neural / Natural cao cấp
-  const targetPrefix = lang === 'zh' ? 'zh' : 'en';
-  const naturalVoice = voices.find(
-    (v) =>
-      v.lang.startsWith(targetPrefix) &&
-      (v.name.includes('Natural') ||
-        v.name.includes('Neural') ||
-        v.name.includes('Google') ||
-        v.name.includes('Jenny') ||
-        v.name.includes('Guy') ||
-        v.name.includes('Aria') ||
-        v.name.includes('Xiaoxiao') ||
-        v.name.includes('Yunxi'))
-  ) || voices.find((v) => v.lang.startsWith(targetPrefix));
-
-  if (naturalVoice) {
-    utterance.voice = naturalVoice;
+  const preferredVoice = selectPreferredVoice(getAvailableVoices(), lang);
+  if (preferredVoice) {
+    utterance.voice = preferredVoice;
   }
 
+  utterance.onend = () => finishOnce();
+  utterance.onerror = () => finishOnce();
+
+  callbacks?.onStart?.();
   window.speechSynthesis.speak(utterance);
 }
 
